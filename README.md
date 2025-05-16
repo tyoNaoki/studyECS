@@ -29,12 +29,12 @@ Release
 
 I learned from..
 
-* [toecs].
-* [seecs].
-* [sparsey][ebaf].
-* [ECS back and forth].
-* [shipyard].
-* [bevy].
+* [toecs]
+* [seecs]
+* [sparsey]
+* [ECS back and forth][ebaf]
+* [shipyard]
+* [bevy]
 
 [toecs]: https://github.com/toyboot4e/toecs/tree/wip
 [seecs]: https://github.com/chrischristakis/seecs/tree/master
