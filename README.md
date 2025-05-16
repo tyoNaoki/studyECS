@@ -1,8 +1,10 @@
 # studyECS
 
+Just for my learning; use other ECS libraries for real projects!
+
 ## 実行時間テスト記録
 ```
-###通常のComponent指向
+通常のComponent指向
 
 Debug
 GameObjectの作成とコンポーネントの追加: 2741 ミリ秒
@@ -12,7 +14,7 @@ Release
 GameObjectの作成とコンポーネントの追加: 183 ミリ秒
 コンポーネントの変更にかかった時間: 10 ミリ秒
 
-###作成中のECS(SparseSetBased)
+作成中のECS(SparseSetBased)
 
 5/16
 Debug
