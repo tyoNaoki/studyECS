@@ -25,3 +25,20 @@ Release
 エンティティの作成とコンポーネントの追加: 136 ミリ秒
 コンポーネントの変更にかかった時間: 36 ミリ秒
 ```
+## Thanks
+
+I learned from..
+
+* [toecs].
+* [seecs].
+* [sparsey][ebaf].
+* [ECS back and forth].
+* [shipyard].
+* [bevy].
+
+[toecs]: https://github.com/toyboot4e/toecs/tree/wip
+[seecs]: https://github.com/chrischristakis/seecs/tree/master
+[sparsey]: https://github.com/LechintanTudor/sparsey
+[ebaf]: https://skypjack.github.io/2019-02-14-ecs-baf-part-1/
+[shipyard]: https://github.com/leudz/shipyard
+[bevy]: https://github.com/bevyengine/bevy
