@@ -1,0 +1,13 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="16.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\build\CMakeFiles\dac25596048b5f5ec50cd841f793bb42\INSTALL_force.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{5E302956-0D08-3524-BEE1-86DAE2C7A9DF}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

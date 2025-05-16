@@ -1,0 +1,10 @@
+^D:\DXLIB_VC\DX_LIBDATA\TYONAOKI\ENTITYPROJECT\BUILD\CMAKEFILES\D570E4AAA26B3D93E748002F1A9CB38F\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SD:/DxLib_VC/DX_LibData/tyoNaoki/entityProject -BD:/DxLib_VC/DX_LibData/tyoNaoki/entityProject/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file D:/DxLib_VC/DX_LibData/tyoNaoki/entityProject/build/entityProject.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd
