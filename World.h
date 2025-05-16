@@ -534,8 +534,6 @@ public:
             vel.x += 5.0f;
 	    }
     */
-<<<<<<< HEAD
-=======
     
     /*
     template <typename Type>
@@ -543,7 +541,6 @@ public:
         return std::get<Type&>(pack);
     }
     */
->>>>>>> d61b537 (Added all project files)
 
     template <typename Type>
     Type& get(std::tuple<Get&...>& pack) {
@@ -588,16 +585,14 @@ public:
     */
     //Pakc<Get...>
 
-<<<<<<< HEAD
     
 
     std::vector<std::tuple<EntityID, Get&...>> each() {
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
-=======
+
     constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
 
     std::vector<std::tuple<EntityID, Get&...>> each() {
->>>>>>> d61b537 (Added all project files)
         //std::vector<Pack<Get...>> result;
         std::vector<std::tuple<EntityID, Get&...>> result;
 
