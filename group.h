@@ -3,7 +3,6 @@
 #include <type_traits>
 #include <utility>
 
-
 template<typename, typename, typename>
 class basic_group;
 

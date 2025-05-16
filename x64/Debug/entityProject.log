@@ -1,13 +1,12 @@
-﻿Build started 2025/05/16 16:58:20.
+﻿Build started 2025/05/16 17:38:52.
 Logging verbosity is set to: Normal.     1>Project "D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\entityProject.vcxproj" on node 2 (Build target(s)).
      1>InitializeBuildStatus:
          Touching "x64\Debug\entityProject.tlog\unsuccessfulbuild".
        ClCompile:
-         C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\CL.exe /c /I"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" /ZI /JMC /nologo /W3 /WX- /diagnostics:column /sdl /Od /D _DEBUG /D _WINDOWS /D _MBCS /Gm- /EHsc /RTC1 /MTd /GS /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"x64\Debug\\" /Fd"x64\Debug\vc142.pdb" /external:W3 /Gd /TP /FC /errorReport:prompt main.cpp Scene.cpp World.cpp
+         C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\CL.exe /c /I"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" /ZI /JMC /nologo /W3 /WX- /diagnostics:column /sdl /Od /D _DEBUG /D _WINDOWS /D _MBCS /Gm- /EHsc /RTC1 /MTd /GS /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"x64\Debug\\" /Fd"x64\Debug\vc142.pdb" /external:W3 /Gd /TP /FC /errorReport:prompt main.cpp World.cpp
          main.cpp
      1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(212,1): warning C4010: single-line comment contains line-continuation character
      1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(60,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-         Scene.cpp
          World.cpp
      1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(212,1): warning C4010: single-line comment contains line-continuation character
      1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(60,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
@@ -37,4 +36,4 @@ Build succeeded.
     4 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:05.47
+Time Elapsed 00:00:02.64

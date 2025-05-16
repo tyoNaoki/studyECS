@@ -432,7 +432,6 @@ private:
                 // invalid function call branches before runtime to prevent the
                 // typical invoke errors you'd see after building.
                // 
-<<<<<<< HEAD
                //if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
                // 	std::apply(func, std::tuple_cat(std::make_tuple(id), ));
                // }
@@ -441,16 +440,6 @@ private:
                // else if constexpr (std::is_invocable_v<Func, Get&...>) {
                // 	std::apply(func, MakeComponentTuple(id, inds));
               //  }
-=======
-               if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
-                	std::apply(func, std::tuple_cat(std::make_tuple(id), ));
-                }
-
-                // This branch is for [](Component& c1, Component& c2);
-                else if constexpr (std::is_invocable_v<Func, Get&...>) {
-                	std::apply(func, MakeComponentTuple(id, inds));
-                }
->>>>>>> d61b537 (Added all project files)
 
                // else {
                     ASSERT(false,
@@ -585,14 +574,8 @@ public:
     */
     //Pakc<Get...>
 
-    
-
     std::vector<std::tuple<EntityID, Get&...>> each() {
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
-
-    constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
-
-    std::vector<std::tuple<EntityID, Get&...>> each() {
         //std::vector<Pack<Get...>> result;
         std::vector<std::tuple<EntityID, Get&...>> result;
 
