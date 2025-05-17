@@ -1,22 +1,17 @@
-﻿Build started 2025/05/16 17:38:52.
+﻿Build started 2025/05/17 23:09:13.
 Logging verbosity is set to: Normal.     1>Project "D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\entityProject.vcxproj" on node 2 (Build target(s)).
      1>InitializeBuildStatus:
-         Touching "x64\Debug\entityProject.tlog\unsuccessfulbuild".
+         Creating "x64\Debug\entityProject.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
        ClCompile:
-         C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\CL.exe /c /I"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" /ZI /JMC /nologo /W3 /WX- /diagnostics:column /sdl /Od /D _DEBUG /D _WINDOWS /D _MBCS /Gm- /EHsc /RTC1 /MTd /GS /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"x64\Debug\\" /Fd"x64\Debug\vc142.pdb" /external:W3 /Gd /TP /FC /errorReport:prompt main.cpp World.cpp
+         C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\CL.exe /c /I"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" /ZI /JMC /nologo /W3 /WX- /diagnostics:column /sdl /Od /D _DEBUG /D _WINDOWS /D _MBCS /Gm- /EHsc /RTC1 /MTd /GS /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"x64\Debug\\" /Fd"x64\Debug\vc142.pdb" /external:W3 /Gd /TP /FC /errorReport:prompt main.cpp
          main.cpp
-     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(212,1): warning C4010: single-line comment contains line-continuation character
-     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(60,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-         World.cpp
-     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(212,1): warning C4010: single-line comment contains line-continuation character
-     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(60,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-         Generating Code...
+     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(226,1): warning C4010: single-line comment contains line-continuation character
+     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(67,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
        Link:
          C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\link.exe /ERRORREPORT:PROMPT /OUT:"D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.exe" /INCREMENTAL /ILK:"x64\Debug\entityProject.ilk" /NOLOGO /LIBPATH:"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.pdb" /SUBSYSTEM:WINDOWS /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.lib" /MACHINE:X64 x64\Debug\EntityPool.obj
          x64\Debug\main.obj
          x64\Debug\Scene.obj
          x64\Debug\SceneView.obj
-         x64\Debug\test.obj
          x64\Debug\World.obj
          entityProject.vcxproj -> D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.exe
        FinalizeBuildStatus:
@@ -28,12 +23,10 @@ Build succeeded.
 
        "D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\entityProject.vcxproj" (Build target) (1) ->
        (ClCompile target) -> 
-         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(212,1): warning C4010: single-line comment contains line-continuation character
-         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(60,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(212,1): warning C4010: single-line comment contains line-continuation character
-         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(60,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(226,1): warning C4010: single-line comment contains line-continuation character
+         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(67,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
 
-    4 Warning(s)
+    2 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:02.64
+Time Elapsed 00:00:01.87

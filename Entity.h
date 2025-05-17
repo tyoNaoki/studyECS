@@ -10,8 +10,6 @@ typedef uint32_t EntityIndex;
 typedef uint32_t EntityVersion;
 typedef  uint64_t EntityID;
 
-
-
 inline EntityID CreateEntityId(EntityIndex index, EntityVersion version) {
     return ((EntityID)index << 32) | ((EntityID)version);
 }
