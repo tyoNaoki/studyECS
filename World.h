@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <mutex>
 #include<vector>
+#include "group.h"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
@@ -35,6 +36,12 @@ public:
         m_entityMasks.Set(id, {});
         return id;
     };
+
+    /*関数使用例
+    Position position = Position(0.0f,5.0f);
+	auto entity = ECS::world().spawn("",position,Velocity(5.0f,0.1f));
+    auto entity2 = ECS::world().spawn("");
+    */
 
     template <typename... Components>
     EntityID spawn(const std::string name = "Object",Components&&... components) {
@@ -100,6 +107,9 @@ public:
         CUSTOM_INFO("Registered component '" << typeid(T).name() << "'");
     };
 
+    /*関数使用例
+    auto component = ECS::world().emplace<Velocity>(entity,1.0f,0.5f);
+    */
     template <typename T, typename... Args>
     T* emplace(const EntityID& entityID, Args&&... args) {
         auto& pool = getComponentPool<T>();
@@ -194,6 +204,10 @@ public:
     }
     */
 
+    template<typename... Owned, typename... Get, typename... Exclude>
+    basic_group<owned_t<Owned...>, get_t<Get...>, exclude_t<Exclude...>>
+        group(get_t<Get...> = get_t{}, exclude_t<Exclude...> = exclude_t{}) { return nullptr;}
+
 private:
     //EntityIDをSparseSetで再利用できるようにしている.
     //再利用時、ID(EntityIndex(32bit),Version(32bit)が組み合わされて発行される
@@ -265,8 +279,6 @@ private:
         //コンポーネント登録
         std::initializer_list<int>{(setComponentBit<Components>(*bitset, 1), 0)... };
     }
-
-    
 
     /*
     template <typename... EntityIDs>
@@ -379,7 +391,6 @@ private:
     // Sparse set with the smallest number of components,
     // basis for ForEach iterations.
     ISparseSet* m_smallest = nullptr;
-
     
     //対象のコンポーネントを全て所持しているか
     bool AllContain(EntityID id) {
@@ -496,14 +507,6 @@ public:
         createPacked();
     }
 
-    /*
-    template <typename... ExcludedComponents>
-    std::unique_ptr<SceneView<Get...>> Exclude() {
-        std::vector<ISparseSet*> excludedPools = { world().getComponentPoolPtr<ExcludedComponents>()... };
-        return std::make_unique<SceneView<Get...>>(excludedPools);
-    }
-    */
-
     //取得しいるコンポーネントEntityをさらに絞り込む
     template <typename... ExcludedComponents>
     std::unique_ptr<SceneView> Exclude() {
@@ -523,26 +526,12 @@ public:
             vel.x += 5.0f;
 	    }
     */
-    
-    /*
-    template <typename Type>
-    Type& get(Pack<Get...>& pack) {
-        return std::get<Type&>(pack);
-    }
-    */
 
     template <typename Type>
     Type& get(std::tuple<Get&...>& pack) {
         return std::get<Type&>(pack);
     }
-
-    /*
-    EntityID& getEntitiyID(Pack<Get...>& pack){
-        return std::get<0>(pack);  // EntityIDはインデックスで取得
-    }
-    */
     
-
     /*
     *  Executes a passed lambda on all the entities that match the
     *  passed parameter pack.
@@ -588,16 +577,36 @@ public:
         return result;
     }
 
-    /*
+    /*以下関数使用例
+    * auto view = ECS::world().View<Position,Velocity>();
+      view->each([](auto entity,auto &pos,auto &vel){
+			pos.x+=5.0f;
+			vel.x += 5.0f;
+		});
+
+		view->each([](auto& pos, auto& vel) {
+			pos.x += 5.0f;
+			vel.x += 5.0f;
+		});
+    */
+    
     template <typename Func>
     void each(Func func){
+        constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
+
         for(EntityID entity : m_smallest->GetEntityList()){
-            if(AllContain(entity)){
-                auto entity_tuple = std::tuple_cat
+            if(!AllContain(entity)) continue;
+            auto component_Tuple = MakeComponentTuple(entity, inds);
+            if constexpr (std::is_invocable_v<Func,EntityID,Get&...>){
+                std::apply(func, std::tuple_cat(std::make_tuple(entity), component_Tuple));
+            }
+            else if constexpr (std::is_invocable_v<Func,Get&...>){
+                std::apply(func, component_Tuple);
+            }else{
+                ASSERT(false, "Invalid lambda function passed to view.each()");
             }
         }
     }
-    */
 
 };
 
