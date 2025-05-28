@@ -1,5 +1,7 @@
 #pragma once
 #include <iostream>
+#include <type_traits>
+#include <stdexcept>
 
 // Can replace these defines with custom macros elsewhere
 #ifndef ASSERT
@@ -19,3 +21,13 @@
 #ifndef MESSAGE
     #define MESSAGE(msg) std::cout << "[MSG]: " << msg << "\n";
 #endif
+
+inline void assertEquals(bool test,std::string message) {
+    if (test) {
+        std::cout << "Test Passed: Expected " << message << std::endl;
+    }
+    else {
+        std::cerr << "Test Failed: Expected " << message << std::endl;
+    }
+}
+

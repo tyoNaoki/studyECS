@@ -1,30 +1,43 @@
 #pragma once
-#include "Entity.h"
-#include "EntityPool.h"
 #include <unordered_map>
 #include <typeindex>
 #include <memory>
-#include <bitset>
-#include "Debug.h"
-#include "SparseSet.h"
 #include <tuple>
 #include <functional>
 #include <algorithm>
 #include <mutex>
 #include<vector>
-#include "group.h"
+#include <bitset>
+#include "Entity.h"
+#include "EntityPool.h"
+#include "Debug.h"
+#include "SparseSet.h"
+#include "HopscotchHashMap.h"
+#include "Storage.hpp"
+#include "group.hpp"
+#include "typeList.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
 namespace ECS {
+
 class World
 {
 private:
     template<typename...>
     friend class SceneView;
     
+    using base_type = ISparseSet;
     // '1' == active, '0' == inactive.
     using ComponentBitSet = std::bitset<MAX_COMPONENTS>;
+
+    using groupID = EntityIndex;
+
+    //template<typename Type,StorageClass S>
+    //using storage_for_type = typename StorageFor<Type, S>::type;
+
+    template<typename Type>
+    using StorageType_t = typename StorageType<Type, StorageClass::basicStorage>::type;
 
 public:
     World() = default;
@@ -205,8 +218,41 @@ public:
     */
 
     template<typename... Owned, typename... Get, typename... Exclude>
-    basic_group<owned_t<Owned...>, get_t<Get...>, exclude_t<Exclude...>>
-        group(get_t<Get...> = get_t{}, exclude_t<Exclude...> = exclude_t{}) { return nullptr;}
+    Group<owned_t<StorageType_t<Owned>...>, get_t<StorageType_t<Get>...>, exclude_t<StorageType_t<Exclude>...>>
+        group(get_t<Get...> = get_t{}, exclude_t<Exclude...> = exclude_t{}) {
+        using group_type = Group<owned_t<StorageType_t<Owned>...>, get_t<StorageType_t<Get>...>, exclude_t<StorageType_t<Exclude>...>>;
+
+        using handler_type = typename group_type::handler;
+
+        std::shared_ptr<handler_type> handler{};
+
+        //groupsを見て、存在するか確認。
+        if(auto ptr = m_groups.find(group_type::group_id())){
+            return group_type{};
+        }
+
+        //無いと仮定して、作成
+        //Owner未指定の場合は専用の処理
+        if constexpr(sizeof...(Owned) == 0u){
+            return group_type{};
+        }
+
+        handler = std::make_shared<handler_type>(
+            std::tuple_cat(
+                std::forward_as_tuple(getComponentPool<std::remove_const_t<Owned>>()...),
+                std::forward_as_tuple(getComponentPool<std::remove_const_t<Get>>()...)
+            ),
+            std::forward_as_tuple(getComponentPool<std::remove_const_t<Exclude>>()...)
+            );
+
+        m_groups.insert(group_type::group_id(),handler);
+        return {*handler};
+    }
+
+    size_t getGroupSize() noexcept
+    {
+        return m_groups.size();
+    }
 
 private:
     //EntityIDをSparseSetで再利用できるようにしている.
@@ -218,12 +264,9 @@ private:
     std::vector<std::unique_ptr<ISparseSet>> m_componentPools;
 
     //各エンティティのComponentBitSet
-
     SparseSet<ComponentBitSet>m_entityMasks;
 
-    //Componentの組み合わせ毎にグループ化して保持し、グループ呼び出し時使用する
-    //std::unordered_map<ComponentBitSet,std::vector<EntityID>>m_groups;\
-    [
+    ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>m_groups;
 
     static size_t getNextComponentIndex(const std::string typeName)
     {
@@ -356,6 +399,7 @@ static World& world() {
     std::lock_guard<std::mutex> lock(mutex); // スレッドセーフ
     return sWorld;
 }
+
 
 template<typename Pack>
 class SceneViewIterator {
@@ -609,6 +653,7 @@ public:
     }
 
 };
+
 
 }//namespace ECS
 

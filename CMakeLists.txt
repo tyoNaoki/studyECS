@@ -3,7 +3,7 @@ project(entityProject)
 
 include(FetchContent)
 
-# すでにダウンロード済みかチェック
+# GoogleTestのセットアップ
 if(NOT googletest_POPULATED)
   FetchContent_Declare(
     googletest
@@ -13,33 +13,35 @@ if(NOT googletest_POPULATED)
   set(INSTALL_GTEST OFF CACHE BOOL "Disable installation of Google Test")
 endif()
 
-# 🔽 必ず `endif()` の後に `FetchContent_MakeAvailable`
 FetchContent_MakeAvailable(googletest)
 
 enable_testing()  # CTestを有効化
 
-# 🔽 **Google Testのヘッダディレクトリを追加**
+# unordered_dense を追加
+include_directories(${PROJECT_SOURCE_DIR}/unordered_dense/include)
+
+# GoogleTestのインクルード
 include_directories(${googletest_SOURCE_DIR}/include)
 
-# 🔽 **単体テストの定義**
+# 実行ファイルを作成
 add_executable(
   entityTest
   test.cpp
 )
+
+#  GoogleTestとリンク
 target_link_libraries(
   entityTest
   GTest::gtest_main
 )
 
-# 🔽 **Google TestはC++14以上が必要**
+# C++14 を有効化
 target_compile_features(
   entityTest
   PUBLIC
   cxx_std_14
 )
 
+# GoogleTestの自動テスト検出
 include(GoogleTest)
-
-# 🔽 **テストケースの自動検出**
 gtest_discover_tests(entityTest)
-

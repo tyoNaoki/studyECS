@@ -11,68 +11,6 @@
 
 constexpr size_t NULL_INDEX = std::numeric_limits<size_t>::max();
 
-template <class... Types>
-struct type_list {
-    using type_tuple = std::tuple<Types...>;
-
-    template <size_t Index>
-    using get = std::tuple_element_t<Index, type_tuple>;
-
-    static constexpr size_t size = sizeof...(Types);
-};
-
-template<typename... Type>
-struct exclude_t final : type_list<Type...> {
-    /*! @brief Default constructor. */
-    explicit exclude_t() = default;
-};
-
-template<>
-struct exclude_t<> final : type_list<> {
-    explicit exclude_t() = default;
-};
-
-/**
- * @brief Variable template for exclusion lists.
- * @tparam Type List of types.
- */
-template<typename... Type>
-constexpr exclude_t<Type...> exclude{};
-
-/**
- * @brief Alias for lists of observed elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-struct get_t final : type_list<Type...> {
-    /*! @brief Default constructor. */
-    explicit get_t() = default;
-};
-
-/**
- * @brief Variable template for lists of observed elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-static const get_t<Type...> get{};  // `inline constexpr` Å® `static const`
-
-/**
- * @brief Alias for lists of owned elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-struct owned_t final : type_list<Type...> {
-    /*! @brief Default constructor. */
-    explicit owned_t() = default;
-};
-
-/**
- * @brief Variable template for lists of owned elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-static const owned_t<Type...> owned{};  // `inline constexpr` Å® `static const`
-
 // Base class allows runtime polymorphism
 class ISparseSet {
 public:
@@ -93,6 +31,8 @@ private:
     using Sparse = std::array<size_t,SPARSE_MAX_SIZE>;
 
 public:
+    using type = T;
+
     T* Set(EntityID entity,T obj);
 
     T* Get(EntityID entity);
