@@ -29,12 +29,19 @@ Release
 
 I learned from..
 
-* [toecs]
-* [seecs]
-* [sparsey]
-* [ECS back and forth][ebaf]
+ECS
+* [toecs] : ECS in Rust
+* [seecs] : simple ECS in C++
+* [sparsey] : sparseSet
+* [ECS back and forth][ebaf] : ECS
 * [shipyard]
 * [bevy]
+
+HashMap
+* [HashMap] : HopScotchHashMap
+
+Event
+* [eventtpp] : EventSystem
 
 [toecs]: https://github.com/toyboot4e/toecs/tree/wip
 [seecs]: https://github.com/chrischristakis/seecs/tree/master
@@ -42,3 +49,5 @@ I learned from..
 [ebaf]: https://skypjack.github.io/2019-02-14-ecs-baf-part-1/
 [shipyard]: https://github.com/leudz/shipyard
 [bevy]: https://github.com/bevyengine/bevy
+[HashMap]: https://github.com/taqu/HashMap/tree/master
+[eventtpp]: https://github.com/wqking/eventpp
