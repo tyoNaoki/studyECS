@@ -15,7 +15,7 @@
 #include "SparseHopscotch.h"
 #include "unodreredDense.h"
 #include <random>
-#include "Storage.hpp"
+#include "GroupNode.hpp"
 
 struct Position
 {
@@ -42,10 +42,16 @@ struct TransformComponent {
 void test_create_group();
 void hashMapBenchmarks();
 void typeListTest();
+void eventTest();
 
 void test()
 {
-	test_create_group();
+	eventTest();
+}
+
+void eventTest()
+{
+
 }
 
 void typeListTest()
@@ -161,20 +167,24 @@ inline void test_create_group() {
 	struct A {};
 	struct B {};
 	struct C {};
-	auto group = ECS::world().group<A>(ECS::get<B>);
+	struct D {};
+	assertEquals(ECS::world().CreateGroupNode<ECS::GroupType::basicGroup,A>()!=nullptr, "ECS::world().CreateGroupNode<GroupType::basicGroup,A>()!=nullptr");
+
+	auto group = ECS::world().group<ECS::GroupType::basicGroup,A>(ECS::get<B>,ECS::exclude<C>);
 	
-	assertEquals(group.size() != 0, "ECS::world().getGroupSize()!=0");  // 初期状態ではエンティティなし
+	assertEquals(group.count() == 3, "ECS::world().getGroupSize()==3");  // 初期状態ではエンティティなし
 	
-	assertEquals(group.storage<A>() != nullptr, "group.storage<A>() != nullptr");
-	assertEquals(group.storage<C>() == nullptr, "group.storage<C>() == nullptr");
-	
-	std::cout << group.storage<A>()->Size() << std::endl;
+	assertEquals(group.node<A>() != nullptr, "group.node<A>() != nullptr");
+	assertEquals(group.node<C>() != nullptr, "group.node<C>() != nullptr");
+	assertEquals(group.node<D>() == nullptr, "group.node<D>() == nullptr");
+	std::cout << "node<B>.typename : " <<typeid(group.node<B>()).name() << std::endl;
+	assertEquals(group.node<A>()->Size() == 0, "group.node<A>()->Size() == 0");
 	ECS::world().spawn("",A{});
 	ECS::world().spawn("",A{});
 	ECS::world().spawn("",B{});
-	std::cout << group.storage<A>()->Size() << std::endl;
+	assertEquals(group.node<A>()->Size() != 0, "Spawn A valid Entity. group.node<A>()->Size() != 0");
 	
-	assertEquals(group.entityCount<A,B>()[1] == 1, "group.storageSize()[1] == 1");
+	//assertEquals(group.entityCount<A,B>()[1] == 1, "group.storageSize()[1] == 1");
 	
 	//group.checkTypeList<owned_t<A>();
 }

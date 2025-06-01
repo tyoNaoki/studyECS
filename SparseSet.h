@@ -31,6 +31,8 @@ private:
     using Sparse = std::array<size_t,SPARSE_MAX_SIZE>;
 
 public:
+    virtual ~SparseSet(){}
+
     using type = T;
 
     T* Set(EntityID entity,T obj);

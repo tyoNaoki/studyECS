@@ -13,7 +13,7 @@
 #include "Debug.h"
 #include "SparseSet.h"
 #include "HopscotchHashMap.h"
-#include "Storage.hpp"
+#include "GroupNode.hpp"
 #include "group.hpp"
 #include "typeList.hpp"
 
@@ -36,8 +36,8 @@ private:
     //template<typename Type,StorageClass S>
     //using storage_for_type = typename StorageFor<Type, S>::type;
 
-    template<typename Type>
-    using StorageType_t = typename StorageType<Type, StorageClass::basicStorage>::type;
+    template <typename Type, GroupType GT = GroupType::basicGroup>
+    using GroupClass_t = typename GroupClass<Type, GT>::type;
 
 public:
     World() = default;
@@ -214,13 +214,20 @@ public:
     template <typename... Get, typename... Exclude>
     SceneView<get_t<Get...>, exclude_t<Exclude...>> View(exclude_t<Exclude...>) {
         return SceneView<get_t<Get...>, exclude_t<Exclude...>>{};
-    }
+    }>
     */
 
-    template<typename... Owned, typename... Get, typename... Exclude>
-    Group<owned_t<StorageType_t<Owned>...>, get_t<StorageType_t<Get>...>, exclude_t<StorageType_t<Exclude>...>>
-        group(get_t<Get...> = get_t{}, exclude_t<Exclude...> = exclude_t{}) {
-        using group_type = Group<owned_t<StorageType_t<Owned>...>, get_t<StorageType_t<Get>...>, exclude_t<StorageType_t<Exclude>...>>;
+    template<GroupType GT = GroupType::basicGroup,typename Type>
+    constexpr auto CreateGroupNode(){
+        return std::make_unique<GroupNode<Type>>(getComponentPool<std::remove_const_t<Type>>());
+    }
+
+    template<GroupType GT = GroupType::basicGroup,typename... Owned, typename... Get, typename... Exclude>
+    Group<owned_t<GroupClass_t<Owned, GT>...>,get_t<GroupClass_t<Get, GT>...>,exclude_t<GroupClass_t<Exclude, GT>...>
+    >group(
+    get_t<Get...> = get_t{},
+    exclude_t<Exclude...> = exclude_t{}) {
+        using group_type = Group<owned_t<GroupClass_t<Owned, GT>...>, get_t<GroupClass_t<Get, GT>...>, exclude_t<GroupClass_t<Exclude,GT>...>>;
 
         using handler_type = typename group_type::handler;
 
@@ -237,14 +244,25 @@ public:
             return group_type{};
         }
 
+        /*
         handler = std::make_shared<handler_type>(
             std::tuple_cat(
-                std::forward_as_tuple(getComponentPool<std::remove_const_t<Owned>>()...),
-                std::forward_as_tuple(getComponentPool<std::remove_const_t<Get>>()...)
+                std::forward_as_tuple(CreateGroupNode<GT, Owned>()...),
+                std::forward_as_tuple(CreateGroupNode<GT, Get>()...)
             ),
-            std::forward_as_tuple(getComponentPool<std::remove_const_t<Exclude>>()...)
+            std::forward_as_tuple(CreateGroupNode<GT, Exclude>()...)
+            );
+            */
+
+        handler = std::make_shared<handler_type>(
+            std::tuple_cat(
+                std::make_tuple(CreateGroupNode<GT, Owned>()...),
+                std::make_tuple(CreateGroupNode<GT, Get>()...)
+            ),
+            std::make_tuple(CreateGroupNode<GT, Exclude>()...)
             );
 
+        
         m_groups.insert(group_type::group_id(),handler);
         return {*handler};
     }
@@ -451,55 +469,35 @@ private:
             });
     }
 
-    /*
-    *	Index the generic pool array and downcast to a specific component pool
-    *   by using compile time indices
-    */
+    // インデックスを使用して汎用プール配列を特定し、特定のコンポーネントプールにダウンキャストする
     template <size_t Index>
     auto GetPoolAt() {
         using componentType = typename componentTypes::template get<Index>;
         return static_cast<SparseSet<componentType>*>(m_viewPools[Index]);
     }
 
+    // エンティティIDを指定し、対象のコンポーネントのタプルを作成する
     template <size_t... Indices>
     auto MakeComponentTuple(EntityID id, std::index_sequence<Indices...>) {
-        return std::make_tuple((std::ref(GetPoolAt<Indices>()->GetRef(id)))...);
+        return std::make_tuple(std::ref(GetPoolAt<Indices>()->GetRef(id))...);
     }
 
-    /*
-    *  Provided the function arguments are valid, this function will iterate over the smallest pool
-    *  and run the lambda on all entities that contain all the components in the view.
-    *
-    *  Note: This is the internal implementation: opt for the more user friendly functional ones in the
-    *        public interface.
-    */
     template <typename Func>
     void ForEachImpl(Func func) {
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
 
-        // Iterate smallest component pool and compare against other pools in view
-        // Note this list is a COPY, allowing safe deletion during iteration.
+        // 最も小さいコンポーネントプールを走査し、他のプールと比較する
+        // エンティティリストをコピーすることで、ループ中の安全な削除を可能にする
         for (EntityID id : m_smallest->GetEntityList()) {
             if (AllContain(id) && NotExcluded(id)) {
 
-                // This branch is for [](EntityID id, Component& c1, Component& c2);
-                // constexpr denotes this is evaluated at compile time, which prunes
-                // invalid function call branches before runtime to prevent the
-                // typical invoke errors you'd see after building.
-               // 
-               //if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
-               // 	std::apply(func, std::tuple_cat(std::make_tuple(id), ));
-               // }
-
-                // This branch is for [](Component& c1, Component& c2);
-               // else if constexpr (std::is_invocable_v<Func, Get&...>) {
-               // 	std::apply(func, MakeComponentTuple(id, inds));
-              //  }
-
-               // else {
-                    ASSERT(false,
-                    "Bad lambda provided to .ForEach(), parameter pack does not match lambda args");
-               // }
+                // 関数適用（エンティティIDを含む場合）
+                if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
+                    std::apply(func, std::tuple_cat(std::make_tuple(id), MakeComponentTuple(id, inds)));
+                }
+                else {
+                    ASSERT(false, "関数の引数が適切ではありません");
+                }
             }
         }
     }
@@ -520,7 +518,7 @@ private:
 
 public:
 
-    // These are the function signatures you can pass to .ForEach()
+    //functions
     using ForEachFunc = std::function<void(Get&...)>;
     using ForEachFuncWithID = std::function<void(EntityID, Get&...)>;
 
@@ -540,7 +538,7 @@ public:
         m_smallest = *smallestPool;
 
         // エンティティのフィルタリング処理
-        constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};  // インデックスシーケンスを作成
+        constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};  
 
         createPacked();
     }
@@ -562,8 +560,8 @@ public:
     /* 以下関数使用例
     *   auto view = ECS::world().View<Position,Velocity>();
     *   for(auto& x: *view){
-    *       //EntitiyIDのみ別関数
-			auto& entityID = view->getEntitiyID(x);
+    *       //EntitiyIDは変数で取得
+			auto& entityID = x.entity;
             //packにあるcomponentは以下関数で取得
 			auto& vel = view->get<Velocity>(x);
 			auto& posi = view->get<Position>(x);
@@ -575,16 +573,6 @@ public:
     Type& get(std::tuple<Get&...>& pack) {
         return std::get<Type&>(pack);
     }
-    
-    /*
-    *  Executes a passed lambda on all the entities that match the
-    *  passed parameter pack.
-    *
-    *  Provided function should follow one of two forms:
-    *  [](Component& c1, Component& c2);
-    *  OR
-    *  [](EntityID id, Component& c1, Component& c2);
-    */
 
     void ForEach(ForEachFunc func) {
         ForEachImpl(func);

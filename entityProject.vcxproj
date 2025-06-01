@@ -176,7 +176,7 @@
     <ClInclude Include="SceneView.h" />
     <ClInclude Include="SparseHopscotch.h" />
     <ClInclude Include="SparseSet.h" />
-    <ClInclude Include="Storage.hpp" />
+    <ClInclude Include="GroupNode.hpp" />
     <ClInclude Include="typeList.hpp" />
     <ClInclude Include="World.h" />
   </ItemGroup>
