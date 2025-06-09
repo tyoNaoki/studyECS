@@ -16,7 +16,9 @@ namespace ECS {
 struct IHandler {
 public:
     using size_type = std::size_t;
-    virtual ~IHandler() = default;
+
+
+        virtual ~IHandler() = default;
     virtual bool owned(const ecs_map::id_type) const noexcept {
         return false;
     }

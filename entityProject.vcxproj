@@ -162,16 +162,21 @@
     <ClCompile Include="World.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CallbackList.h" />
     <ClInclude Include="Component.h" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="DebugHelpr.h" />
-    <ClInclude Include="Event.h" />
+    <ClInclude Include="Event.hpp" />
+    <ClInclude Include="EventDispatcher.h" />
+    <ClInclude Include="EventManager.h" />
+    <ClInclude Include="EventQueue.h" />
     <ClInclude Include="HashFunctions.h" />
     <ClInclude Include="HopscotchHashMap.h" />
     <ClInclude Include="ecsTest.h" />
     <ClInclude Include="Entity.h" />
     <ClInclude Include="EntityPool.h" />
     <ClInclude Include="group.hpp" />
+    <ClInclude Include="OrderedQueueList.h" />
     <ClInclude Include="Scene.h" />
     <ClInclude Include="SceneView.h" />
     <ClInclude Include="SparseHopscotch.h" />

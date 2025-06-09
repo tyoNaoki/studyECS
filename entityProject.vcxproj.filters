@@ -80,7 +80,22 @@
     <ClInclude Include="typeList.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Event.h">
+    <ClInclude Include="Event.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="OrderedQueueList.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EventDispatcher.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EventQueue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="CallbackList.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="EventManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
