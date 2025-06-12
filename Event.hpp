@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <utility>
 #include <stdexcept>
+#include <cassert>
 
 namespace ECS{
 

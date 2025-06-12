@@ -2,45 +2,14 @@
 #ifndef ECS_EVENTMANAGER_H
 #define ECS_EVENTMANAGER_H
 
-#include "EventQueue.h"
+#include "EventQueue.hpp"
+#include <memory>
+#include <functional>
+#include <vector>
+#include <typeindex>
 
 namespace ECS{
 namespace EVENT{
-
-void convertClassToKey(){
-	
-}
-
-class EventManager {
-
-	template<typename Event>
-	void subscribe(){
-		
-	}
-
-	template<typename Event>
-	void unsubscribe() {
-
-	}
-
-	template<typename Event>
-	void publish() {
-
-	}
-
-	template<typename Event>
-	void enqueue() {
-
-	}
-
-	template<typename Event>
-	void process() {
-		
-	}
-
-private:
-	std::vector<>
-};
 
 }//EVENT
 }//ECS

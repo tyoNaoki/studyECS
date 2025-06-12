@@ -65,7 +65,7 @@
     <ClInclude Include="ecsTest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="GroupNode.hpp">
+    <ClInclude Include="Storage.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="HopscotchHashMap.h">
@@ -83,19 +83,22 @@
     <ClInclude Include="Event.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="OrderedQueueList.h">
+    <ClInclude Include="OrderedQueueList.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="EventDispatcher.h">
+    <ClInclude Include="EventDispatcher.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="EventQueue.h">
+    <ClInclude Include="EventQueue.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="CallbackList.h">
+    <ClInclude Include="CallbackList.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="EventManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ComponentPoolManager.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

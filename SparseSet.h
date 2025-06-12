@@ -11,7 +11,7 @@
 
 constexpr size_t NULL_INDEX = std::numeric_limits<size_t>::max();
 
-// Base class allows runtime polymorphism
+// ランタイムでのインターフェース
 class ISparseSet {
 public:
     virtual ~ISparseSet() = default;
@@ -35,26 +35,35 @@ public:
 
     using type = T;
 
+    // オブジェクトをエンティティにセットする
     T* Set(EntityID entity,T obj);
 
+    // エンティティに対応するコンポーネントを取得する
     T* Get(EntityID entity);
 
+    // 参照を返す
     T& GetRef(EntityID entity);
 
+    // 指定エンティティのコンポーネントを削除する
     void Delete(EntityID entity) override;
 
+    //内部のTオブジェをすべて削除
     void Clear() override;
 
+    //現在のdense配列の大きさ取得
     size_t Size() override;
 
+    //登録されているTオブジェ所持のEntityを配列で返す
     std::vector<EntityID> GetEntityList() override;
 
+    //対象のEntityがTオブジェを所持しているか
     bool ContainsEntity(EntityID entity) override;
 
+    //対象のEntityのdenseIndexを取得
     inline size_t GetDenseIndex(EntityID entity);
-
+    //Sparse配列に設定
     inline void SetSparseIndex(EntityID entity,size_t index);
-
+    //空チェック
     bool IsEmpty() const{
         return m_dense.empty();
     }

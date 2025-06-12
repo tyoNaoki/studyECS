@@ -6,19 +6,20 @@
 #include <string_view>
 #include <type_traits>
 #include "Entity.h"
-#include "GroupNode.hpp"
+#include "Storage.hpp"
 #include "Debug.h"
 #include "HashFunctions.h"
 #include "typeList.hpp"
 #include "World.h"
 
 namespace ECS {
+
 struct IHandler {
+
 public:
     using size_type = std::size_t;
 
-
-        virtual ~IHandler() = default;
+    virtual ~IHandler() = default;
     virtual bool owned(const ecs_map::id_type) const noexcept {
         return false;
     }
@@ -30,8 +31,9 @@ class Group_handler final :public IHandler {
 
     using entityType = EntityID;
     using handlerType = Type;
-    
+public:
     void push_on_construct(const EntityID entt) {
+        std::cout<<"push_on_construct()"<< std::endl;
         /*
         if (!elem.contains(entt)
             && std::apply([entt](auto *...cpool) { return (cpool->contains(entt) && ...); }, pools)
@@ -42,6 +44,7 @@ class Group_handler final :public IHandler {
     }
 
     void push_on_destroy(const EntityID entt) {
+        std::cout << "push_on_destroy()" << std::endl;
         /*
         if (!elem.contains(entt)
             && std::apply([entt](auto *...cpool) { return (cpool->contains(entt) && ...); }, pools)
@@ -52,9 +55,8 @@ class Group_handler final :public IHandler {
     }
 
     void remove_if(const EntityID entt){
-    
+        std::cout << "remove_if()" << std::endl;
     }
-    
     
 public:
     virtual ~Group_handler() = default;
@@ -81,62 +83,75 @@ public:
         }
 
         if constexpr (Index < (Owned + Get)) {
-            return pools[Index].get();
+            return pools[Index];
         }
         else {
-            return filter[Index - (Owned + Get)].get();
+            return filter[Index - (Owned + Get)];
         }
     }
+
     /*
-    template<typename... OGType, typename... EType>
-    Group_handler(std::tuple<OGType &...> ogpool, std::tuple<EType &...> epool)
-        : pools{ std::apply([](auto &&...cpool) { return std::array< std::unique_ptr<handlerType>, (Owned + Get)>{&cpool...}; }, ogpool) },
-        filter{ std::apply([](auto &&...cpool) { return std::array< std::unique_ptr<handlerType>, Exclude>{&cpool...}; }, epool) }
-    {
-        register_events(ogpool, &Group_handler::push_on_construct, &Group_handler::remove_if);
-        register_events(epool, &Group_handler::remove_if, &Group_handler::push_on_destroy);
+    Group_handler(OGTuple&& ogpool, ETuple&& epool)
+        : pools{
+        // ogpool 内の各要素は非コピー可能であれば std::apply によって参照を渡す
+        std::apply([](auto&... nodePtr)->std::array<handlerType*, sizeof...(OGType)> {
+            return { nodePtr.get()... };
+        }, std::forward<OGTuple>(ogpool))
+    },
+        filter{
+          std::apply([](auto&... nodePtr)->std::array<handlerType*, sizeof...(EType)> {
+              return { nodePtr.get()... };
+          }, std::forward<ETuple>(epool))
+        }
+        {
+            // register_events も転送を使って渡す（必要に応じてオーバーロードや参照受け側を調整）
+            register_events<&Group_handler::push_on_construct, &Group_handler::remove_if>(std::forward<OGTuple>(ogpool));
+            register_events<&Group_handler::remove_if, &Group_handler::push_on_destroy>(std::forward<ETuple>(epool));
+        }
+
+         template<typename... OGType, typename... EType>
+    group_handler(std::tuple<OGType &...> ogpool, std::tuple<EType &...> epool)
+        : pools{std::apply([](auto &&...cpool) { return std::array<common_type *, (Owned + Get)>{&cpool...}; }, ogpool)},
+          filter{std::apply([](auto &&...cpool) { return std::array<common_type *, Exclude>{&cpool...}; }, epool)} {
+        std::apply([this](auto &...cpool) { ((cpool.on_construct().template connect<&group_handler::push_on_construct>(*this), cpool.on_destroy().template connect<&group_handler::remove_if>(*this)), ...); }, ogpool);
+        std::apply([this](auto &...cpool) { ((cpool.on_construct().template connect<&group_handler::remove_if>(*this), cpool.on_destroy().template connect<&group_handler::push_on_destroy>(*this)), ...); }, epool);
+        common_setup();
     }
+
     */
-
+    
     template<typename... OGType, typename... EType>
-    Group_handler(std::tuple<std::unique_ptr<OGType>...> ogpool, std::tuple<std::unique_ptr<EType>...> epool)
-        : pools{ std::apply([](auto &&...cpool) {
-            return std::array<std::unique_ptr<handlerType>, (Owned + Get)>{std::move(cpool)...};
-        }, ogpool) },
-        filter{ std::apply([](auto &&...cpool) {
-            return std::array<std::unique_ptr<handlerType>, Exclude>{std::move(cpool)...};
-        }, epool) }
-    {
-        register_events(ogpool, &Group_handler::push_on_construct, &Group_handler::remove_if);
-        register_events(epool, &Group_handler::remove_if, &Group_handler::push_on_destroy);
-    }
-
+    Group_handler(std::tuple<OGType&...> ogpool,std::tuple<EType&...> epool)
+        : pools{
+            std::apply([](auto&&... cpool) {
+                   return std::array<handlerType*, sizeof...(OGType)>{ &cpool... };
+               }, ogpool)},
+        filter{
+            std::apply([](auto&&... cpool) {
+                 return std::array<handlerType*, sizeof...(EType)>{ &cpool... };
+             }, epool)
+             }
+             {
+                register_events<&Group_handler::push_on_construct, &Group_handler::remove_if>(ogpool);
+                register_events<&Group_handler::remove_if, &Group_handler::push_on_destroy>(epool);
+             }
     
 private:
-    template<typename ArrayType, typename ConstructFunc, typename DestroyFunc>
-    void register_events(ArrayType& componentPools, ConstructFunc construct, DestroyFunc destroy) {
-        
-        std::apply([&](auto&... componentPool) {
+    template<auto Construct, auto Destroy, typename ArrayType>
+    void register_events(ArrayType& componentPools) {
+        std::apply([this](auto&... componentPool) {
             ((
-                std::cout << "register_events : " << typeid(componentPool).name() << std::endl
-                //EventManager実装したとき、ここを実装する
-                //eventManager.connect("on_construct", [&componentPool]() { componentPool.on_construct().trigger(); }),
-                //eventManager.connect("on_destroy", [&componentPool]() { componentPool.on_destroy().trigger(); })
+                componentPool.on_construct().template append<Construct>(*this),
+                componentPool.on_destroy().template append<Destroy>(*this)
                 ), ...);
-            }, componentPools);
-            
-        
-        /*
-        for (auto* cpool : components) {
-            //cpool->on_construct().template connect<construct>(*this);
-            //cpool->on_destroy().template connect<destroy>(*this);
-        }
-        */
+        }, componentPools);
     }
 
 private:
-    std::array<std::unique_ptr<handlerType>, (Owned + Get)> pools;
-    std::array<std::unique_ptr<handlerType>, Exclude> filter;
+    //std::array<std::unique_ptr<handlerType>, (Owned + Get)> pools;
+    //std::array<std::unique_ptr<handlerType>, Exclude> filter;
+    std::array<handlerType*, (Owned + Get)> pools;
+    std::array<handlerType*, Exclude> filter;
     
     size_t len{};
 };
@@ -153,11 +168,11 @@ class Group<owned_t<Owner...>, get_t<Get...>, exclude_t<Exclude...>> {
 
     //using group_type = std::common_type_t<typename storage_for_t<owner>::base_type..., Get, Exclude;
 
-    template<typename T, typename = void>
-    struct has_type : std::false_type {};
-
     //使用例
     //static_assert(has_type<typename Owner::BaseType>::value, "Owner::BaseType does not have 'type'!");
+
+    template<typename T, typename = void>
+    struct has_type : std::false_type {};
 
     template<typename T>
     struct has_type<T, std::void_t<typename T::type>> : std::true_type {};

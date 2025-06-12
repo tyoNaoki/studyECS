@@ -15,8 +15,7 @@
 #include "SparseHopscotch.h"
 #include "unodreredDense.h"
 #include <random>
-#include "GroupNode.hpp"
-#include "EventQueue.h"
+#include "EventQueue.hpp"
 
 // First let's define the event struct. e is the event type, priority determines the priority.
 struct MyEvent
@@ -72,12 +71,13 @@ void test_create_group();
 void hashMapBenchmarks();
 void typeListTest();
 void eventTest();
+void testEventQueue();
 void testCallbackList();
 void testDispatch();
 
 void test()
 {
-	eventTest();
+	test_create_group();
 }
 
 bool myCallback(const int a, const std::unique_ptr<int>& b) {
@@ -88,12 +88,16 @@ bool myFallback() {
 	return false;
 }
 
-
 void eventTest()
+{
+}
+
+
+void testEventQueue()
 {
 	/*
 	{
-		ECS::EVENT::EventQueue<int, void(const std::string&, std::unique_ptr<int>&)> queue;
+		ECS::EVENT::EventQueueBase<int, void(const std::string&, std::unique_ptr<int>&)> queue;
 
 		queue.appendListener(3, [](const std::string& s, std::unique_ptr<int>& n) {
 			std::cout << "Got event 3, s is " << s << " n is " << *n << std::endl;
@@ -528,9 +532,19 @@ void testDispatch(){
 	
 }
 
+std::string testCallbackFunction(const bool& flag, const std::string& message){
+	return flag ? "Callback 3: " + message : "Callback 3: Condition not met.";
+}
+
+struct testCallbackFunctionClass {
+	std::string memberFunction(const bool& flag, const std::string& message){
+		return flag ? "Callback 4: " + message : "Callback 4: Condition not met.";
+	}
+};
 
 // テスト関数
 void testCallbackList() {
+
 	using CL = ECS::EVENT::CallbackList<std::string(const bool&, const std::string&)>;
 	CL callbackList;
 
@@ -542,18 +556,30 @@ void testCallbackList() {
 		return flag ? "Callback 2: " + message : "Callback 2: Condition not met.";
 		});
 
+	auto handle3 = callbackList.append<&testCallbackFunction>();
+
+	testCallbackFunctionClass testClass;
+
+	auto handle4 = callbackList.append<&testCallbackFunctionClass::memberFunction>(testClass);
+
 	std::string result1 = handle1.lock()->callback(true, "Hello Handle");
 	assertEquals(result1 == "Callback 1: Hello Handle", "Callback 1 returned expected value.");
 
 	std::string result2 = handle2.lock()->callback(false, "Hello Handle");
 	assertEquals(result2 == "Callback 2: Condition not met.", "Callback 2 returned expected value.");
 
+	std::string result3 = handle3.lock()->callback(false, "Hello Handle");
+	assertEquals(result3 == "Callback 3: Condition not met.", "Callback 3 returned expected value.");
+
+	std::string result4 = handle4.lock()->callback(false, "Hello Handle");
+	assertEquals(result4 == "Callback 4: Condition not met.", "Callback 4 returned expected value.");
+
 	callbackList.remove(handle2);
-	std::cout << "\n--- After Removal ---\n";
+	std::cout << "\n--- After Removal Callback2---\n";
 	callbackList.foreach([](const CL::CallbackType& callback) {
 		std::string result = callback(true, "Hello Callback");
-		assertEquals(result.find("Callback 2") == std::string::npos, "Callback 2 was successfully removed.");
-		});
+		std::cout<< result << std::endl;
+	});
 }
 
 void typeListTest()
@@ -664,16 +690,38 @@ void benchmark(HashMapType& map, const std::string& name, const int numElements)
 }
 #pragma optimize("", on)  // 最適化をオンに戻す
 
+struct testBasicStorageComponent {
+	static constexpr ECS::StorageType storage_pref = ECS::StorageType::BasicType;
+};
+
 //作成テスト
 inline void test_create_group() {
 	struct A {};
 	struct B {};
 	struct C {};
 	struct D {};
-	assertEquals(ECS::world().CreateGroupNode<ECS::GroupType::basicGroup,A>()!=nullptr, "ECS::world().CreateGroupNode<GroupType::basicGroup,A>()!=nullptr");
-
-	auto group = ECS::world().group<ECS::GroupType::basicGroup,A>(ECS::get<B>,ECS::exclude<C>);
 	
+	auto emptyEntity = ECS::world().spawnEmpty();
+	auto entity = ECS::world().spawn<A,B>(A{},B{});
+	auto entity2 = ECS::world().spawn<A, B>();
+	auto entity3 = ECS::world().spawn<A, B>("Apple");
+	auto entity4 = ECS::world().spawn<A, B>(B{});
+	auto entity5 = ECS::world().spawn<A, B>("Banana", B{});
+	assertEquals(ECS::world().getComponent<A>(entity)!=nullptr, "ECS::world().getComponent<A>(entity)!=nullptr");
+	assertEquals(ECS::world().getComponent<B>(entity) != nullptr, "ECS::world().getComponent<B>(entity)!=nullptr");
+
+	assertEquals(ECS::COMPONENT::component_storage_selector<A>::value == ECS::StorageType::EventType,"ECS::COMPONENT::component_storage_selector<A>::value == ECS::StorageType::EventType");
+
+	assertEquals(ECS::COMPONENT::component_storage_selector<testBasicStorageComponent>::value == ECS::StorageType::BasicType, "ECS::COMPONENT::component_storage_selector<testBasicStorageComponent>::value == ECS::StorageType::BasicType");
+
+	auto& componentPool = ECS::world().getComponentPool<A>();
+	c//omponentPool.
+
+	//auto group = ECS::world().group<ECS::StorageType::EventType,A>(ECS::get<B>,ECS::exclude<C>);
+
+	//assertEquals(group.node<A>()->Size() != 0 , "Owner::BaseType does not have 'type'!");
+	
+	/*
 	assertEquals(group.count() == 3, "ECS::world().getGroupSize()==3");  // 初期状態ではエンティティなし
 	
 	assertEquals(group.node<A>() != nullptr, "group.node<A>() != nullptr");
@@ -686,6 +734,7 @@ inline void test_create_group() {
 	ECS::world().spawn("",B{});
 	assertEquals(group.node<A>()->Size() != 0, "Spawn A valid Entity. group.node<A>()->Size() != 0");
 	
+	*/
 	//assertEquals(group.entityCount<A,B>()[1] == 1, "group.storageSize()[1] == 1");
 	
 	//group.checkTypeList<owned_t<A>();

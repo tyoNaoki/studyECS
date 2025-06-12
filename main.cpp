@@ -8,6 +8,7 @@ void viewConsole()
 	AllocConsole();  // コンソールを生成
 	FILE* stream;
 	freopen_s(&stream, "CONOUT$", "w", stdout);  // 標準出力をコンソールにリダイレクト
+	freopen_s(&stream, "CONOUT$", "w", stderr);  // 標準エラー出力もリダイレクト
 }
 
 // プログラムは WinMain から始まります

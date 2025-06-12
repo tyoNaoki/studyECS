@@ -162,26 +162,27 @@
     <ClCompile Include="World.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CallbackList.h" />
+    <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
+    <ClInclude Include="ComponentPoolManager.hpp" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="DebugHelpr.h" />
     <ClInclude Include="Event.hpp" />
-    <ClInclude Include="EventDispatcher.h" />
+    <ClInclude Include="EventDispatcher.hpp" />
     <ClInclude Include="EventManager.h" />
-    <ClInclude Include="EventQueue.h" />
+    <ClInclude Include="EventQueue.hpp" />
     <ClInclude Include="HashFunctions.h" />
     <ClInclude Include="HopscotchHashMap.h" />
     <ClInclude Include="ecsTest.h" />
     <ClInclude Include="Entity.h" />
     <ClInclude Include="EntityPool.h" />
     <ClInclude Include="group.hpp" />
-    <ClInclude Include="OrderedQueueList.h" />
+    <ClInclude Include="OrderedQueueList.hpp" />
     <ClInclude Include="Scene.h" />
     <ClInclude Include="SceneView.h" />
     <ClInclude Include="SparseHopscotch.h" />
     <ClInclude Include="SparseSet.h" />
-    <ClInclude Include="GroupNode.hpp" />
+    <ClInclude Include="Storage.hpp" />
     <ClInclude Include="typeList.hpp" />
     <ClInclude Include="World.h" />
   </ItemGroup>
