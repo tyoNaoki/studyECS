@@ -101,5 +101,8 @@
     <ClInclude Include="ComponentPoolManager.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="BorrowDispatcher.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

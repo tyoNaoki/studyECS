@@ -13,6 +13,40 @@ namespace ECS{
 
 namespace EVENT{
 
+template<typename,typename>
+struct EventHelper;
+
+template<typename Register,typename Type>
+struct EventHelper {
+	using EventID = ecs_map::id_type;
+	using Register_Type = Register;
+
+	EventHelper(Register_Type&reg,const EventID id = ecs_map::type_hash<Type>()):regist{reg}, eventId{id} {}
+
+	/*
+	// on_event 用の接続関数。Candidate は関数ポインタやラムダなど。
+	template<auto Candidate, typename... Args>
+	EventHelper& on_event(Args&&... args) {
+		// Registry 内で EventType 用のシグナルを取得（実装依存ですが例として）
+		auto& sig = regist.template get_signal<EventType>(eventName);
+		//（候補関数を直接 connect する場合の例）
+		sig.connect(Candidate);
+		return *this;
+	}
+
+	// 発火関数
+	template<typename... Args>
+	void publish(Args&&... args) {
+		auto& sig = registry.template get_signal<EventType>(eventName);
+		sig.publish(std::forward<Args>(args)...);
+	}
+	*/
+
+private:
+	Register_Type *regist;
+	EventID eventId;
+};
+
 template <typename T, typename ...Args>
 struct HasFunctionGetEvent
 {

@@ -26,7 +26,6 @@ namespace COMPONENT{
         static constexpr ECS::StorageType value = T::storage_pref;
     };
 
-
 template <size_t ComponentMaxNum = 64>
 class ComponentPoolManager {
     // '1' == active, '0' == inactive.

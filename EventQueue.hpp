@@ -120,9 +120,9 @@ public:
 		else {
 			node = std::make_unique<EventData>();
 		}
-
+		node->set(RawEventData{ event, std::move(convertedArgs) });
 		// ノードに対してイベントデータを設定する
-		node->set(RawEventData(event, std::move(convertedArgs)));
+		//node->set(RawEventData(event, std::move(convertedArgs)));
 
 		std::lock_guard<std::mutex> lock(queueMutex);
 		// 生成（または再利用）したノードを busyQueue に追加する
@@ -223,13 +223,14 @@ public:
 	// busyQueueから最初のイベントを一つだけ実行し、処理後にidleList に加える
 	bool processOne()
 	{
-		std::lock_guard<std::mutex> queuelock(queueMutex);
-
 		if (busyQueue.empty()) return false;
 
-		std::unique_ptr<EventData> node = std::move(busyQueue.front());
-		busyQueue.erase(busyQueue.begin());
-
+		std::unique_ptr<EventData> node;
+		{
+			std::lock_guard<std::mutex> queuelock(queueMutex);
+			node = std::move(busyQueue.front());
+			busyQueue.erase(busyQueue.begin());
+		}
 		processEvent(node->get());
 		node->clear();
 
@@ -395,6 +396,7 @@ private:
 		}
 	}
 
+	
 	inline std::string castConvert(const char* arg) { return std::string(arg); }
 	template<typename T>
 	auto castConvert(T&& arg) -> std::decay_t<T> {
@@ -404,6 +406,7 @@ private:
 	auto convertArg(T&& arg) {
 		return castConvert(std::forward<T>(arg));
 	}
+	
 
 	bool doCanProcess()const{
 		return !emptyQueue() && disableCount <= 0;

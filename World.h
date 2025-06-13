@@ -19,6 +19,7 @@
 #include "group.hpp"
 #include "typeList.hpp"
 #include "ComponentPoolManager.hpp"
+#include "EventQueue.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
@@ -155,6 +156,23 @@ public:
     bool has(EntityID entity){
         return componentPoolManager.has<Components...>(entity);
     }
+
+    // コンポーネントの追加を通知するハンドラを登録したいとき
+    template<typename Comp>
+    auto& on_construct() {
+        return componentPoolManager.template getComponentPool<Comp>().on_construct();
+    }
+
+    template<typename Comp>
+    auto& on_update() {
+        return componentPoolManager.template getComponentPool<Comp>().on_update();
+    }
+
+    template<typename Comp>
+    auto& on_destroy() {
+        return componentPoolManager.template getComponentPool<Comp>().on_destroy();
+    }
+
     
     template <typename... Get>
     std::unique_ptr<SceneView<Get...>>  
@@ -231,6 +249,8 @@ private:
     //SparseSet<ComponentBitSet>m_entityMasks;
 
     ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>m_groups;
+
+    EVENT::EventQueueBase<ecs_map::id_type,void(const std::shared_ptr<void>&)>m_eventQueue;
 
     /*
     template <typename... EntityIDs>

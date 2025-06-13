@@ -57,7 +57,10 @@ public:
 
 // Mixin を合成可能なストレージテンプレート
 template<typename Type, StorageType S,typename... Mixins>
-class MixinStorage : public BasicStorage<Type,S>,public Mixins... {};
+class MixinStorage : public BasicStorage<Type,S>,public Mixins... {
+public:
+    
+};
 
 // ストレージの型を選択するためのテンプレート特殊化
 template<typename Type, StorageType S = StorageType::BasicType>

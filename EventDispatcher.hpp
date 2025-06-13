@@ -7,7 +7,6 @@
 namespace ECS {
 
 namespace EVENT {
-
 template<
 	typename EventType,
 	typename Prototype,
@@ -21,7 +20,7 @@ public:
 	using CallBacks = CallbackList<ReturnType(Args...)>;
 	using CallbackType = std::function<ReturnType(Args...)>;
 	using Handle = typename CallBacks::Handle;
-
+	
 	auto appendListener(const EventType& e, const CallbackType& callback) {
 		return listeners[e].append(callback);
 	}

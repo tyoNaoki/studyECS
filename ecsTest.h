@@ -16,6 +16,7 @@
 #include "unodreredDense.h"
 #include <random>
 #include "EventQueue.hpp"
+#include "BorrowDispatcher.hpp"
 
 // First let's define the event struct. e is the event type, priority determines the priority.
 struct MyEvent
@@ -77,7 +78,7 @@ void testDispatch();
 
 void test()
 {
-	test_create_group();
+	eventTest();
 }
 
 bool myCallback(const int a, const std::unique_ptr<int>& b) {
@@ -88,10 +89,82 @@ bool myFallback() {
 	return false;
 }
 
+inline std::size_t hash_idApple() { return 1; }
+inline std::size_t hash_idBanana() { return 2; }
+
 void eventTest()
 {
-}
+	struct Apple{
+		int x = 5;
+		int y = 0;
+	};
 
+	struct Banana {
+		int x = 30;
+		int y = 0;
+	};
+
+	ECS::EVENT::BorrowDispatcher bus;                     // EventType = int
+	using ECS::EVENT::BorrowMut;      
+
+	bus.appendTestListener<
+		ECS::EVENT::Borrow<const Apple>
+	>(1,
+		[](ECS::EVENT::Borrow<const Apple> e)
+		{
+			std::cout<<"const Apple x = " << e->x << std::endl;
+		});
+
+	// ① リスナー登録：Borrow<T*> で受け取る
+	bus.appendTestListener<
+		ECS::EVENT::Borrow<const std::shared_ptr<Apple>>
+	>(2,
+		[](ECS::EVENT::Borrow<const std::shared_ptr<Apple>> e)
+		{
+			std::cout << "use_count = " << e->use_count() << '\n';
+			std::cout << "apple x   = " << (*e)->x << '\n';
+			//   e  : const std::shared_ptr<Apple>* への Borrow
+			//  *e  : const std::shared_ptr<Apple>&
+			// (*e)->x で Apple 本体にアクセス
+		});
+
+	
+
+	bus.appendTestListener<
+		BorrowMut<std::shared_ptr<Apple>>
+	>(3,
+		[](BorrowMut<std::shared_ptr<Apple>> e)
+		{
+			if (*e) {                   // *e は std::shared_ptr<Apple>&
+				(*e)->x = 99;
+				std::cout<<"BorrowMut<std::shared_ptr<Apple>> x = " << e->get()->x << std::endl;
+			}
+		});
+
+
+	bus.appendTestListener<BorrowMut<Banana>>(
+		4, [](BorrowMut<Banana> e) {
+			e->y += 10;          // OK
+		});
+
+	// ② 発行側：自分が保持するオブジェクトのアドレスを投げるだけ
+	Apple  a{ 42 };
+	Banana b{ 7 };
+	std::shared_ptr<Apple>a2 = std::make_shared<Apple>();
+	a2->x = 100;
+	
+	bus.publish(1, &a);                 // RawArg = void*(&a)
+	bus.publish(2, &a2);
+	bus.publish(3, &a2);
+	bus.publish(4, &b);
+
+	bus.dispatch();
+
+	std::cout << "banana y = " << b.y << '\n';   // 10
+
+	// 発行後も a/b は依然 発行側が所有
+	
+}
 
 void testEventQueue()
 {
@@ -715,7 +788,7 @@ inline void test_create_group() {
 	assertEquals(ECS::COMPONENT::component_storage_selector<testBasicStorageComponent>::value == ECS::StorageType::BasicType, "ECS::COMPONENT::component_storage_selector<testBasicStorageComponent>::value == ECS::StorageType::BasicType");
 
 	auto& componentPool = ECS::world().getComponentPool<A>();
-	c//omponentPool.
+	//componentPool.
 
 	//auto group = ECS::world().group<ECS::StorageType::EventType,A>(ECS::get<B>,ECS::exclude<C>);
 

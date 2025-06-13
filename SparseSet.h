@@ -36,7 +36,7 @@ public:
     using type = T;
 
     // オブジェクトをエンティティにセットする
-    T* Set(EntityID entity,T obj);
+    virtual T* Set(EntityID entity,T obj);
 
     // エンティティに対応するコンポーネントを取得する
     T* Get(EntityID entity);
@@ -45,7 +45,7 @@ public:
     T& GetRef(EntityID entity);
 
     // 指定エンティティのコンポーネントを削除する
-    void Delete(EntityID entity) override;
+    virtual void Delete(EntityID entity) override;
 
     //内部のTオブジェをすべて削除
     void Clear() override;

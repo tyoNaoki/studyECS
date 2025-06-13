@@ -1,4 +1,4 @@
-﻿Build started 2025/06/12 6:40:50.
+﻿Build started 2025/06/13 20:43:22.
 Logging verbosity is set to: Normal.     1>Project "D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\entityProject.vcxproj" on node 2 (Build target(s)).
      1>InitializeBuildStatus:
          Creating "x64\Debug\entityProject.tlog\unsuccessfulbuild" because "AlwaysCreate" was specified.
@@ -6,14 +6,14 @@ Logging verbosity is set to: Normal.     1>Project "D:\DxLib_VC\DX_LibData\tyoNa
          C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\CL.exe /c /I"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" /ZI /JMC /nologo /W3 /WX- /diagnostics:column /sdl /Od /D _DEBUG /D _WINDOWS /D _MBCS /Gm- /EHsc /RTC1 /MTd /GS /fp:precise /permissive- /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"x64\Debug\\" /Fd"x64\Debug\vc142.pdb" /external:W3 /Gd /TP /FC /errorReport:prompt main.cpp
          main.cpp
      1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\HopscotchHashMap.h(17,1): warning C4244: 'initializing': conversion from 'double' to 'const size_t', possible loss of data
-     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ComponentPoolManager.hpp(58,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
-       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ComponentPoolManager.hpp(54): message : while compiling class template member function 'void ECS::COMPONENT::ComponentPoolManager<64>::deleteAllComponent(const EntityID &)'
-       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(119): message : see reference to function template instantiation 'void ECS::COMPONENT::ComponentPoolManager<64>::deleteAllComponent(const EntityID &)' being compiled
-       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(224): message : see reference to class template instantiation 'ECS::COMPONENT::ComponentPoolManager<64>' being compiled
+     1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ComponentPoolManager.hpp(57,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ComponentPoolManager.hpp(53): message : while compiling class template member function 'void ECS::COMPONENT::ComponentPoolManager<64>::deleteAllComponent(const EntityID &)'
+       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(120): message : see reference to function template instantiation 'void ECS::COMPONENT::ComponentPoolManager<64>::deleteAllComponent(const EntityID &)' being compiled
+       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\World.h(242): message : see reference to class template instantiation 'ECS::COMPONENT::ComponentPoolManager<64>' being compiled
      1>D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\HopscotchHashMap.h(73,1): warning C4333: '>>': right shift by too large amount, data loss
        D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\HopscotchHashMap.h(72): message : while compiling class template member function 'uint8_t ecs_map::HopscotchHashMap<int,int>::dist_from_Bitmap(uint16_t) noexcept'
        D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\HopscotchHashMap.h(169): message : see reference to function template instantiation 'uint8_t ecs_map::HopscotchHashMap<int,int>::dist_from_Bitmap(uint16_t) noexcept' being compiled
-       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ecsTest.h(647): message : see reference to class template instantiation 'ecs_map::HopscotchHashMap<int,int>' being compiled
+       D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ecsTest.h(722): message : see reference to class template instantiation 'ecs_map::HopscotchHashMap<int,int>' being compiled
        Link:
          C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\HostX86\x64\link.exe /ERRORREPORT:PROMPT /OUT:"D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.exe" /INCREMENTAL /ILK:"x64\Debug\entityProject.ilk" /NOLOGO /LIBPATH:"D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用" kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.pdb" /SUBSYSTEM:WINDOWS /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\x64\Debug\entityProject.lib" /MACHINE:X64 x64\Debug\EntityPool.obj
          x64\Debug\main.obj
@@ -31,10 +31,10 @@ Build succeeded.
        "D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\entityProject.vcxproj" (Build target) (1) ->
        (ClCompile target) -> 
          D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\HopscotchHashMap.h(17,1): warning C4244: 'initializing': conversion from 'double' to 'const size_t', possible loss of data
-         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ComponentPoolManager.hpp(58,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
+         D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\ComponentPoolManager.hpp(57,1): warning C4267: 'initializing': conversion from 'size_t' to 'int', possible loss of data
          D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\HopscotchHashMap.h(73,1): warning C4333: '>>': right shift by too large amount, data loss
 
     3 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:03.07
+Time Elapsed 00:00:03.12
