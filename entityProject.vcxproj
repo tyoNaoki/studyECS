@@ -108,6 +108,7 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -143,6 +144,7 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -157,19 +159,32 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Scene.cpp" />
     <ClCompile Include="SceneView.cpp" />
-    <ClCompile Include="test.cpp" />
     <ClCompile Include="World.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="BorrowDispatcher.hpp" />
+    <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
+    <ClInclude Include="ComponentPoolManager.hpp" />
     <ClInclude Include="Debug.h" />
     <ClInclude Include="DebugHelpr.h" />
+    <ClInclude Include="Event.hpp" />
+    <ClInclude Include="EventDispatcher.hpp" />
+    <ClInclude Include="EventManager.h" />
+    <ClInclude Include="EventQueue.hpp" />
+    <ClInclude Include="HashFunctions.h" />
+    <ClInclude Include="HopscotchHashMap.h" />
+    <ClInclude Include="ecsTest.h" />
     <ClInclude Include="Entity.h" />
     <ClInclude Include="EntityPool.h" />
-    <ClInclude Include="group.h" />
+    <ClInclude Include="group.hpp" />
+    <ClInclude Include="OrderedQueueList.hpp" />
     <ClInclude Include="Scene.h" />
     <ClInclude Include="SceneView.h" />
+    <ClInclude Include="SparseHopscotch.h" />
     <ClInclude Include="SparseSet.h" />
+    <ClInclude Include="Storage.hpp" />
+    <ClInclude Include="typeList.hpp" />
     <ClInclude Include="World.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

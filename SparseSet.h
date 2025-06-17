@@ -11,69 +11,7 @@
 
 constexpr size_t NULL_INDEX = std::numeric_limits<size_t>::max();
 
-template <class... Types>
-struct type_list {
-    using type_tuple = std::tuple<Types...>;
-
-    template <size_t Index>
-    using get = std::tuple_element_t<Index, type_tuple>;
-
-    static constexpr size_t size = sizeof...(Types);
-};
-
-template<typename... Type>
-struct exclude_t final : type_list<Type...> {
-    /*! @brief Default constructor. */
-    explicit exclude_t() = default;
-};
-
-template<>
-struct exclude_t<> final : type_list<> {
-    explicit exclude_t() = default;
-};
-
-/**
- * @brief Variable template for exclusion lists.
- * @tparam Type List of types.
- */
-template<typename... Type>
-constexpr exclude_t<Type...> exclude{};
-
-/**
- * @brief Alias for lists of observed elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-struct get_t final : type_list<Type...> {
-    /*! @brief Default constructor. */
-    explicit get_t() = default;
-};
-
-/**
- * @brief Variable template for lists of observed elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-static const get_t<Type...> get{};  // `inline constexpr` → `static const`
-
-/**
- * @brief Alias for lists of owned elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-struct owned_t final : type_list<Type...> {
-    /*! @brief Default constructor. */
-    explicit owned_t() = default;
-};
-
-/**
- * @brief Variable template for lists of owned elements.
- * @tparam Type List of types.
- */
-template<typename... Type>
-static const owned_t<Type...> owned{};  // `inline constexpr` → `static const`
-
-// Base class allows runtime polymorphism
+// ランタイムでのインターフェース
 class ISparseSet {
 public:
     virtual ~ISparseSet() = default;
@@ -93,26 +31,39 @@ private:
     using Sparse = std::array<size_t,SPARSE_MAX_SIZE>;
 
 public:
-    T* Set(EntityID entity,T obj);
+    virtual ~SparseSet(){}
 
+    using type = T;
+
+    // オブジェクトをエンティティにセットする
+    virtual T* Set(EntityID entity,T obj);
+
+    // エンティティに対応するコンポーネントを取得する
     T* Get(EntityID entity);
 
+    // 参照を返す
     T& GetRef(EntityID entity);
 
-    void Delete(EntityID entity) override;
+    // 指定エンティティのコンポーネントを削除する
+    virtual void Delete(EntityID entity) override;
 
+    //内部のTオブジェをすべて削除
     void Clear() override;
 
+    //現在のdense配列の大きさ取得
     size_t Size() override;
 
+    //登録されているTオブジェ所持のEntityを配列で返す
     std::vector<EntityID> GetEntityList() override;
 
+    //対象のEntityがTオブジェを所持しているか
     bool ContainsEntity(EntityID entity) override;
 
+    //対象のEntityのdenseIndexを取得
     inline size_t GetDenseIndex(EntityID entity);
-
+    //Sparse配列に設定
     inline void SetSparseIndex(EntityID entity,size_t index);
-
+    //空チェック
     bool IsEmpty() const{
         return m_dense.empty();
     }

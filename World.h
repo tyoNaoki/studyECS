@@ -1,29 +1,42 @@
 #pragma once
-#include "Entity.h"
-#include "EntityPool.h"
 #include <unordered_map>
 #include <typeindex>
 #include <memory>
-#include <bitset>
-#include "Debug.h"
-#include "SparseSet.h"
 #include <tuple>
 #include <functional>
 #include <algorithm>
 #include <mutex>
 #include<vector>
+#include <bitset>
+#include <type_traits>
+#include <utility>
+#include "Entity.h"
+#include "EntityPool.h"
+#include "Debug.h"
+#include "SparseSet.h"
+#include "HopscotchHashMap.h"
+#include "Storage.hpp"
+#include "group.hpp"
+#include "typeList.hpp"
+#include "ComponentPoolManager.hpp"
+#include "EventQueue.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
 namespace ECS {
+    
 class World
 {
 private:
     template<typename...>
     friend class SceneView;
     
-    // '1' == active, '0' == inactive.
-    using ComponentBitSet = std::bitset<MAX_COMPONENTS>;
+    using base_type = ISparseSet;
+    
+    using groupID = EntityIndex;
+
+    //template<typename Type,StorageClass S>
+    //using storage_for_type = typename StorageFor<Type, S>::type;
 
 public:
     World() = default;
@@ -32,46 +45,81 @@ public:
 
     EntityID spawnEmpty(const std::string name = "Empty") {
         EntityID id =  entityPool.alloc(name); // EntityPoolを通じてエンティティを作成
-        m_entityMasks.Set(id, {});
+        componentPoolManager.setEntityMax(id);
         return id;
     };
 
-    template <typename... Components>
-    EntityID spawn(const std::string name = "Object",Components&&... components) {
+    /*関数使用例
+    Position position = Position(0.0f,5.0f);
+	auto entity = ECS::world().spawn("",position,Velocity(5.0f,0.1f));
+    auto entity2 = ECS::world().spawn("");
+    auto entity3 = ECS::world().spawn<A,B>(A{});
+    auto entity4 = ECS::world().spawn<A, B>(B{});
+    auto entity5 = ECS::world().spawn<A, B>(A{},B{});
+    auto entity6 = ECS::world().spawn<A, B>("Apple", A{}, B{});
+    auto entity6 = ECS::world().spawn<A, B>(B{});
+    auto entity7 = ECS::world().spawn<A, B>("Banana", B{});
+    */
+
+    //tuple から Expected に変換可能な最初の要素を返し、
+    //見つからなければ Expected{} を返す再帰テンプレート
+    template <typename Expected, typename Tuple, std::size_t I = 0>
+    constexpr Expected extract_or_default(const Tuple& tup) {
+        if constexpr (I == std::tuple_size_v<Tuple>) {
+            // 最後まで探しても無ければデフォルト
+            return Expected{};
+        }
+        else if constexpr (
+            std::is_convertible_v<
+            std::tuple_element_t<I, Tuple>, Expected>) {
+            // I 番目の要素が変換可能ならそれを採用
+            return static_cast<Expected>(std::get<I>(tup));
+        }
+        else {
+            // 見つかるまで再帰的に次へ
+            return extract_or_default<Expected, Tuple, I + 1>(tup);
+        }
+    }
+
+     //各コンポーネント値が揃ったタプルを受け取って実際に登録
+    template <typename... Components, typename Tuple>
+    EntityID spawn_impl(const std::string& name, Tuple&& fullTuple) {
         EntityID id = entityPool.alloc(name);
 
-        //ComponentData保存&&コンポーネント未登録なら登録
-        std::initializer_list<int>{(getComponentPool<std::decay_t<Components>>().Set(id, std::forward<Components>(components)), 0)...};
+        std::apply(
+            [&](auto&&... comps) {
+                (getComponentPool<std::decay_t<decltype(comps)>>()
+                    .Set(id, std::forward<decltype(comps)>(comps)), ...);
+            },
+            std::forward<Tuple>(fullTuple));
 
-        //ComponentBitを設定
-        m_entityMasks.Set(id, {});
-        registComponentSet<Components...>(id);
+        componentPoolManager.setEntityMax(id);
+        componentPoolManager.registComponentSet<Components...>(id);
         return id;
+    }
+
+    //期待コンポーネント …Components とユーザが渡した Provided…
+    //足りない型は {} で補完
+    template <typename... Components, typename... ProvidedArgs>
+    EntityID spawn(const std::string& name, ProvidedArgs&&... provided) {
+        auto provTuple = std::make_tuple(std::forward<ProvidedArgs>(provided)...);
+        auto fullTuple = std::make_tuple(extract_or_default<Components>(provTuple)...);
+        return spawn_impl<Components...>(name, std::move(fullTuple));
+    }
+
+       //名前省略オーバーロード
+    template <typename... Components, typename... ProvidedArgs,
+        std::enable_if_t<(sizeof...(ProvidedArgs) <= sizeof...(Components)), int> = 0>
+        EntityID spawn(ProvidedArgs&&... provided) {
+        return spawn<Components...>("Object", std::forward<ProvidedArgs>(provided)...);
     }
 
     bool despawn(EntityID& entity){
         if(!entityPool.contains(entity)) return false;
 
-        //Componentの削除処理
-        //m_entityMasks.Delete(entity);
-        ComponentBitSet& bit = getEntityMask(entity);
+       componentPoolManager.deleteAllComponent(entity);
 
-        //所持コンポーネントの数
-        int compCount = bit.count();
-
-        //全てのコンポーネントデータ削除
-        for (int i = 0; i < MAX_COMPONENTS; i++){
-            if (bit[i] == 1){
-                if (m_componentPools[i]) { 
-                    m_componentPools[i]->Delete(entity);
-                    compCount--;
-
-                    if(compCount <= 0) break;
-                }
-            }
-        }
-
-        m_entityMasks.Delete(entity);
+       componentPoolManager.deleteEntity(entity);
 
         return entityPool.dealloc(entity);
     };
@@ -82,99 +130,50 @@ public:
         return entityPool.GetName(entity);
     }
 
-    template <typename T>
-    void registerComponent() {
-        ASSERT(m_componentPools.size() <= MAX_COMPONENTS,
-            "Exceeded max number of registered components");
-
-        size_t index = getComponentIndex<T>();
-
-        if (index >= m_componentPools.size())
-            m_componentPools.resize(index + 1);
-
-        ASSERT(!m_componentPools[index],
-            "Attempting to register component '" << typeid(T).name() << "' twice");
-
-        m_componentPools[index] = std::make_unique<SparseSet<T>>();
-
-        CUSTOM_INFO("Registered component '" << typeid(T).name() << "'");
-    };
-
+    /*関数使用例
+    auto component = ECS::world().emplace<Velocity>(entity,1.0f,0.5f);
+    */
     template <typename T, typename... Args>
     T* emplace(const EntityID& entityID, Args&&... args) {
-        auto& pool = getComponentPool<T>();
-
-        //グループ更新
-        registComponentSet<T>(entityID);
-
-        return pool.Set(entityID, std::move(T{ std::forward<Args>(args)... }));
+        return componentPoolManager.emplace<T>(entityID,args...);
     }
 
     template <typename T>
     T* getComponent(const EntityID& entityID) {
-        auto& pool = getComponentPool<T>();
-        return pool.Get(entityID);
+        return componentPoolManager.getComponent<T>(entityID);
     }
     
     template <typename T>
     void removeComponent(const EntityID& entityID){
-        //無効なEntity
-        if(entityID == INVALID_ENTITY) return;
-
-        auto& pool = getComponentPool<T>();
-
-        if (!pool.Get(entityID)) return;
-
-        pool.Delete(entityID);
-        
-        //グループ更新
-        ComponentBitSet& mask = getEntityMask(entityID);
-        setComponentBit<T>(mask, 0);
+        componentPoolManager.removeComponent<T>(entityID);
     }
 
-    ComponentBitSet* getComponentBitSet(const EntityID& entity){
-        return m_entityMasks.Get(entity);
+    auto* getComponentBitSet(const EntityID& entity){
+        return componentPoolManager.getComponentBitSet(entity);
     }
 
     template <typename... Components>
     bool has(EntityID entity){
-        auto bitset = getEntityMask(entity);
-
-        if(!bitset.any()) return false;
-
-        ComponentBitSet newMask = getMask<Components...>();
-        return ((bitset & newMask) == newMask);
+        return componentPoolManager.has<Components...>(entity);
     }
+
+    // コンポーネントの追加を通知するハンドラを登録したいとき
+    template<typename Comp>
+    auto& on_construct() {
+        return componentPoolManager.template getComponentPool<Comp>().on_construct();
+    }
+
+    template<typename Comp>
+    auto& on_update() {
+        return componentPoolManager.template getComponentPool<Comp>().on_update();
+    }
+
+    template<typename Comp>
+    auto& on_destroy() {
+        return componentPoolManager.template getComponentPool<Comp>().on_destroy();
+    }
+
     
-    /*
-    template <typename... Get, typename... Exclude>
-    typename std::enable_if<(sizeof...(Get) > 0), SceneView<get_t<Get...>, exclude_t<Exclude...>>>::type
-        View(exclude_t<Exclude...> = exclude_t<>{}) {
-        return SceneView<get_t<Get...>, exclude_t<Exclude...>>{};
-    }
-    */
-    
-    /*
-    template <typename... Get, typename... Exclude>
-    typename std::enable_if < (sizeof...(Get) > 0),SceneView<get_t<Get...>, exclude_t<Exclude...>> View(exclude_t<Exclude...> = exclude_t<>{},
-        ) {
-        return SceneView<get_t<Get...>, exclude_t<Exclude...>>{};
-    }
-    */
-
-    /*
-    template <typename... Get, typename... Exclude>
-    SceneView<get_t<Get...>, exclude_t<Exclude...>> View(exclude_t<Exclude...> = exclude_t<>{}) {
-        return SceneView<get_t<Get...>, exclude_t<Exclude...>>{};
-    }
-    */
-    /*
-    template <typename... Get, typename... Exclude>
-    std::enable_if_t<(sizeof...(Get) > 0), SceneView<get_t<Get...>, exclude_t<Exclude...>>>
-        View(exclude_t<Exclude...> = exclude_t<>{}) {
-        return SceneView<get_t<Get...>, exclude_t<Exclude...>>{};
-    }
-    */
     template <typename... Get>
     std::unique_ptr<SceneView<Get...>>  
     View() {
@@ -185,88 +184,73 @@ public:
             ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
         }
     }
-    
-    /*
-    // Excludeありのオーバーロード
-    template <typename... Get, typename... Exclude>
-    SceneView<get_t<Get...>, exclude_t<Exclude...>> View(exclude_t<Exclude...>) {
-        return SceneView<get_t<Get...>, exclude_t<Exclude...>>{};
+
+    template<StorageType S = StorageType::EventType,typename... Owned, typename... Get, typename... Exclude>
+    Group<owned_t<StorageClass_t<Owned, S>...>,get_t<StorageClass_t<Get, S>...>,exclude_t<StorageClass_t<Exclude, S>...>>
+    group(get_t<Get...> = get_t{},exclude_t<Exclude...> = exclude_t{}) {
+        using group_type = Group<owned_t<StorageClass_t<Owned, S>...>, get_t<StorageClass_t<Get, S>...>, exclude_t<StorageClass_t<Exclude,S>...>>;
+
+        using handler_type = typename group_type::handler;
+
+        std::shared_ptr<handler_type> handler{};
+
+        //groupsを見て、存在するか確認。
+        if(auto ptr = m_groups.find(group_type::group_id())){
+            return group_type{};
+        }
+
+        //無いと仮定して、作成
+        //Owner未指定の場合は専用の処理
+        if constexpr(sizeof...(Owned) == 0u){
+            return group_type{};
+        }
+        
+        handler = std::make_shared<handler_type>(
+            // Owned + Get 用
+            std::tuple_cat(
+                std::forward_as_tuple(getComponentPool<Owned>()...),
+                std::forward_as_tuple(getComponentPool<Get>()...)
+            ),
+            // Exclude 用
+            std::forward_as_tuple(getComponentPool<Exclude>()...)
+            );
+       
+        m_groups.insert(group_type::group_id(),handler);
+        return {*handler};
     }
-    */
+
+    size_t getGroupSize() noexcept
+    {
+        return m_groups.size();
+    }
+
+    template <typename T>
+    auto& getComponentPool() {
+        return componentPoolManager.getComponentPool<T>();
+    };
+
+    template <typename T>
+    ISparseSet* getComponentPoolPtr() {
+        return componentPoolManager.getComponentPoolPtr<T>();
+    };
 
 private:
     //EntityIDをSparseSetで再利用できるようにしている.
     //再利用時、ID(EntityIndex(32bit),Version(32bit)が組み合わされて発行される
     EntityPool entityPool;
 
+    COMPONENT::ComponentPoolManager<MAX_COMPONENTS> componentPoolManager;
+
     //コンポーネントデータが格納される
     //componentのクラスごとにindexが振られ、entityIDとcomponentクラスに対応した値が返される.
-    std::vector<std::unique_ptr<ISparseSet>> m_componentPools;
+    //std::vector<std::unique_ptr<ISparseSet>> m_componentPools;
 
     //各エンティティのComponentBitSet
+    //SparseSet<ComponentBitSet>m_entityMasks;
 
-    SparseSet<ComponentBitSet>m_entityMasks;
+    ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>m_groups;
 
-    //Componentの組み合わせ毎にグループ化して保持し、グループ呼び出し時使用する
-    //std::unordered_map<ComponentBitSet,std::vector<EntityID>>m_groups;\
-    [
-
-    static size_t getNextComponentIndex(const std::string typeName)
-    {
-        static size_t ind = 0;
-
-        if(ind > MAX_COMPONENTS)
-        {
-            ASSERT(false,typeName << " Component index over MAX_COMPONENTS " << MAX_COMPONENTS);
-        }
-        //World::m_componentNames.push_back(typeName);
-        return ind++;
-    };
-
-    template <typename T>
-    static size_t getComponentIndex() {
-        static size_t ind = getNextComponentIndex(typeid(T).name());
-        return ind;
-    };
-
-    template <typename T>
-    ComponentBitSet::reference getComponentBit(ComponentBitSet& mask) {
-        size_t bitPos = getComponentIndex<T>();
-        return mask[bitPos];
-    }
-
-    template <typename... Components>
-    ComponentBitSet getMask() {
-        ComponentBitSet mask;
-        std::initializer_list<int>{ (setComponentBit<Components>(mask, 1), 0)... };
-        return mask;
-    }
-
-    ComponentBitSet& getEntityMask(EntityID entity){
-        return *m_entityMasks.Get(entity);
-    }
-
-    template <typename... Components>
-    void registComponentSet(const EntityID& entity){
-        ComponentBitSet* bitset = m_entityMasks.Get(entity);
-
-        //無効なentityを指定した
-        if (!bitset) {
-            return;
-        }
-
-        ComponentBitSet newMask = getMask<Components...>();
-
-        // すべてのコンポーネントがすでに登録されている場合は何もしない
-        if ((*bitset & newMask) == newMask) {
-            return;
-        }
-
-        //コンポーネント登録
-        std::initializer_list<int>{(setComponentBit<Components>(*bitset, 1), 0)... };
-    }
-
-    
+    EVENT::EventQueueBase<ecs_map::id_type,void(const std::shared_ptr<void>&)>m_eventQueue;
 
     /*
     template <typename... EntityIDs>
@@ -301,40 +285,8 @@ private:
         (m_groups[bit].erase(std::remove(m_groups[bit].begin(), m_groups[bit].end(), entities), m_groups[bit].end()), ...);
     }
     */
-
-    template <typename T>
-    void setComponentBit(ComponentBitSet& bit, bool val) {
-        size_t bitPos = getComponentIndex<T>();
-        bit[bitPos] = val;
-    }
-
-    template <typename T>
-    size_t getOrRegisterComponentIndex() {
-        size_t index = getComponentIndex<T>();
-
-        if (index >= m_componentPools.size() || !m_componentPools[index])
-            registerComponent<T>();
-
-        // Internal error, should never happen outside development
-        ASSERT(index < m_componentPools.size() && index >= 0,
-            "Type index out of bounds for component '" << typeid(T).name() << "'");
-
-        return index;
-    };
-
-    template <typename T>
-    ISparseSet* getComponentPoolPtr() {
-        size_t index = getOrRegisterComponentIndex<T>();
-        return m_componentPools[index].get();
-    };
     
-    template <typename T>
-    SparseSet<T>& getComponentPool() {
-        ISparseSet* genericPtr = getComponentPoolPtr<T>();
-        SparseSet<T>* pool = static_cast<SparseSet<T>*>(genericPtr);
-
-        return *pool;
-    };
+   
 };
 
 static World& world() {
@@ -344,6 +296,7 @@ static World& world() {
     std::lock_guard<std::mutex> lock(mutex); // スレッドセーフ
     return sWorld;
 }
+
 
 template<typename Pack>
 class SceneViewIterator {
@@ -379,7 +332,6 @@ private:
     // Sparse set with the smallest number of components,
     // basis for ForEach iterations.
     ISparseSet* m_smallest = nullptr;
-
     
     //対象のコンポーネントを全て所持しているか
     bool AllContain(EntityID id) {
@@ -396,55 +348,35 @@ private:
             });
     }
 
-    /*
-    *	Index the generic pool array and downcast to a specific component pool
-    *   by using compile time indices
-    */
+    // インデックスを使用して汎用プール配列を特定し、特定のコンポーネントプールにダウンキャストする
     template <size_t Index>
     auto GetPoolAt() {
         using componentType = typename componentTypes::template get<Index>;
         return static_cast<SparseSet<componentType>*>(m_viewPools[Index]);
     }
 
+    // エンティティIDを指定し、対象のコンポーネントのタプルを作成する
     template <size_t... Indices>
     auto MakeComponentTuple(EntityID id, std::index_sequence<Indices...>) {
-        return std::make_tuple((std::ref(GetPoolAt<Indices>()->GetRef(id)))...);
+        return std::make_tuple(std::ref(GetPoolAt<Indices>()->GetRef(id))...);
     }
 
-    /*
-    *  Provided the function arguments are valid, this function will iterate over the smallest pool
-    *  and run the lambda on all entities that contain all the components in the view.
-    *
-    *  Note: This is the internal implementation: opt for the more user friendly functional ones in the
-    *        public interface.
-    */
     template <typename Func>
     void ForEachImpl(Func func) {
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
 
-        // Iterate smallest component pool and compare against other pools in view
-        // Note this list is a COPY, allowing safe deletion during iteration.
+        // 最も小さいコンポーネントプールを走査し、他のプールと比較する
+        // エンティティリストをコピーすることで、ループ中の安全な削除を可能にする
         for (EntityID id : m_smallest->GetEntityList()) {
             if (AllContain(id) && NotExcluded(id)) {
 
-                // This branch is for [](EntityID id, Component& c1, Component& c2);
-                // constexpr denotes this is evaluated at compile time, which prunes
-                // invalid function call branches before runtime to prevent the
-                // typical invoke errors you'd see after building.
-               // 
-               //if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
-               // 	std::apply(func, std::tuple_cat(std::make_tuple(id), ));
-               // }
-
-                // This branch is for [](Component& c1, Component& c2);
-               // else if constexpr (std::is_invocable_v<Func, Get&...>) {
-               // 	std::apply(func, MakeComponentTuple(id, inds));
-              //  }
-
-               // else {
-                    ASSERT(false,
-                    "Bad lambda provided to .ForEach(), parameter pack does not match lambda args");
-               // }
+                // 関数適用（エンティティIDを含む場合）
+                if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
+                    std::apply(func, std::tuple_cat(std::make_tuple(id), MakeComponentTuple(id, inds)));
+                }
+                else {
+                    ASSERT(false, "関数の引数が適切ではありません");
+                }
             }
         }
     }
@@ -465,7 +397,7 @@ private:
 
 public:
 
-    // These are the function signatures you can pass to .ForEach()
+    //functions
     using ForEachFunc = std::function<void(Get&...)>;
     using ForEachFuncWithID = std::function<void(EntityID, Get&...)>;
 
@@ -485,7 +417,7 @@ public:
         m_smallest = *smallestPool;
 
         // エンティティのフィルタリング処理
-        constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};  // インデックスシーケンスを作成
+        constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};  
 
         createPacked();
     }
@@ -495,14 +427,6 @@ public:
 
         createPacked();
     }
-
-    /*
-    template <typename... ExcludedComponents>
-    std::unique_ptr<SceneView<Get...>> Exclude() {
-        std::vector<ISparseSet*> excludedPools = { world().getComponentPoolPtr<ExcludedComponents>()... };
-        return std::make_unique<SceneView<Get...>>(excludedPools);
-    }
-    */
 
     //取得しいるコンポーネントEntityをさらに絞り込む
     template <typename... ExcludedComponents>
@@ -515,43 +439,19 @@ public:
     /* 以下関数使用例
     *   auto view = ECS::world().View<Position,Velocity>();
     *   for(auto& x: *view){
-    *       //EntitiyIDのみ別関数
-			auto& entityID = view->getEntitiyID(x);
+    *       //EntitiyIDは変数で取得
+			auto& entityID = x.entity;
             //packにあるcomponentは以下関数で取得
 			auto& vel = view->get<Velocity>(x);
 			auto& posi = view->get<Position>(x);
             vel.x += 5.0f;
 	    }
     */
-    
-    /*
-    template <typename Type>
-    Type& get(Pack<Get...>& pack) {
-        return std::get<Type&>(pack);
-    }
-    */
 
     template <typename Type>
     Type& get(std::tuple<Get&...>& pack) {
         return std::get<Type&>(pack);
     }
-
-    /*
-    EntityID& getEntitiyID(Pack<Get...>& pack){
-        return std::get<0>(pack);  // EntityIDはインデックスで取得
-    }
-    */
-    
-
-    /*
-    *  Executes a passed lambda on all the entities that match the
-    *  passed parameter pack.
-    *
-    *  Provided function should follow one of two forms:
-    *  [](Component& c1, Component& c2);
-    *  OR
-    *  [](EntityID id, Component& c1, Component& c2);
-    */
 
     void ForEach(ForEachFunc func) {
         ForEachImpl(func);
@@ -588,18 +488,39 @@ public:
         return result;
     }
 
-    /*
+    /*以下関数使用例
+    * auto view = ECS::world().View<Position,Velocity>();
+      view->each([](auto entity,auto &pos,auto &vel){
+			pos.x+=5.0f;
+			vel.x += 5.0f;
+		});
+
+		view->each([](auto& pos, auto& vel) {
+			pos.x += 5.0f;
+			vel.x += 5.0f;
+		});
+    */
+    
     template <typename Func>
     void each(Func func){
+        constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
+
         for(EntityID entity : m_smallest->GetEntityList()){
-            if(AllContain(entity)){
-                auto entity_tuple = std::tuple_cat
+            if(!AllContain(entity)) continue;
+            auto component_Tuple = MakeComponentTuple(entity, inds);
+            if constexpr (std::is_invocable_v<Func,EntityID,Get&...>){
+                std::apply(func, std::tuple_cat(std::make_tuple(entity), component_Tuple));
+            }
+            else if constexpr (std::is_invocable_v<Func,Get&...>){
+                std::apply(func, component_Tuple);
+            }else{
+                ASSERT(false, "Invalid lambda function passed to view.each()");
             }
         }
     }
-    */
 
 };
+
 
 }//namespace ECS
 
