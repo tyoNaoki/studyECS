@@ -108,50 +108,51 @@ void worldEventTest()
 
 	ECS::EVENT::Signal bus;                     // EventType = int
 	
-	// 読み取り専用の Listener
+	
+	// 読み取り専用のListener
 	bus.connect([](const Apple* a) {
 		std::cout << "const Apple x = " << a->x << "\n";
 		});
-
-	/*
-	// 変更可能な Listener
+	
+	// 変更可能なListener
 	bus.connect([](Apple* a) {
 		a->x += 10;
-		std::cout << "mut Apple x = " << a->x << "\n";
+		std::cout << "Apple*a->x = " << a->x << "\n";
 		});
-		*/
-
-	// shared_ptr も素のポインタと同様に渡せる
-	/*
 	
-	bus.connect<const std::shared_ptr<Apple>>([](const std::shared_ptr<Apple> s) {
+	
+	// shared_ptrも素のポインタと同様に渡せる
+	bus.connect([](const std::unique_ptr<Banana>& s) {
+		std::cout << "const std::unique_ptr<Banana>& s->x  = " << s->x << "\n";
+		});
+	
+	bus.connect([](const std::shared_ptr<Banana>& s) {
 		std::cout << "use_count = " << s.use_count() << "\n";
-		std::cout << "apple->x  = " << s->x << "\n";
+		std::cout << "const std::shared_ptr<Banana>&s->x  = " << s->x << "\n";
 		});
-
+	
 	// Banana のミューテータ
-	bus.connect<Banana*>([](Banana* b) {
+	bus.connect([](std::shared_ptr<Banana>& b) {
 		b->y *= 2;
-		std::cout << "Banana y = " << b->y << "\n";
+		std::cout << "std::shared_ptr<Banana>& y = " << b->y << "\n";
 		});
-	*/
+	
 
-	return;
-
-	auto sp = std::make_shared<Apple>(100);
 	// 発行側：ポインタ or スマートポインタだけ書けば OK
-	Apple a{ 42 };
-	const Apple ca{ 99 };
-	//bus.publish(&a);   // → 非 const Listener & const Listener 両方呼ばれる
-	//bus.publish(&ca);  // → const Listener のみ
+	//Apple a{ 42 };
+	//const Apple ca{ 99 };
+	//bus.publish(&a);  
+	//bus.publish(&ca);  
+	const std::unique_ptr<Banana> b = std::make_unique<Banana>();
+	bus.publish(b); 
 
 	//bus.publish(sp);   // shared_ptr<Apple> の Listener が呼ばれる
 
-	Banana b{ 7 };
+	//Banana b{ 7 };
 	//bus.publish(&b);   // Banana* リスナ呼び出し
 
 	// フレーム末に一括ディスパッチ
-	//bus.dispatch();
+	bus.dispatch();
 
 	//bus.dispatch();
 
