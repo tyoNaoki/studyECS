@@ -20,7 +20,7 @@
 #include "typeList.hpp"
 #include "ComponentPoolManager.hpp"
 #include "EventQueue.hpp"
-#include "BorrowDispatcher.hpp"
+#include "Signal.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 

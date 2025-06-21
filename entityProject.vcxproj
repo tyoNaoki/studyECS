@@ -162,7 +162,7 @@
     <ClCompile Include="World.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="BorrowDispatcher.hpp" />
+    <ClInclude Include="Signal.hpp" />
     <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
     <ClInclude Include="ComponentPoolManager.hpp" />

@@ -16,7 +16,7 @@
 #include "unodreredDense.h"
 #include <random>
 #include "EventQueue.hpp"
-#include "BorrowDispatcher.hpp"
+#include "Signal.hpp"
 
 // First let's define the event struct. e is the event type, priority determines the priority.
 struct MyEvent
@@ -80,7 +80,6 @@ void test_waitFor_times_out_and_succeeds();
 
 void test()
 {
-	worldEventTest();
 }
 
 bool myCallback(const int a, const std::unique_ptr<int>& b) {
@@ -104,6 +103,13 @@ void worldEventTest()
 	struct Banana {
 		int x = 30;
 		int y = 0;
+		Banana(int x_, int y_) : x(x_), y(y_) {}
+		Banana() = default;
+	};
+
+	struct Grape {
+		int x = 30;
+		int y = 0;
 	};
 
 	ECS::EVENT::Signal bus;                     // EventType = int
@@ -119,40 +125,51 @@ void worldEventTest()
 		a->x += 10;
 		std::cout << "Apple*a->x = " << a->x << "\n";
 		});
-	
-	
+
 	// shared_ptrも素のポインタと同様に渡せる
-	bus.connect([](const std::unique_ptr<Banana>& s) {
-		std::cout << "const std::unique_ptr<Banana>& s->x  = " << s->x << "\n";
+	bus.connect([](const std::unique_ptr<const Banana>* s) {
+		std::cout << "const std::unique_ptr<Banana>* s->x  = " << s->get()->x << "\n";
 		});
 	
-	bus.connect([](const std::shared_ptr<Banana>& s) {
-		std::cout << "use_count = " << s.use_count() << "\n";
-		std::cout << "const std::shared_ptr<Banana>&s->x  = " << s->x << "\n";
+	bus.connect([](std::unique_ptr<Banana>* s) {
+		std::cout << "std::unique_ptr<Banana>& s->x  = " << s->get()->x << "\n";
+		s->get()->x = 100;
 		});
 	
-	// Banana のミューテータ
-	bus.connect([](std::shared_ptr<Banana>& b) {
-		b->y *= 2;
-		std::cout << "std::shared_ptr<Banana>& y = " << b->y << "\n";
+	bus.connect([](const std::shared_ptr<Grape>* s) {
+		std::cout << "const std::shared_ptr<Grape>&s->x  = " << s->get()->x << "\n";
+		});
+
+	bus.connect([](std::shared_ptr<Grape>* s) {
+		std::cout << "std::shared_ptr<Grape>&->x  = " << s->get()->x << "\n";
+		s->get()->x += 50;
 		});
 	
 
 	// 発行側：ポインタ or スマートポインタだけ書けば OK
-	//Apple a{ 42 };
-	//const Apple ca{ 99 };
-	//bus.publish(&a);  
-	//bus.publish(&ca);  
-	const std::unique_ptr<Banana> b = std::make_unique<Banana>();
-	bus.publish(b); 
+	Apple a{ 42 };
+	const Apple ca{ 99 };
+	
+	const std::unique_ptr<const Banana> cb = std::make_unique<Banana>(10,10);
+	std::unique_ptr<Banana> b = std::make_unique<Banana>();
+	std::shared_ptr<Grape> g = std::make_shared<Grape>();
+	const std::shared_ptr<Grape> cg = std::make_shared<Grape>();
 
-	//bus.publish(sp);   // shared_ptr<Apple> の Listener が呼ばれる
+	bus.publish(&a);
+	bus.publish(&ca);
+	bus.publish(&cb);
+	bus.publish(&b);
+	bus.publish(&cg);
+	bus.publish(&g);
 
 	//Banana b{ 7 };
 	//bus.publish(&b);   // Banana* リスナ呼び出し
 
 	// フレーム末に一括ディスパッチ
 	bus.dispatch();
+
+	std::cout << "change unique_ptr<Banana>b->x = " << b->x << std::endl;
+	std::cout << "change shared_ptr<Grapge>g->x = " << g->x << std::endl;
 
 	//bus.dispatch();
 

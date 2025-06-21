@@ -1,78 +1,42 @@
-#ifndef ECS_BORROWDISPATCHER_HPP
-#define ECS_BORROWDISPATCHER_HPP
+#ifndef ECS_SIGNAL_HPP
+#define ECS_SIGNAL_HPP
 
 #include "CallbackList.hpp"
 #include <vector>
-#include <unordered_map>
 #include <shared_mutex>
 #include <functional>
 #include <cstdint>
 #include "EventDispatcher.hpp"
+#include <typeinfo>
+
 
 namespace ECS {
 
 namespace EVENT {
 
-	// 型消去のための基底クラス
-	struct BorrowBase {
-		virtual ~BorrowBase() = default;
+	// イベント引数の型消去ホルダーの基底クラス
+	struct IEventArg {
+		virtual ~IEventArg() = default;
+		virtual const std::type_info& type() const = 0;
 	};
 
-	// もともとの Borrow を継承させる
-	template<class T, bool Mut>
-	struct Borrow : BorrowBase {
-		using value_type = T;
-		using pointer = std::conditional_t<Mut, T*, const T*>;
-		pointer ptr{ nullptr };
-
-#ifdef DEBUG
-		~Borrow() { assert(ptr && "dangling Borrow"); }
-#else
-		~Borrow() = default;
-#endif
-
-		explicit operator bool() const noexcept { return ptr; }
-		auto operator->() const noexcept { return ptr; }
-		auto& operator*()  const noexcept { return *ptr; }
+	// 任意の型 T を保持する派生クラス
+	template<typename T>
+	struct EventArg : IEventArg {
+		T value;
+		explicit EventArg(T&& v) : value(std::forward<T>(v)) {}
+		const std::type_info& type() const override { return typeid(T); }
 	};
-
-
-template<typename U>
-struct ensure_borrow {
-	static_assert(
-		sizeof(U) == 0,
-		"ensure_delegate<U> must be instantiated only for T* or Delegate<T> types"
-		);
-};
-
-// 2) Specialization for bare pointers (T* and const T*)
-template<typename P>
-struct ensure_borrow<P*> {
-	// strip cv off P, then Delegate<P0>
-	using P0 = std::remove_cv_t<P>;
-	using type = Borrow<P0>;
-};
-
-template<typename P>
-struct ensure_borrow<const P*> {
-	using P0 = std::remove_cv_t<P>;
-	using type = Borrow<const P0>;
-};
-
-// 3) Specialization for an existing Delegate<T>
-template<typename P,bool Mut>
-struct ensure_borrow<Borrow<P,Mut>> {
-	using type = Borrow<P>;
-};
-
-template<class U> using ensure_borrow_t = typename ensure_borrow<U>::type;
 
 // ラムダの引数型を抜き出すメタ関数
 template<class> struct function_argument;
+
 template<class R, class Arg, class...Rest>
 struct function_argument<R(Arg, Rest...)> { using type = Arg; };
+
 template<class R, class C, class Arg, class...Rest>
 struct function_argument<R(C::*)(Arg, Rest...) const> { using type = Arg; };
+
 template<class F>
 struct function_argument : function_argument<decltype(&F::operator())> {};
 
@@ -92,161 +56,70 @@ class Signal : private EventDispatcher<ecs_map::id_type,void(void*)>
 	using Base = EventDispatcher<ecs_map::id_type, void(void*)>;
 	using HashID = ecs_map::id_type;
 	using RawArg = void*;
-	using Event = std::pair<HashID, std::unique_ptr<BorrowBase>>;
-	using Wrapper = std::function<void(RawArg)>;
-	//using Event = std::pair<HashID, RawArg>;
+	using Event = std::pair<HashID, std::unique_ptr<IEventArg>>;
 
-	// ハッシュは常に “Delegate 化した型” に対して
-	//template<class U>
-	//inline static constexpr HashID hash = ecs_map::type_hash<ensure_borrow_t<U>>();
+	using Wrapper = std::function<void(RawArg)>;
 
 	template<class U>
 	inline static constexpr HashID hash = ecs_map::type_hash<U>();
 
 public:
+	
 	template<class F>
-	void connect(F&& f) {
-		using ObjT = function_arg_t<F>; 
-		HashID id = hash<ObjT>;
-		using P0 = std::remove_pointer_t<ObjT>;  // T or const T
-		constexpr bool Mut = !std::is_const_v<P0>;
-		using U = std::remove_cv_t<P0>;
-		using B = Borrow<U, Mut>;
+	void connect(F&& f) { 
+		using ObjT = function_arg_t<F>;
+		using RealT = std::decay_t<ObjT>;
+		HashID id = hash<RealT>;
 
-		Wrapper w = [fn = std::forward<F>(f)](RawArg raw){
-			if constexpr (std::is_pointer_v<ObjT>) {
-				// ObjT が T* や const T* のケース
-				fn(reinterpret_cast<ObjT>(raw));
+		Wrapper w = [fn = std::forward<F>(f)](RawArg raw) {
+			auto eventHolder = static_cast<const EventArg<RealT>*>(raw);
+
+			if constexpr (std::is_const_v<std::remove_reference_t<ObjT>>) {
+				fn(eventHolder->value);
 			}
 			else {
-				// ObjT が T&, const T&, unique_ptr<T>&, const unique_ptr<T>& など
-				using PT = std::remove_reference_t<ObjT>;
-				// RawArg は “PT*” で enqueue している前提
-				PT* ptr = reinterpret_cast<PT*>(raw);
-				fn(*ptr);
+				fn(const_cast<std::remove_const_t<RealT>&>(eventHolder->value));
 			}
 		};
 
+		// listeners マップへの登録
 		std::scoped_lock lk(mtx_);
 		listeners[id].append(std::move(w));
 	}
 
-	/*
-	template<
-		typename P,
-		typename = std::enable_if_t< has_get_v<std::decay_t<P>> >
-	>
-		void publish(P&& ptrLike) {
-		// イベントキーは ObjT が受け取りたい正確な型（参照込み）に合わせる
-		using KeyT = std::decay_t<P>&;
-		enqueue(
-			hash<KeyT>,
-			// RawArg に渡すのはスマートポインタ自身へのポインタ
-			reinterpret_cast<RawArg>(&ptrLike)
+	template<typename T>
+	void publish(T&& eventArg) {
+		using Decayed = std::decay_t<T>;
+		HashID id = hash<Decayed>;
+		auto holder = std::make_unique<EventArg<Decayed>>(std::forward<T>(eventArg));
+		// イベントキューへの格納（ここでは piecewise_construct を利用）
+		queue_.emplace_back(
+			std::piecewise_construct,
+			std::forward_as_tuple(id),
+			std::forward_as_tuple(std::move(holder))
 		);
 	}
-
-	template<
-		class U,
-		typename = std::enable_if_t< !has_get_v<std::remove_cv_t<U>> >
-	>
-		void publish(U* ptr)            // non-const T*
-	{
-		enqueue(hash<U*>, reinterpret_cast<RawArg>(ptr));
-	}
-
-	template<
-		class U,
-		typename = std::enable_if_t< !has_get_v<std::remove_cv_t<U>> >
-	>
-		void publish(const U* ptr)      // const T*
-	{
-		enqueue(hash<const U*>,
-			reinterpret_cast<RawArg>(const_cast<U*>(ptr)));
-	}
-	*/
-
-	template<class U>
-	void publish(U* ptr) {
-		// U* を受けるので Mut = true
-		using B = Borrow<std::remove_cv_t<U>, /*Mut=*/true>;
-
-		// 1) インスタンスを作って ptr をセット
-		auto holder = std::make_unique<B>();
-		holder->ptr = ptr;
-
-		// 2) キー（connect で hash<ObjT> と同じになるよう ObjT=U*）
-		HashID id = hash<U*>;
-
-		// 3) queue_ に push
-		queue_.emplace_back(id, std::move(holder));
-	}
 	
-	
-	template<class U>
-	void publish(const U* ptr) {
-		// const U* を受けるので Mut = false
-		using B = Borrow<std::remove_cv_t<U>, /*Mut=*/false>;
-
-		auto holder = std::make_unique<B>();
-		holder->ptr = ptr;
-		HashID id = hash<const U*>;
-		queue_.emplace_back(id, std::move(holder));
-	}
-
-	// 同様に shared_ptr<T> や unique_ptr<T> 用に overload しても OK
-	template<typename P>
-	std::enable_if_t<has_get_v<std::decay_t<P>>, void>
-		publish(P&& ptrLike) {
-		// shared_ptr<T>&/&const なら ensure_borrow を使って同じように
-		using T0 = std::remove_cv_t<std::remove_reference_t<P>>;
-		using B = Borrow<T0, /*Mut=*/!std::is_const_v<T0>>;
-		auto holder = std::make_unique<B>();
-		holder->ptr = ptrLike.get();
-		HashID id = hash<std::add_lvalue_reference_t<P>>;
-		queue_.emplace_back(id, std::move(holder));
-	}
-
-	/*
-	// 2-A) publish(T* or const T*)
-	template<class U>
-	void publish(const U* ptr) {
-		enqueue(hash<U*>,static_cast<RawArg>(ptr));
-	}
-	*/
-
 	void dispatch() {
 		std::vector<Event> tmp;
 		{
 			std::scoped_lock lk(mtx_);
 			tmp.swap(queue_);
 		}
+
+		// キューの空状態を管理するカウンターのロック（スレッドセーフ性）
+		CounterLock<decltype(queueEmptyCount)> counterLock(queueEmptyCount);
+
 		for (auto& [id, holder] : tmp) {
 			auto it = listeners.find(id);
 			if (it == listeners.end()) continue;
-
-			RawArg raw = holder.get();          // BorrowBase*
-			it->second(raw);                     // connect 側のラッパーが static_cast して呼ぶ
+			// holder.get() は IEventArg* として渡す
+			it->second(holder.get());
 		}
 	}
-
-	/*
-	// 3) 全イベント dispatch
-	void dispatch() {
-		std::vector<std::pair<HashID, RawArg>> tmp;
-		{
-			std::scoped_lock lk(mtx_);
-			tmp.swap(queue_);
-		}
-		for (auto& [id, raw] : tmp) {
-			if (auto it = this->listeners.find(id);it != this->listeners.end())
-				it->second(raw);
-		}
-	}
-	*/
 
 	template<typename T>
-	void dispatch(HashID id = hash<T>)
+	void dispatch(HashID id = hash<std::decay_t<T>>)
 	{
 		std::vector<Event> work;
 	
@@ -266,34 +139,40 @@ public:
 		// 先頭側 (非対象) をキューへ戻す
 		if (work.begin() != keepPos) {
 			std::lock_guard<std::mutex> lk(mtx_);
+			
 			queue_.insert(queue_.end(),
 				std::make_move_iterator(work.begin()),
 				std::make_move_iterator(keepPos));
 		}
 	}
-	/*
+	
 	bool dispatchOne()
 	{
 		Event ev;
 		{
 			std::lock_guard<std::mutex> lk(mtx_);
-			if (queue_.empty()) return false;
-			ev = queue_.back();
-			queue_.pop_back();
+			if (queue_.empty()) return false;  // 空なら何もしない
+			ev = std::move(queue_.back());    
+			queue_.pop_back();               
 		}
 	
 		auto id = ev.first;                               // リスナ呼び出し
 		auto it = this->listeners.find(id);
 	
 		if (it == this->listeners.end()){
-			queue_.emplace_back(ev.first, ev.second);
+			std::lock_guard<std::mutex> lk(mtx_);
+			queue_.emplace_back(
+				std::piecewise_construct,
+				std::forward_as_tuple(ev.first),
+				std::forward_as_tuple(std::move(ev.second))
+			);
 			return false;
 		};
 	
-		it->second(ev.second);
+		it->second(ev.second.get());
 		return true;
 	}
-	*/
+	
 
 	/*
 	// dispatchIf関数は、bool関数(predictor)の結果に基づいて、イベントキュー内のイベントを処理する。  
@@ -439,9 +318,10 @@ public:
 	}
 
 	template<typename T>
-	void clearEvent(HashID id = hash<T>) {
+	void clearEvent(HashID id = hash<std::decay_t<T>>) {
 		// queue_ は std::vector<std::pair<HashID,RawArg>>
 		std::unique_lock<std::mutex> lk(mtx_);
+		
 		queue_.erase(
 			std::remove_if(
 				queue_.begin(),
@@ -450,6 +330,7 @@ public:
 			),
 			queue_.end()
 		);
+		
 	}
 
 private:
@@ -462,16 +343,10 @@ private:
 				   static_cast<Elem*>(raw)) };
 	}
 	
-	void enqueue(HashID id, RawArg raw) {
-		std::scoped_lock lk(mtx_);
-		queue_.emplace_back(id, raw);
-	
-		if (!emptyQueue()) { cv_.notify_one(); }
-	}
-
 	// static_assert 用ダミー
 	template<class> static constexpr bool always_false_v = false;
 
+	/*
 	template<typename BorrowT,typename F>
 	bool doInvokeFuncWithQueuedEvent(F&& func, RawArg raw) {
 		// 1) bool func(BorrowT) が呼べるなら
@@ -483,7 +358,7 @@ private:
 		}
 	
 		return false;
-		/*
+		
 		// 2) bool func(void*) が呼べるなら
 		else if constexpr (std::is_invocable_r_v<bool, F, RawArg>) {
 			return std::invoke(
@@ -500,8 +375,9 @@ private:
 				"Predicate must be "
 				"bool(Borrow<T>), bool(void*), or bool()");
 		}
-		*/
+		
 	}
+	*/
 
 private:
 	std::vector<Event>queue_;
@@ -510,8 +386,6 @@ private:
 	
 	int queueEmptyCount = 0;
 };
-
-
 
 }//namespace EVENT
 }//namespace ECS
