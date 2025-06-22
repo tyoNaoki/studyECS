@@ -46,7 +46,7 @@ public:
 
     EntityID spawnEmpty(const std::string name = "Empty") {
         EntityID id =  entityPool.alloc(name); // EntityPoolを通じてエンティティを作成
-        componentPoolManager.setEntityMax(id);
+        componentPoolManager.setEntityMask(id);
         return id;
     };
 
@@ -86,7 +86,7 @@ public:
     template <typename... Components, typename Tuple>
     EntityID spawn_impl(const std::string& name, Tuple&& fullTuple) {
         EntityID id = entityPool.alloc(name);
-        componentPoolManager.setEntityMax(id);
+        componentPoolManager.setEntityMask(id);
 
         std::apply(
             [&](auto&&... comps) {
@@ -117,7 +117,7 @@ public:
     bool despawn(EntityID& entity){
         if(!entityPool.contains(entity)) return false;
 
-       componentPoolManager.deleteAllComponent(entity);
+       componentPoolManager.removeAllComponent(entity);
 
        componentPoolManager.deleteEntity(entity);
 
@@ -131,11 +131,24 @@ public:
     }
 
     /*関数使用例
-    auto component = ECS::world().emplace<Velocity>(entity,1.0f,0.5f);
+    auto component = ECS::world().emplaceOrUpdateComponent<Velocity>(entity,1.0f,0.5f);
     */
+
+    template <typename T, typename... Args>
+    T* emplaceOrUpdateComponent(const EntityID& entityID, Args&&... args) {
+        return componentPoolManager.emplaceOrUpdateComponent<T>(entityID, std::forward<Args>(args)...
+            );
+    }
+
     template <typename T, typename... Args>
     T* emplace(const EntityID& entityID, Args&&... args) {
-        return componentPoolManager.emplace<T>(entityID,args...);
+        return componentPoolManager.emplace<T>(entityID, std::forward<Args>(args)...
+            );
+    }
+
+    template<typename T>
+    size_t getOrRegisterComponentIndex(){
+        return componentPoolManager.getOrRegisterComponentIndex<T>();
     }
 
     template <typename T>
@@ -146,6 +159,10 @@ public:
     template <typename T>
     void removeComponent(const EntityID& entityID){
         componentPoolManager.removeComponent<T>(entityID);
+    }
+
+    void removeAllComponent(const EntityID& entityID) {
+        componentPoolManager.removeAllComponent(entityID);
     }
 
     auto* getComponentBitSet(const EntityID& entity){

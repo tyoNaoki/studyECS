@@ -38,8 +38,8 @@ public:
         return ComponentMaxNum;
     }
 
-    void setEntityMax(const EntityID& id) noexcept{
-        m_entityMasks.Set(id,{});
+    void setEntityMask(const EntityID& id) noexcept{
+        m_entityMasks.Emplace(id);
     }
 
     ComponentBitSet& getEntityMask(EntityID& id) noexcept {
@@ -50,7 +50,7 @@ public:
         m_entityMasks.Delete(id);
     }
 
-    void deleteAllComponent(const EntityID& entity) {
+    void removeAllComponent(const EntityID& entity) {
         auto& bit = getEntityMask(entity);
 
         //所持コンポーネントの数
@@ -59,7 +59,7 @@ public:
         //全てのコンポーネントデータ削除
         for (int i = 0; i < maxSize(); i++) {
             if (bit[i] == 1) {
-                if (deleteComponent(i, entity)) {
+                if (removeComponent(i, entity)) {
                     compCount--;
 
                     if (compCount <= 0) break;
@@ -68,8 +68,10 @@ public:
         }
     }
 
-    bool deleteComponent(size_t compIndex,const EntityID& entity){
+    bool removeComponent(size_t compIndex,const EntityID& entity){
         if(m_componentPools[compIndex]){
+            ComponentBitSet& mask = getEntityMask(entity);
+            setComponentBit(mask,compIndex,0);
             m_componentPools[compIndex]->Delete(entity);
             return true;
         }
@@ -78,15 +80,35 @@ public:
     }
 
     template <typename T, typename... Args>
+    T* emplaceOrUpdateComponent(const EntityID& entityID, Args&&... args) {
+        auto& pool = getComponentPool<T>();
+
+        //更新
+        if(pool.ContainsEntity(entityID)){
+            return pool.template Update<>(
+                entityID,
+                std::forward<Args>(args)...
+                );
+        }
+        else //新規登録、作製
+        {
+            registComponentSet<T>(entityID);
+            return pool.template Emplace<>(
+                entityID,
+                std::forward<Args>(args)...
+                );
+        }
+    }
+
+    template <typename T, typename... Args>
     T* emplace(const EntityID& entityID, Args&&... args) {
         auto& pool = getComponentPool<T>();
 
-        pool.notify_construct(entityID);
-
-        //グループ更新
         registComponentSet<T>(entityID);
-
-        return pool.Set(entityID, std::move(T{ std::forward<Args>(args)... }));
+        return pool.template Emplace<>(
+            entityID,
+            std::forward<Args>(args)...
+            );
     }
 
     template <typename T>
@@ -96,21 +118,20 @@ public:
     }
 
     template <typename T>
-    void removeComponent(const EntityID& entityID) {
+    bool removeComponent(const EntityID& entityID) {
         //無効なEntity
-        if (entityID == INVALID_ENTITY) return;
+        if (entityID == INVALID_ENTITY) return false;
 
         auto& pool = getComponentPool<T>();
 
-        if (!pool.Get(entityID)) return;
-
-        pool.notify_destroy(entityID);
+        if (!pool.Get(entityID)) return false;
 
         pool.Delete(entityID);
 
         //グループ更新
         ComponentBitSet& mask = getEntityMask(entityID);
         setComponentBit<T>(mask, 0);
+        return true;
     }
 
     ComponentBitSet* getComponentBitSet(const EntityID& entity) {
@@ -162,8 +183,21 @@ public:
         std::initializer_list<int>{(setComponentBit<Components>(*bitset, 1), 0)... };
     }
 
-private:
+    template <typename T>
+    size_t getOrRegisterComponentIndex() {
+        size_t index = getComponentIndex<T>();
 
+        if (index >= m_componentPools.size() || !m_componentPools[index])
+            registerComponent<T>();
+
+        // Internal error, should never happen outside development
+        ASSERT(index < m_componentPools.size() && index >= 0,
+            "Type index out of bounds for component '" << typeid(T).name() << "'");
+
+        return index;
+    };
+
+private:
     template <typename T>
     void registerComponent() {
         ASSERT(m_componentPools.size() <= ComponentMaxNum,
@@ -219,27 +253,15 @@ private:
         return *m_entityMasks.Get(entity);
     }
 
-   
-
     template <typename T>
     void setComponentBit(ComponentBitSet& bit, bool val) {
         size_t bitPos = getComponentIndex<T>();
         bit[bitPos] = val;
     }
 
-    template <typename T>
-    size_t getOrRegisterComponentIndex() {
-        size_t index = getComponentIndex<T>();
-
-        if (index >= m_componentPools.size() || !m_componentPools[index])
-            registerComponent<T>();
-
-        // Internal error, should never happen outside development
-        ASSERT(index < m_componentPools.size() && index >= 0,
-            "Type index out of bounds for component '" << typeid(T).name() << "'");
-
-        return index;
-    };
+    void setComponentBit(ComponentBitSet& bit,size_t bitPos,bool val) {
+        bit[bitPos] = val;
+    }
 
 private:
 	std::vector<std::unique_ptr<ISparseSet>> m_componentPools;

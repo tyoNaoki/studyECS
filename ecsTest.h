@@ -80,6 +80,7 @@ void test_waitFor_times_out_and_succeeds();
 
 void test()
 {
+	test_create_group();
 }
 
 bool myCallback(const int a, const std::unique_ptr<int>& b) {
@@ -145,7 +146,6 @@ void worldEventTest()
 		s->get()->x += 50;
 		});
 	
-
 	// 発行側：ポインタ or スマートポインタだけ書けば OK
 	Apple a{ 42 };
 	const Apple ca{ 99 };
@@ -179,7 +179,7 @@ void worldEventTest()
 	
 }
 
-/*
+
 void test_wait_unblocks_on_event() {
 	std::atomic<bool> unblocked{ false };
 	struct Apple {
@@ -192,7 +192,7 @@ void test_wait_unblocks_on_event() {
 		int y = 0;
 	};
 
-	ECS::EVENT::BorrowDispatcher bus;
+	ECS::EVENT::Signal bus;
 
 	// 1) ワーカーはまず wait() でブロック
 	std::thread worker([&] {
@@ -206,7 +206,7 @@ void test_wait_unblocks_on_event() {
 
 	// 3) イベントを publish & dispatch して wakeup させる
 	Apple a{ 777 };
-	//bus.publish(1, &a);
+	bus.publish(&a);
 	bus.dispatch();
 
 	// 4) worker が目覚めるまで少し待機
@@ -229,7 +229,7 @@ void test_waitFor_times_out_and_succeeds() {
 		int y = 0;
 	};
 	Apple a{ 123 };
-	ECS::EVENT::BorrowDispatcher bus;
+	ECS::EVENT::Signal bus;
 
 	// 1) 空のままで waitFor がタイムアウトすること
 	auto t0 = high_resolution_clock::now();
@@ -244,7 +244,7 @@ void test_waitFor_times_out_and_succeeds() {
 
 	// 2) イベント到着後ならすぐ戻ること
 	//    先に publish しておく
-	//bus.publish(1, &a);
+	bus.publish(&a);
 
 	t0 = high_resolution_clock::now();
 	got = bus.waitFor(milliseconds(500));
@@ -258,7 +258,6 @@ void test_waitFor_times_out_and_succeeds() {
 	std::cout << "waitFor wakeup: OK ( waited "
 		<< dt.count() << " ms )\n";
 }
-*/
 
 void testEventQueue()
 {
@@ -409,8 +408,6 @@ void testEventQueue()
 	queue2.enqueue(stopEvent, 1);
 	thread.join();
 	}
-	
-	
 	
 	{
 	std::cout << std::endl << "EventQueue tutorial 3, ordered queue" << std::endl;
@@ -865,12 +862,17 @@ struct testBasicStorageComponent {
 	static constexpr ECS::StorageType storage_pref = ECS::StorageType::BasicType;
 };
 
+void testOnUpdateFunction(const EntityID& entity){
+	std::cout<<GetEntityIndex(entity)<<" has Updated" << std::endl;
+}
+
 //作成テスト
 inline void test_create_group() {
-	struct A {};
-	struct B {};
-	struct C {};
-	struct D {};
+	struct A {int x = 0;};
+	struct B {int x = 10;};
+	struct C {int x = 10;};
+	struct D {int x = 10;};
+	struct tagA{};
 
 	auto spawnLog = [](EntityID entt) {
 		std::cout << "world spawn " << GetEntityIndex(entt) << " entity" << std::endl;
@@ -896,11 +898,28 @@ inline void test_create_group() {
 	//assertEquals(ECS::COMPONENT::component_storage_selector<testBasicStorageComponent>::value == ECS::StorageType::BasicType, "ECS::COMPONENT::component_storage_selector<testBasicStorageComponent>::value == ECS::StorageType::BasicType");
 
 	//componentPool.
+	
+	auto& aPool = ECS::world().getComponentPool<C>();
+	assertEquals(aPool.has_data, "A struct is dataPool");
+	ECS::world().emplaceOrUpdateComponent<tagA>(emptyEntity);
+	auto& tagAPool = ECS::world().getComponentPool<tagA>();
+	assertEquals(!tagAPool.has_data,"tagA struct is emptyPool");
 
-	auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
-	auto group2 = ECS::world().group<ECS::StorageType::EventType,B>();
-	auto group3 = ECS::world().group<ECS::StorageType::EventType,C>();
+	aPool.on_update().append<&testOnUpdateFunction>();
 
+	aPool.patch(entity,[&entity](auto& pos) {
+		std::cout << GetEntityIndex(entity) << " only patch Updating" << std::endl;
+		});
+
+	aPool.patch([](auto entity,auto& pos) {
+		pos.x += 7;
+		std::cout << GetEntityIndex(entity)<<" patch Updating"<< std::endl;
+	});
+
+	//auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
+	//auto group2 = ECS::world().group<ECS::StorageType::EventType,B>();
+	//auto group3 = ECS::world().group<ECS::StorageType::EventType,C>();
+	/*
 	auto componentPoolA = group.getComponentPool<A>();
 
 	int index = 0;
@@ -908,6 +927,7 @@ inline void test_create_group() {
 		std::cout<<index<<" : " << GetEntityIndex(x)-1 << std::endl;
 		index++;
 	}
+	*/
 
 	/*
 	auto& componentPool2 = ECS::world().getComponentPool<B>();
@@ -1031,8 +1051,8 @@ void entityTest()
 	auto entity2 = ECS::world().spawnEmpty();
 
 	//auto entity2 = ECS::sWorld.spawnEmpty();
-	ECS::world().emplace<Velocity>(entity2, 1.0f, 0.5f);
-	ECS::world().emplace<Position>(entity2);
+	ECS::world().emplaceOrUpdateComponent<Velocity>(entity2, 1.0f, 0.5f);
+	ECS::world().emplaceOrUpdateComponent<Position>(entity2);
 	//auto comp = ECS::world().getComponent<Position>(entity);
 
 	//auto view2 = view.Exclude<Position>();
@@ -1098,7 +1118,7 @@ bool executeTimeTest()
 	for (size_t i = 0; i < 1000000; i++)
 	{
 		auto entity = world.spawn();
-		world.emplace<TransformComponent>(entity, 1.0f, 2.0f, 3.0f);
+		world.emplaceOrUpdateComponent<TransformComponent>(entity, 1.0f, 2.0f, 3.0f);
 	}
 
 	auto stop_creation = std::chrono::high_resolution_clock::now();

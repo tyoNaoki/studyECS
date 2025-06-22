@@ -13,6 +13,19 @@
 namespace ECS{
 constexpr size_t NULL_INDEX = std::numeric_limits<size_t>::max();
 
+// 一般型用のSparseSet実装
+template<typename T, bool IsEmpty = std::is_empty_v<T>>
+class SparseSetImpl;
+
+template<typename T>
+using SparseSet = SparseSetImpl<T>;
+
+/*
+class SparseSet_Itertor {
+    
+};
+*/
+
 // ランタイムでのインターフェース
 class ISparseSet {
 public:
@@ -46,9 +59,9 @@ public:
     virtual const_reverse_iterator rend() const = 0;
 };
 
+// 非空型用
 template<typename T>
-class SparseSet : public ISparseSet
-{
+class SparseSetImpl<T, false>:public ISparseSet {
     static constexpr size_t SPARSE_MAX_SIZE = 2048;
 
     using Sparse = std::array<size_t,SPARSE_MAX_SIZE>;
@@ -77,12 +90,15 @@ class SparseSet : public ISparseSet
     */
 
 public:
-    virtual ~SparseSet(){}
+    virtual ~SparseSetImpl(){}
 
     using type = T;
 
-    // オブジェクトをエンティティにセットする
-    virtual T* Set(EntityID entity,T obj);
+    template<typename... Args>
+    T* Emplace(EntityID entity, Args&&... args);
+
+    template<typename... Args>
+    T* Update(EntityID entity, Args&&... args);
 
     // エンティティに対応するコンポーネントを取得する
     T* Get(EntityID entity);
@@ -142,36 +158,43 @@ private:
 };
 
 template<typename T>
-inline T* SparseSet<T>::Set(EntityID entity, T obj)
+template<typename ...Args>
+inline T* SparseSetImpl<T, false>::Emplace(EntityID entity, Args && ...args)
 {
-    if(entity == INVALID_ENTITY) return nullptr;
+    if (entity == INVALID_ENTITY) return nullptr;
 
-    size_t index = GetDenseIndex(entity);
-
-    if(index != NULL_INDEX)
-    {
-        m_dense[index] = obj;
-        m_denseToEntity[index] = entity;
-        return &m_dense[index];
-    }
-
-    SetSparseIndex(entity, m_dense.size());
-
-    m_dense.push_back(obj);
+    // 新規追加
+    const size_t newIndex = m_dense.size();
+    m_dense.emplace_back(std::forward<Args>(args)...);
     m_denseToEntity.push_back(entity);
-
+    SetSparseIndex(entity, newIndex);
     return &m_dense.back();
 }
 
 template<typename T>
-inline T* SparseSet<T>::Get(EntityID entity)
+template<typename ...Args>
+inline T* SparseSetImpl<T, false>::Update(EntityID entity, Args && ...args)
+{
+    if (entity == INVALID_ENTITY) return nullptr;
+
+    auto idx = GetDenseIndex(entity);
+
+    ASSERT(idx != NULL_INDEX,entity <<" do not have " << typeid(T).name());
+
+    // 既存 object を再構築 or assign したければ
+    m_dense[idx] = T{ std::forward<Args>(args)... };
+    return &m_dense[idx];
+}
+
+template<typename T>
+inline T* SparseSetImpl<T, false>::Get(EntityID entity)
 {
     size_t index = GetDenseIndex(entity);
     return (index != NULL_INDEX)&&m_denseToEntity[index] == entity ? &m_dense[index] : nullptr;
 }
 
 template<typename T>
-inline T& SparseSet<T>::GetRef(EntityID entity)
+inline T& SparseSetImpl<T, false>::GetRef(EntityID entity)
 {
     size_t index = GetDenseIndex(entity);
     if (index == NULL_INDEX)
@@ -181,7 +204,7 @@ inline T& SparseSet<T>::GetRef(EntityID entity)
 }
 
 template<typename T>
-inline size_t SparseSet<T>::Index(EntityID entity)
+inline size_t SparseSetImpl<T, false>::Index(EntityID entity)
 {
     size_t index = GetDenseIndex(entity);
     if(index != NULL_INDEX && m_denseToEntity[index] == entity) return index;
@@ -190,13 +213,13 @@ inline size_t SparseSet<T>::Index(EntityID entity)
 }
 
 template<typename T>
-inline ecs_map::id_type SparseSet<T>::Hash() const
+inline ecs_map::id_type SparseSetImpl<T, false>::Hash() const
 {
     return ecs_map::type_hash<T>();
 }
 
 template<typename T>
-inline void SparseSet<T>::swap_elements(const EntityID lhs, const EntityID rhs)
+inline void SparseSetImpl<T, false>::swap_elements(const EntityID lhs, const EntityID rhs)
 {
     if (lhs == INVALID_ENTITY || rhs == INVALID_ENTITY) {
         std::cout<<"INVALID ENTITY"<<std::endl;
@@ -231,7 +254,7 @@ inline void SparseSet<T>::swap_elements(const EntityID lhs, const EntityID rhs)
 }
 
 template<typename T>
-inline void SparseSet<T>::Delete(EntityID entity)
+inline void SparseSetImpl<T, false>::Delete(EntityID entity)
 {
     if (!IsEntityValid(entity)) return;
 
@@ -251,7 +274,7 @@ inline void SparseSet<T>::Delete(EntityID entity)
 }
 
 template<typename T>
-inline void SparseSet<T>::Clear()
+inline void SparseSetImpl<T, false>::Clear()
 {
     m_sparsePages.clear();
     m_dense.clear();
@@ -259,13 +282,13 @@ inline void SparseSet<T>::Clear()
 }
 
 template<typename T>
-inline size_t SparseSet<T>::Size()
+inline size_t SparseSetImpl<T, false>::Size()
 {
     return m_dense.size();
 }
 
 template<typename T>
-inline EntityID SparseSet<T>::GetEntity(std::size_t position) const
+inline EntityID SparseSetImpl<T, false>::GetEntity(std::size_t position) const
 {
     if(position < m_denseToEntity.size()) return m_denseToEntity[position];
 
@@ -273,13 +296,13 @@ inline EntityID SparseSet<T>::GetEntity(std::size_t position) const
 }
 
 template<typename T>
-inline std::vector<EntityID> SparseSet<T>::GetEntityList()
+inline std::vector<EntityID> SparseSetImpl<T, false>::GetEntityList()
 {
     return m_denseToEntity;
 }
 
 template<typename T>
-inline bool SparseSet<T>::ContainsEntity(EntityID entity)
+inline bool SparseSetImpl<T, false>::ContainsEntity(EntityID entity)
 {
     size_t index = GetDenseIndex(entity);
 
@@ -287,7 +310,7 @@ inline bool SparseSet<T>::ContainsEntity(EntityID entity)
 }
 
 template<typename T>
-inline size_t SparseSet<T>::GetDenseIndex(EntityID entity)
+inline size_t SparseSetImpl<T, false>::GetDenseIndex(EntityID entity)
 {
     size_t index = GetEntityIndex(entity);
     size_t page = index / SPARSE_MAX_SIZE;
@@ -302,7 +325,7 @@ inline size_t SparseSet<T>::GetDenseIndex(EntityID entity)
 }
 
 template<typename T>
-inline void SparseSet<T>::SetSparseIndex(EntityID entity, size_t index)
+inline void SparseSetImpl<T, false>::SetSparseIndex(EntityID entity, size_t index)
 {
     size_t entityIndex = GetEntityIndex(entity);
     size_t page = entityIndex / SPARSE_MAX_SIZE;
@@ -317,4 +340,185 @@ inline void SparseSet<T>::SetSparseIndex(EntityID entity, size_t index)
 
     sparse[sparseIndex] = {index};
 }
+
+// 空型用
+template<typename T>
+class SparseSetImpl<T, true> :public ISparseSet{
+    static constexpr size_t SPARSE_MAX_SIZE = 2048;
+
+    using Sparse = std::array<size_t, SPARSE_MAX_SIZE>;
+
+    static constexpr bool enable_hole_deletion =
+        // ムーブ構築できない ＋ ムーブ代入できない 型 はホール削除
+        (!std::is_move_constructible_v<T>)
+        || (!std::is_move_assignable_v<T>);
+
+public:
+    template<typename... Args>
+    T* Emplace(EntityID entity, Args&&... args){
+        (void)sizeof...(args);
+
+        if (entity == INVALID_ENTITY) return nullptr;
+
+        // スパース／デンスにエンティティだけ追加
+        SetSparseIndex(entity, m_denseToEntity.size());
+        m_denseToEntity.push_back(entity);
+
+        return nullptr;
+    }
+
+    template<typename... Args>
+    T* Update(EntityID entity, Args&&... args) {
+        return nullptr;
+    };
+
+    // エンティティに対応するコンポーネントを取得する
+    T* Get(EntityID entity){return nullptr;};
+
+    // 参照を返す
+    T& GetRef(EntityID entity){
+        ASSERT(false,"do not use Empty struct pool GetRef()!!");
+        return T();
+    };
+
+    size_t Index(EntityID entity)override{
+        size_t index = GetDenseIndex(entity);
+        if (index != NULL_INDEX && m_denseToEntity[index] == entity) return index;
+
+        return NULL_INDEX;
+    };
+
+    ecs_map::id_type Hash() const override{
+        return ecs_map::type_hash<T>();
+    };
+
+    void swap_elements(const EntityID lhs, const EntityID rhs) override{
+        if (lhs == INVALID_ENTITY || rhs == INVALID_ENTITY) {
+            std::cout << "INVALID ENTITY" << std::endl;
+            return;
+        }
+
+        const auto fromIdx = Index(lhs);
+        const auto toIdx = Index(rhs);
+
+        //どちらかが無効なら何もしない
+        if (fromIdx == NULL_INDEX || toIdx == NULL_INDEX) {
+            std::cout << "NULL INDEX" << std::endl;
+            return;
+        }
+
+        //交換対象の Entity をキャッシュ
+        const auto entFrom = lhs;
+        const auto entTo = rhs;
+
+        //dense交換
+        std::swap(m_denseToEntity[fromIdx], m_denseToEntity[toIdx]);
+
+        //sparse交換
+        SetSparseIndex(entFrom, toIdx);
+        SetSparseIndex(entTo, fromIdx);
+    };
+
+    // 指定エンティティのコンポーネントを削除する
+    virtual void Delete(EntityID entity) override{
+        if (!IsEntityValid(entity)) return;
+
+        auto entityIndex = GetEntityIndex(entity);
+        size_t deletedIndex = GetDenseIndex(entity);
+
+        if (deletedIndex == NULL_INDEX) return;
+
+        SetSparseIndex(m_denseToEntity.back(), deletedIndex);
+        SetSparseIndex(entity, NULL_INDEX);
+
+        std::swap(m_denseToEntity.back(), m_denseToEntity[deletedIndex]);
+
+        m_denseToEntity.pop_back();
+
+    };
+
+    //内部のTオブジェをすべて削除
+    void Clear() override{
+        m_denseToEntity.clear();
+        m_sparsePages.clear();
+    };
+
+    //現在のdense配列の大きさ取得
+    size_t Size() override{
+        return m_denseToEntity.size();
+    };
+
+    EntityID GetEntity(std::size_t position) const override{
+        if (position < m_denseToEntity.size()) return m_denseToEntity[position];
+
+        return INVALID_ENTITY;
+    };
+
+    //登録されているTオブジェ所持のEntityを配列で返す
+    std::vector<EntityID> GetEntityList() override{
+        return m_denseToEntity;
+    };
+
+    //対象のEntityがTオブジェを所持しているか
+    bool ContainsEntity(EntityID entity) override{
+        size_t index = GetDenseIndex(entity);
+
+        return (index != NULL_INDEX && m_denseToEntity[index] == entity);
+    };
+
+    //対象のEntityのdenseIndexを取得
+    inline size_t GetDenseIndex(EntityID entity){
+        size_t index = GetEntityIndex(entity);
+        size_t page = index / SPARSE_MAX_SIZE;
+        size_t sparseIndex = index % SPARSE_MAX_SIZE;
+
+        if (page < m_sparsePages.size()) {
+            Sparse& sparse = m_sparsePages[page];
+            return sparse[sparseIndex];
+        }
+
+        return NULL_INDEX;
+    };
+
+    //Sparse配列に設定
+    inline void SetSparseIndex(EntityID entity, size_t index){
+        size_t entityIndex = GetEntityIndex(entity);
+        size_t page = entityIndex / SPARSE_MAX_SIZE;
+        size_t sparseIndex = entityIndex % SPARSE_MAX_SIZE; // Index local to a page
+
+        if (page >= m_sparsePages.size()) {
+            m_sparsePages.resize(page + 1);
+            m_sparsePages[page].fill(NULL_INDEX);
+        }
+
+        Sparse& sparse = m_sparsePages[page];
+
+        sparse[sparseIndex] = { index };
+    };
+
+    //空チェック
+    bool IsEmpty() const {
+        return m_denseToEntity.empty();
+    }
+
+    iterator begin() override { return m_denseToEntity.begin(); }
+    iterator end() override { return m_denseToEntity.end(); }
+
+    const_iterator begin() const override { return m_denseToEntity.begin(); }
+    const_iterator end() const override { return m_denseToEntity.end(); }
+
+    reverse_iterator rbegin() override { return m_denseToEntity.rbegin(); }
+    reverse_iterator rend() override { return m_denseToEntity.rend(); }
+
+    const_reverse_iterator rbegin() const override { return m_denseToEntity.rbegin(); }
+    const_reverse_iterator rend() const override { return m_denseToEntity.rend(); }
+
+private:
+    std::vector<Sparse> m_sparsePages; // 疎テーブル
+    std::vector<EntityID>m_denseToEntity;
+    std::atomic<uint32_t> n_reserved;
+};
+
+
+
 }//namespace ECS
