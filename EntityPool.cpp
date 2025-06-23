@@ -2,7 +2,9 @@
 #include <stdexcept>
 #include "Debug.h"
 
-EntityID EntityPool:: alloc(std::string name)
+namespace ECS{
+
+EntityID EntityPool::alloc(std::string name)
 {
     if (first_free != std::numeric_limits<size_t>::max() && n_free > 0) { // ‹ó‚«ƒXƒƒbƒg‚ ‚è
         auto free_index = first_free;
@@ -77,7 +79,7 @@ bool EntityPool::dealloc(EntityID& entity)
     return true;
 }
 
-bool EntityPool::contains(EntityID entity)
+bool EntityPool::contains(const EntityID& entity)
 {
     auto index = (size_t)GetEntityIndex(entity);
 
@@ -99,3 +101,4 @@ std::string EntityPool::GetName(EntityID entity)
 
     return m_dense[m_sparse[index].denseIndex].first;
 }
+}//namespace ECS

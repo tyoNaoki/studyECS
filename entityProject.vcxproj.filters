@@ -104,5 +104,11 @@
     <ClInclude Include="Signal.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EntityEventMixin.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="StorageMixin.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -8,6 +8,7 @@
 #include <utility>
 #include <stdexcept>
 #include <cassert>
+#include "HashFunctions.h"
 
 namespace ECS{
 

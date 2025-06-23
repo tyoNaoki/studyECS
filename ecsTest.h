@@ -862,10 +862,6 @@ struct testBasicStorageComponent {
 	static constexpr ECS::StorageType storage_pref = ECS::StorageType::BasicType;
 };
 
-void testOnUpdateFunction(const EntityID& entity){
-	std::cout<<GetEntityIndex(entity)<<" has Updated" << std::endl;
-}
-
 //ì¬ƒeƒXƒg
 inline void test_create_group() {
 	struct A {int x = 0;};
@@ -875,20 +871,23 @@ inline void test_create_group() {
 	struct tagA{};
 
 	auto spawnLog = [](EntityID entt) {
-		std::cout << "world spawn " << GetEntityIndex(entt) << " entity" << std::endl;
+		std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
 	};
-	
+
+
+	auto destroyLog = [](EntityID entt) {
+		std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
+	};
+
+	ECS::world().entityPoolConstructor().append(spawnLog);
+	ECS::world().entityPoolDestructor().append(destroyLog);
+
 	auto emptyEntity = ECS::world().spawnEmpty();
 	auto entity = ECS::world().spawn<A,C,D>();
-	spawnLog(entity);
 	auto entity2 = ECS::world().spawn<A, B>();
-	spawnLog(entity2);
 	auto entity3 = ECS::world().spawn<A,B>("Apple");
-	spawnLog(entity3);
 	auto entity4 = ECS::world().spawn<A,C>();
-	spawnLog(entity4);
 	auto entity5 = ECS::world().spawn<A,B,C,D>("Banana");
-	spawnLog(entity5);
 	
 	//assertEquals(ECS::world().getComponent<B>(entity)!=nullptr, "ECS::world().getComponent<B>(entity)!=nullptr");
 	//assertEquals(ECS::world().getComponent<A>(entity4) != nullptr, "ECS::world().getComponent<A>(entity4)!=nullptr");
@@ -905,7 +904,11 @@ inline void test_create_group() {
 	auto& tagAPool = ECS::world().getComponentPool<tagA>();
 	assertEquals(!tagAPool.has_data,"tagA struct is emptyPool");
 
-	aPool.on_update().append<&testOnUpdateFunction>();
+	auto testOnUpdateFunction = ([](const EntityID& entity) {
+		std::cout << GetEntityIndex(entity) << " has Updated" << std::endl;
+	});
+
+	aPool.on_update().append(testOnUpdateFunction);
 
 	aPool.patch(entity,[&entity](auto& pos) {
 		std::cout << GetEntityIndex(entity) << " only patch Updating" << std::endl;

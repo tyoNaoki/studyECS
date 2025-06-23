@@ -162,6 +162,7 @@
     <ClCompile Include="World.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="EntityEventMixin.hpp" />
     <ClInclude Include="Signal.hpp" />
     <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
@@ -184,6 +185,7 @@
     <ClInclude Include="SparseHopscotch.h" />
     <ClInclude Include="SparseSet.h" />
     <ClInclude Include="Storage.hpp" />
+    <ClInclude Include="StorageMixin.hpp" />
     <ClInclude Include="typeList.hpp" />
     <ClInclude Include="World.h" />
   </ItemGroup>

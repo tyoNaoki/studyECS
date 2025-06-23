@@ -43,9 +43,20 @@ public:
     World() = default;
 
     //static std::vector<std::string>m_componentNames;
+    
+    //Entity作製時に何か関数を紐づけたい場合
+    auto& entityPoolConstructor() {
+        return entityPool.on_construct();
+    }
+
+    //Entity削除時に何か関数を紐づけたい場合
+    auto& entityPoolDestructor() {
+        return entityPool.on_destroy();
+    }
 
     EntityID spawnEmpty(const std::string name = "Empty") {
         EntityID id =  entityPool.alloc(name); // EntityPoolを通じてエンティティを作成
+        entityPool.notify_construct(id);
         componentPoolManager.setEntityMask(id);
         return id;
     };
@@ -95,6 +106,7 @@ public:
             },
             std::forward<Tuple>(fullTuple));
 
+        entityPool.notify_construct(id);
         return id;
     }
 
@@ -104,6 +116,7 @@ public:
     EntityID spawn(const std::string& name, ProvidedArgs&&... provided) {
         auto provTuple = std::make_tuple(std::forward<ProvidedArgs>(provided)...);
         auto fullTuple = std::make_tuple(extract_or_default<Components>(provTuple)...);
+
         return spawn_impl<Components...>(name, std::move(fullTuple));
     }
 
@@ -119,9 +132,10 @@ public:
 
        componentPoolManager.removeAllComponent(entity);
 
+       entityPool.notify_destroy(entity);
        componentPoolManager.deleteEntity(entity);
-
-        return entityPool.dealloc(entity);
+       
+       return entityPool.dealloc(entity);
     };
 
     std::string getName(const EntityID& entity){
@@ -189,10 +203,10 @@ public:
         }
     }
 
-    template<StorageType S = StorageType::EventType,typename... Owned, typename... Get, typename... Exclude>
-    Group<owned_t<StorageClass_t<Owned, S>...>,get_t<StorageClass_t<Get, S>...>,exclude_t<StorageClass_t<Exclude, S>...>>
+    template<COMPONENT::StorageType S = COMPONENT::StorageType::EventType,typename... Owned, typename... Get, typename... Exclude>
+    Group<owned_t<COMPONENT::StorageClass_t<Owned, S>...>,get_t<COMPONENT::StorageClass_t<Get, S>...>,exclude_t<COMPONENT::StorageClass_t<Exclude, S>...>>
     group(get_t<Get...> = get_t{},exclude_t<Exclude...> = exclude_t{}) {
-        using group_type = Group<owned_t<StorageClass_t<Owned, S>...>, get_t<StorageClass_t<Get, S>...>, exclude_t<StorageClass_t<Exclude,S>...>>;
+        using group_type = Group<owned_t<COMPONENT::StorageClass_t<Owned, S>...>, get_t<COMPONENT::StorageClass_t<Get, S>...>, exclude_t<COMPONENT::StorageClass_t<Exclude,S>...>>;
 
         using handler_type = typename group_type::handler;
 

@@ -14,7 +14,7 @@ namespace COMPONENT{
     // コンポーネントに対するストレージ種別のデフォルトを定義する Trait
     template<class, class = void>
     struct component_storage_selector {
-        static constexpr ECS::StorageType value = ECS::StorageType::EventType;   // デフォルト
+        static constexpr StorageType value = StorageType::EventType;   // デフォルト
     };
 
     template<class T>
@@ -23,7 +23,7 @@ namespace COMPONENT{
         std::void_t<decltype(T::storage_pref)>
     >
     {
-        static constexpr ECS::StorageType value = T::storage_pref;
+        static constexpr StorageType value = T::storage_pref;
     };
 
 template <size_t ComponentMaxNum = 64>

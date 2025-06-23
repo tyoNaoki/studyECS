@@ -3,12 +3,12 @@
 
 #include "Entity.h"
 #include "SparseSet.h"
-#include "CallbackList.hpp"
 #include <type_traits>
+#include "StorageMixin.hpp"
 
 namespace ECS{
 
-
+namespace COMPONENT{
 
 // StorageType
 enum class StorageType {
@@ -19,32 +19,10 @@ enum class StorageType {
 
 // CRTP による共通インタフェース
 template<typename Derived>
-class StorageCRTP {
-public:
+struct StorageCRTP {
     static constexpr StorageType get_storage_type() {
         return Derived::storage_t;
     }
-};
-
-// Event 向けミックスイン
-class EventsMixin {
-public:
-    using CallbackType = EVENT::CallbackList<void(const EntityID)>;
-
-    // コールバックの登録
-    auto& on_construct() { return construct; }
-    auto& on_update() { return update; }
-    auto& on_destroy() { return destroy; } 
-
-    // 利用側（派生クラス）から呼び出す通知用メソッド
-    void notify_construct(EntityID entity) { construct(entity); }
-    void notify_update(EntityID entity) { update(entity); }
-    void notify_destroy(EntityID entity) { destroy(entity); }
-
-private:
-    EVENT::CallbackList<void(const EntityID)> construct;
-    EVENT::CallbackList<void(const EntityID)> update;
-    EVENT::CallbackList<void(const EntityID)> destroy;
 };
 
 // 基本ストレージ（コンポーネント管理のための SparseSet<T> をベースとする）
@@ -163,7 +141,7 @@ struct StorageClass<Type, StorageType::EventType> {
 template<typename Type, StorageType S = StorageType::EventType>
 using StorageClass_t = typename StorageClass<Type, S>::type;
 
-// ユーザーが使いやすいエイリアス
+}//namespace COMPONENT_STORAGE
 
 }//namespace ECS
 
