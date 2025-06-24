@@ -173,7 +173,7 @@
     <ClInclude Include="EventDispatcher.hpp" />
     <ClInclude Include="EventManager.h" />
     <ClInclude Include="EventQueue.hpp" />
-    <ClInclude Include="HashFunctions.h" />
+    <ClInclude Include="HashFunctions.hpp" />
     <ClInclude Include="HopscotchHashMap.h" />
     <ClInclude Include="ecsTest.h" />
     <ClInclude Include="Entity.h" />

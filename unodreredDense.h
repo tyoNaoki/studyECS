@@ -1,5 +1,5 @@
 #pragma once
-#include "HashFunctions.h"
+#include "HashFunctions.hpp"
 #include <iostream>
 #include <vector>
 

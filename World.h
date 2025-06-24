@@ -203,7 +203,7 @@ public:
         }
     }
 
-    template<COMPONENT::StorageType S = COMPONENT::StorageType::EventType,typename... Owned, typename... Get, typename... Exclude>
+    template<typename... Owned, typename... Get, typename... Exclude, COMPONENT::StorageType S = COMPONENT::StorageType::EventType>
     Group<owned_t<COMPONENT::StorageClass_t<Owned, S>...>,get_t<COMPONENT::StorageClass_t<Get, S>...>,exclude_t<COMPONENT::StorageClass_t<Exclude, S>...>>
     group(get_t<Get...> = get_t{},exclude_t<Exclude...> = exclude_t{}) {
         using group_type = Group<owned_t<COMPONENT::StorageClass_t<Owned, S>...>, get_t<COMPONENT::StorageClass_t<Get, S>...>, exclude_t<COMPONENT::StorageClass_t<Exclude,S>...>>;

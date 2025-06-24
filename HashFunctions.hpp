@@ -1,4 +1,6 @@
-#pragma once
+#ifndef ECS_HASHFUNCTIONS_HPP
+#define ECS_HASHFUNCTIONS_HPP
+
 #include <iostream>
 
 /*
@@ -109,3 +111,5 @@ namespace ecs_map{
 
 }//namespace ecs_map
 }//namespace ECS
+
+#endif // !ECS_HASHFUNCTIONS_HPP

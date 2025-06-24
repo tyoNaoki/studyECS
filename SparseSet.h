@@ -7,13 +7,13 @@
 #include <vector>
 #include <array>
 #include <limits>
-#include "HashFunctions.h"
+#include "HashFunctions.hpp"
 #include "Debug.h"
 
 namespace ECS{
 constexpr size_t NULL_INDEX = std::numeric_limits<size_t>::max();
 
-// 一般型用のSparseSet実装
+//一般型用のSparseSet実装
 template<typename T, bool IsEmpty = std::is_empty_v<T>>
 class SparseSetImpl;
 
@@ -133,9 +133,18 @@ public:
     inline size_t GetDenseIndex(EntityID entity);
     //Sparse配列に設定
     inline void SetSparseIndex(EntityID entity,size_t index);
+    
     //空チェック
     bool IsEmpty() const{
         return m_dense.empty();
+    }
+
+    std::tuple<T&> GetRef_as_tuple(EntityID entt)noexcept {
+        return std::forward_as_tuple(GetRef(entt));
+    }
+
+    std::tuple<const T&> GetRef_as_tuple(const EntityID entt)const noexcept{
+        return std::forward_as_tuple(GetRef(entt));
     }
 
     iterator begin() override { return m_denseToEntity.begin(); }

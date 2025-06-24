@@ -74,7 +74,7 @@
     <ClInclude Include="SparseHopscotch.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="HashFunctions.h">
+    <ClInclude Include="HashFunctions.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="typeList.hpp">

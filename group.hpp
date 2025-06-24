@@ -8,11 +8,137 @@
 #include "Entity.h"
 #include "Storage.hpp"
 #include "Debug.h"
-#include "HashFunctions.h"
+#include "HashFunctions.hpp"
 #include "typeList.hpp"
 #include "World.h"
 
 namespace ECS {
+
+    //------------------------------------------------------------------------------
+    // input_iterator_pointer<T>
+    //   - value_type:  T
+    //   - reference:   T&
+    //   - pointer:     T*
+    //   - ctor:        T をムーブして内部に保持
+    //   - operator*(): T& を返す
+    //   - operator->(): T* を返す
+    //------------------------------------------------------------------------------
+    template<typename T>
+    struct input_iterator_pointer {
+        using value_type = T;
+        using reference = T&;
+        using pointer = T*;
+
+    private:
+        T _value;  // operator*() で返す実体
+
+    public:
+        // ムーブコンストラクタで初期化
+        explicit constexpr input_iterator_pointer(value_type&& v)
+            noexcept(std::is_nothrow_move_constructible_v<value_type>)
+            : _value(std::move(v))
+        {}
+
+        // *proxy -> value_type&
+        [[nodiscard]]
+        constexpr reference operator*() noexcept {
+            return _value;
+        }
+
+        // proxy->member -> &(proxy._value)
+        [[nodiscard]]
+        constexpr pointer operator->() noexcept {
+            return std::addressof(_value);
+        }
+    };
+
+
+template<typename,typename,typename>
+class group_iterator;
+
+template<typename It,typename... Owned,typename... Get>
+class group_iterator<It,owned_t<Owned...>,get_t<Get...>>{
+    template<typename Type>
+    auto index_to_element([[maybe_unused]] Type& cpool) const {
+        if constexpr (std::is_void_v<typename Type::value_type>) {
+            return std::make_tuple();
+        }
+        else {
+            return std::forward_as_tuple(cpool.rbegin()[it.Index()]);
+        }
+    }
+
+public:
+    using iterator_type = It;
+    using value_type = decltype(std::tuple_cat(std::make_tuple(*std::declval<It>()), std::declval<Owned>().GetRef_as_tuple({})..., std::declval<Get>().GetRef_as_tuple({})...));
+    using pointer = input_iterator_pointer<value_type>;
+    using reference = value_type;
+    using difference_type = std::ptrdiff_t;
+    using iterator_category = std::input_iterator_tag;
+    using iterator_concept = std::forward_iterator_tag;
+
+    constexpr group_iterator()
+        : it{},
+        pools{} {}
+
+    group_iterator(iterator_type from, std::tuple<Owned *..., Get *...> cpools)
+        : it{ from },
+        pools{ std::move(cpools) } {}
+
+    group_iterator& operator++() noexcept {
+        return ++it, * this;
+    }
+
+    group_iterator operator++(int) noexcept {
+        const group_iterator orig = *this;
+        return ++(*this), orig;
+    }
+
+    
+    reference operator*() const noexcept {
+        return std::tuple_cat(std::make_tuple(*it), index_to_element(*std::get<Owned*>(pools))..., std::get<Get*>(pools)->GetRef_as_tuple(*it)...);
+    }
+
+    pointer operator->() const noexcept {
+        return input_iterator_pointer<value_type>{operator*()};
+    }
+
+    constexpr iterator_type base() const noexcept {
+        return it;
+    }
+
+    template<typename... Lhs, typename... Rhs>
+    friend constexpr bool operator==(const group_iterator<Lhs...>&, const group_iterator<Rhs...>&) noexcept;
+
+private:
+    It it;
+    std::tuple<Owned *..., Get *...> pools;
+};
+
+template<typename... Lhs, typename... Rhs>
+constexpr bool operator==(const group_iterator<Lhs...>& lhs, const group_iterator<Rhs...>& rhs) noexcept {
+    return lhs.it == rhs.it;
+}
+
+template<typename... Lhs, typename... Rhs>
+constexpr bool operator!=(const group_iterator<Lhs...>& lhs, const group_iterator<Rhs...>& rhs) noexcept {
+    return !(lhs == rhs);
+}
+
+template<typename It, typename Sentinel = It>
+struct iterator_adapter {
+    It        first;
+    Sentinel  last;
+
+    constexpr iterator_adapter(It f, Sentinel l) noexcept
+        : first(f), last(l)
+    {}
+
+    constexpr It begin()   const noexcept { return first; }
+    constexpr auto end()   const noexcept { return last; }
+    constexpr It cbegin()  const noexcept { return begin(); }
+    constexpr auto cend()  const noexcept { return end(); }
+};
 
 struct IHandler {
 
@@ -35,13 +161,13 @@ class Group_handler final :public IHandler {
 
     void swap_elements(const std::size_t pos, const EntityID entt) {
         for (size_type next{}; next < Owned; ++next) {
-            std::cout<< GetEntityIndex(pools[next]->GetEntity(pos))-1 << " swap elements " << GetEntityIndex(entt)-1 << std::endl;
+            std::cout<< GetEntityIndex(pools[next]->GetEntity(pos)) << " swap elements " << GetEntityIndex(entt) << std::endl;
             pools[next]->swap_elements(pools[next]->GetEntity(pos), entt);
         }
     }
     
     void push_on_construct(const EntityID entt) {
-        std::cout << "push_on_construct() : " << GetEntityIndex(entt)-1 << std::endl;
+        std::cout << "push_on_construct() : " << GetEntityIndex(entt) << std::endl;
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) 
             && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
@@ -240,6 +366,8 @@ private:
     std::vector<EntityID> elem;
 };
 
+
+
 template<typename, typename, typename>
 class Group;
 
@@ -267,8 +395,17 @@ class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
         type_list<typename Get::type..., typename Exclude::type...>
     >;
 
+    template<std::size_t... Index>
+    auto getComponentPools(std::index_sequence<Index...>)const noexcept{
+        using return_type = std::tuple<Get *...>;
+        return m_handler ? return_type{ static_cast<Get*>(m_handler->template getComponentPool<Index>())... } : return_type{};
+    }
+
 public:
     using handler = Group_handler<BaseType, 0u, sizeof...(Get), sizeof...(Exclude)>;
+    using base_iterator = typename BaseType::iterator;
+    using iterator = group_iterator<base_iterator, owned_t<>, get_t<Get...>>;
+    using iteratble = iterator_adapter<iterator>;
 
     static ecs_map::id_type group_id() noexcept {
         return ecs_map::type_hash<Group<owned_t<>, get_t<std::remove_const_t<Get>...>, exclude_t<std::remove_const_t<Exclude>...>>>();
@@ -280,12 +417,28 @@ public:
     Group(handler& ref) noexcept : m_handler(&ref) {
     }
 
-    constexpr size_t count() noexcept {
+    const BaseType handle()const noexcept{
+        return m_handler->handle();
+    }
+
+    size_t size() const noexcept{
+        return m_handler ? handle().size() : size_t {};
+    }
+
+    constexpr size_t count() const noexcept {
         return m_handler->groupCount;
     }
 
     bool empty() const noexcept {
         return !*this || !m_handler->len;
+    }
+
+    base_iterator begin() const noexcept {
+        return *this ? handle().begin() : base_iterator{};
+    }
+
+    base_iterator end() const noexcept {
+        return *this ? handle().end() : base_iterator{};
     }
 
     template<typename Type>
@@ -297,6 +450,32 @@ public:
     auto getComponentPool() noexcept {
         using element = typename type_list<Get..., Exclude...>::template get<Index>;
         return (m_handler && Index != npos) ? static_cast<element*>(m_handler->getComponentPool<Index>()) : nullptr;
+    }
+
+    template<typename Func>
+    void each(Func func) const {
+        for (const auto entt : *this) {
+            if constexpr (is_applicable_v < Func, decltype(std::tuple_cat(std::tuple<EntityID>{}, std::declval<Group>().get({}))) > ) {
+                std::apply(func, std::tuple_cat(std::make_tuple(entt), get(entt)));
+            }
+            else {
+                std::apply(func, get(entt));
+            }
+        }
+    }
+
+    iteratble each() noexcept{
+        const auto pools = getComponentPools(std::index_sequence_for<Get...>{});
+
+        iterator first{
+           handle().begin(), pools
+        };
+
+        iterator last{
+           handle().end(), pools
+        };
+
+        return {first,last};
     }
 
 private:

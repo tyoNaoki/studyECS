@@ -5,7 +5,7 @@
 #include "Debug.h"
 #include <iostream>
 #include <cstdint>
-#include "HashFunctions.h"
+#include "HashFunctions.hpp"
 
 namespace ECS{
 namespace ecs_map {

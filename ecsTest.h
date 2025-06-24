@@ -859,7 +859,7 @@ void benchmark(HashMapType& map, const std::string& name, const int numElements)
 #pragma optimize("", on)  // 最適化をオンに戻す
 
 struct testBasicStorageComponent {
-	static constexpr ECS::StorageType storage_pref = ECS::StorageType::BasicType;
+	static constexpr ECS::COMPONENT::StorageType storage_pref = ECS::COMPONENT::StorageType::BasicType;
 };
 
 //作成テスト
@@ -870,24 +870,32 @@ inline void test_create_group() {
 	struct D {int x = 10;};
 	struct tagA{};
 
-	auto spawnLog = [](EntityID entt) {
+	bool isPrintSpawnLog = false;
+	bool isPrintDespawnLog = false;
+	auto spawnLog = [&isPrintSpawnLog](EntityID entt) {
 		std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
+		isPrintSpawnLog = true;
 	};
 
-
-	auto destroyLog = [](EntityID entt) {
+	auto destroyLog = [&isPrintDespawnLog](EntityID entt) {
 		std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
+		isPrintDespawnLog = true;
 	};
 
 	ECS::world().entityPoolConstructor().append(spawnLog);
 	ECS::world().entityPoolDestructor().append(destroyLog);
-
 	auto emptyEntity = ECS::world().spawnEmpty();
+	ECS::world().despawn(emptyEntity);
+
 	auto entity = ECS::world().spawn<A,C,D>();
 	auto entity2 = ECS::world().spawn<A, B>();
 	auto entity3 = ECS::world().spawn<A,B>("Apple");
 	auto entity4 = ECS::world().spawn<A,C>();
 	auto entity5 = ECS::world().spawn<A,B,C,D>("Banana");
+
+
+	assertEquals(isPrintSpawnLog, "entityPoolConstructor() print Log on Spawn Entity");
+	assertEquals(isPrintDespawnLog, "entityPoolDestructor() print Log on Despawn Entity");
 	
 	//assertEquals(ECS::world().getComponent<B>(entity)!=nullptr, "ECS::world().getComponent<B>(entity)!=nullptr");
 	//assertEquals(ECS::world().getComponent<A>(entity4) != nullptr, "ECS::world().getComponent<A>(entity4)!=nullptr");
@@ -900,7 +908,7 @@ inline void test_create_group() {
 	
 	auto& aPool = ECS::world().getComponentPool<C>();
 	assertEquals(aPool.has_data, "A struct is dataPool");
-	ECS::world().emplaceOrUpdateComponent<tagA>(emptyEntity);
+	ECS::world().emplaceOrUpdateComponent<tagA>(entity);
 	auto& tagAPool = ECS::world().getComponentPool<tagA>();
 	assertEquals(!tagAPool.has_data,"tagA struct is emptyPool");
 
@@ -918,6 +926,12 @@ inline void test_create_group() {
 		pos.x += 7;
 		std::cout << GetEntityIndex(entity)<<" patch Updating"<< std::endl;
 	});
+
+
+	ECS::world().group<A>(ECS::get<B>,ECS::exclude<C>);
+	ECS::world().group<>(ECS::get<tagA>, ECS::exclude<C>);
+
+
 
 	//auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
 	//auto group2 = ECS::world().group<ECS::StorageType::EventType,B>();
