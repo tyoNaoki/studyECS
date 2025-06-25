@@ -59,7 +59,7 @@ class group_iterator;
 template<typename It,typename... Owned,typename... Get>
 class group_iterator<It,owned_t<Owned...>,get_t<Get...>>{
     template<typename Type>
-    auto index_to_element([[maybe_unused]] Type& cpool) const {
+    auto index_to_element(Type& cpool) const {
         if constexpr (std::is_void_v<typename Type::value_type>) {
             return std::make_tuple();
         }
@@ -126,11 +126,11 @@ constexpr bool operator!=(const group_iterator<Lhs...>& lhs, const group_iterato
 }
 
 template<typename It, typename Sentinel = It>
-struct iterator_adapter {
+struct iterable_adapter {
     It        first;
     Sentinel  last;
 
-    constexpr iterator_adapter(It f, Sentinel l) noexcept
+    constexpr iterable_adapter(It f, Sentinel l) noexcept
         : first(f), last(l)
     {}
 
@@ -161,13 +161,12 @@ class Group_handler final :public IHandler {
 
     void swap_elements(const std::size_t pos, const EntityID entt) {
         for (size_type next{}; next < Owned; ++next) {
-            std::cout<< GetEntityIndex(pools[next]->GetEntity(pos)) << " swap elements " << GetEntityIndex(entt) << std::endl;
             pools[next]->swap_elements(pools[next]->GetEntity(pos), entt);
         }
     }
     
     void push_on_construct(const EntityID entt) {
-        std::cout << "push_on_construct() : " << GetEntityIndex(entt) << std::endl;
+        //std::cout << "push_on_construct() : " << GetEntityIndex(entt) << std::endl;
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) 
             && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
@@ -176,7 +175,7 @@ class Group_handler final :public IHandler {
     }
 
     void push_on_destroy(const EntityID entt) {
-        std::cout << "push_on_destroy() : " << GetEntityIndex(entt) << " entity" << std::endl;
+        //std::cout << "push_on_destroy() : " << GetEntityIndex(entt) << " entity" << std::endl;
 
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (0u + ... + cpool->ContainsEntity(entt)) == 1u; }, filter)) {
@@ -185,7 +184,7 @@ class Group_handler final :public IHandler {
     }
 
     void remove_if(const EntityID entt){
-        std::cout << "remove_if() : " << GetEntityIndex(entt) << " entity" << std::endl;
+        //std::cout << "remove_if() : " << GetEntityIndex(entt) << " entity" << std::endl;
 
         if (pools[0u]->ContainsEntity(entt) && (pools[0u]->Index(entt) < len)) {
             swap_elements(--len, entt);
@@ -223,6 +222,7 @@ public:
                 return true;
             }
         }
+
 
         return false;
     }
@@ -270,6 +270,7 @@ private:
     size_t len{};
 };
 
+
 //データ管理
 template<typename Type, std::size_t Get, std::size_t Exclude>
 class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
@@ -291,6 +292,7 @@ class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
             && std::apply([entt](auto *...cpool) { return (0u + ... + cpool->ContainsEntity(entt)) == 1u; }, filter)) {
             elem.push_back(entt);
         }
+
     }
 
     void remove_if(const EntityID entt) {
@@ -366,17 +368,15 @@ private:
     std::vector<EntityID> elem;
 };
 
-
-
 template<typename, typename, typename>
 class Group;
 
 //機能
 template<typename... Get, typename... Exclude>
 class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
-    using BaseType = std::common_type_t<typename Get::BaseType..., typename Exclude::BaseType...>;
+    using common_type = std::common_type_t<typename Get::BaseType..., typename Exclude::BaseType...>;
 
-    using group_type = BaseType;
+    using group_type = common_type;
 
     //using group_type = std::common_type_t<typename storage_for_t<owner>::base_type..., Get, Exclude;
 
@@ -402,10 +402,10 @@ class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
     }
 
 public:
-    using handler = Group_handler<BaseType, 0u, sizeof...(Get), sizeof...(Exclude)>;
-    using base_iterator = typename BaseType::iterator;
+    using handler = Group_handler<common_type, 0u, sizeof...(Get), sizeof...(Exclude)>;
+    using base_iterator = typename common_type::iterator;
     using iterator = group_iterator<base_iterator, owned_t<>, get_t<Get...>>;
-    using iteratble = iterator_adapter<iterator>;
+    using iterable = iterable_adapter<iterator>;
 
     static ecs_map::id_type group_id() noexcept {
         return ecs_map::type_hash<Group<owned_t<>, get_t<std::remove_const_t<Get>...>, exclude_t<std::remove_const_t<Exclude>...>>>();
@@ -417,7 +417,7 @@ public:
     Group(handler& ref) noexcept : m_handler(&ref) {
     }
 
-    const BaseType handle()const noexcept{
+    const std::vector<EntityID>& handle()const noexcept{
         return m_handler->handle();
     }
 
@@ -430,15 +430,15 @@ public:
     }
 
     bool empty() const noexcept {
-        return !*this || !m_handler->len;
+        return !m_handler || !m_handler->len;
     }
 
     base_iterator begin() const noexcept {
-        return *this ? handle().begin() : base_iterator{};
+        return m_handler ? handle().begin() : base_iterator{};
     }
 
     base_iterator end() const noexcept {
-        return *this ? handle().end() : base_iterator{};
+        return m_handler ? handle().end() : base_iterator{};
     }
 
     template<typename Type>
@@ -450,6 +450,28 @@ public:
     auto getComponentPool() noexcept {
         using element = typename type_list<Get..., Exclude...>::template get<Index>;
         return (m_handler && Index != npos) ? static_cast<element*>(m_handler->getComponentPool<Index>()) : nullptr;
+    }
+
+    bool contains(const EntityID entt)const noexcept{
+        return m_handler && handle().contains(entt);
+    }
+
+    template<typename Type, typename... Other>
+    decltype(auto) get(const EntityID entt) const {
+        return get<typeIndex<Type>, typeIndex<Other>...>(entt);
+    }
+
+    template<std::size_t... Index>
+    decltype(auto) get(const EntityID entt) const {
+        const auto pools = getComponentPools(std::index_sequence_for<Get...>{});
+
+        if constexpr(sizeof...(Index) == 0){
+            return  std::apply([entt](auto *...curr) { return std::tuple_cat(curr->GetRef_as_tuple(entt)...); }, pools);
+        }else if constexpr(sizeof...(Index) == 1){
+            return (std::get<Index>(pools)->GetRef(entt), ...);
+        }else{
+            return std::tuple_cat(std::get<Index>(pools)->GetRef_as_tuple(entt)...);
+        }
     }
 
     template<typename Func>
@@ -464,15 +486,15 @@ public:
         }
     }
 
-    iteratble each() noexcept{
+    iterable each() noexcept{
         const auto pools = getComponentPools(std::index_sequence_for<Get...>{});
 
         iterator first{
-           handle().begin(), pools
+           begin(), pools
         };
 
         iterator last{
-           handle().end(), pools
+           end(), pools
         };
 
         return {first,last};
@@ -485,9 +507,9 @@ private:
 //機能
 template<typename... Owner, typename... Get, typename... Exclude>
 class Group<owned_t<Owner...>, get_t<Get...>, exclude_t<Exclude...>> {
-    using BaseType = std::common_type_t<typename Owner::BaseType..., typename Get::BaseType..., typename Exclude::BaseType...>;
+    using common_type = std::common_type_t<typename Owner::BaseType..., typename Get::BaseType..., typename Exclude::BaseType...>;
 
-    using group_type = BaseType;
+    using group_type = common_type;
 
     //using group_type = std::common_type_t<typename storage_for_t<owner>::base_type..., Get, Exclude;
 
@@ -506,8 +528,17 @@ class Group<owned_t<Owner...>, get_t<Get...>, exclude_t<Exclude...>> {
     type_list<typename Owner::type...,typename Get::type...,typename Exclude::type...>
     >;
 
+    template<std::size_t... Index,std::size_t... Other>
+    auto getComponentPools(std::index_sequence<Index...>,std::index_sequence<Other...>)const noexcept {
+        using return_type = std::tuple<Owner *...,Get *...>;
+        return m_handler ? return_type{ static_cast<Owner *>(m_handler->template getComponentPool<Index>())...,static_cast<Get *>(m_handler->template getComponentPool<sizeof...(Owner) + Other>())...} : return_type{};
+    }
+
 public:
-    using handler = Group_handler<BaseType, sizeof...(Owner), sizeof...(Get), sizeof...(Exclude)>;
+    using handler = Group_handler<common_type, sizeof...(Owner), sizeof...(Get), sizeof...(Exclude)>;
+    using base_iterator = typename common_type::iterator;
+    using iterator = group_iterator<base_iterator, owned_t<Owner...>, get_t<Get...>>;
+    using iterable = iterable_adapter<iterator>;
 
     static ecs_map::id_type group_id() noexcept {
         return ecs_map::type_hash<Group<owned_t<std::remove_const_t<Owner>...>, get_t<std::remove_const_t<Get>...>, exclude_t<std::remove_const_t<Exclude>...>>>();
@@ -518,12 +549,24 @@ public:
 
     Group(handler &ref) noexcept : m_handler(&ref){}
 
+    base_iterator begin() const noexcept {
+        return m_handler ? (handle().end() - static_cast<std::ptrdiff_t>(m_handler->length())) : base_iterator{};
+    }
+
+    base_iterator end() const noexcept {
+        return m_handler ? handle().end() : base_iterator{};
+    }
+
     constexpr size_t count() noexcept{
         return m_handler->groupCount;
     }
 
     bool empty() const noexcept{
         return !*this||!m_handler->len;
+    }
+
+    const common_type handle() const noexcept{
+        return getComponentPool<0>();
     }
 
     template<typename Type>
@@ -537,9 +580,64 @@ public:
         return (m_handler&&Index!=npos) ? static_cast<element*>(m_handler->getComponentPool<Index>()) : nullptr;
     }
 
+    /**
+     * @brief Returns the elements assigned to the given entity.
+     * @tparam Type Type of the element to get.
+     * @tparam Other Other types of elements to get.
+     * @param entt A valid identifier.
+     * @return The elements assigned to the entity.
+     */
+    template<typename Type, typename... Other>
+    decltype(auto) get(const EntityID entt) const {
+        return get<typeIndex<Type>, typeIndex<Other>...>(entt);
+    }
+
+    template<std::size_t... Index>
+    decltype(auto) get(const EntityID entt) const {
+        const auto pools = getComponentPools(std::index_sequence_for<Owner...>{}, std::index_sequence_for<Get...>{});
+
+        if constexpr (sizeof...(Index) == 0) {
+            return std::apply([entt](auto *...curr) { return std::tuple_cat(curr->GetRef_as_tuple(entt)...); }, pools);
+        }
+        else if constexpr (sizeof...(Index) == 1) {
+            return (std::get<Index>(pools)->GetRef(entt), ...);
+        }
+        else {
+            return std::tuple_cat(std::get<Index>(pools)->GetRef_as_tuple(entt)...);
+        }
+    }
+
+    template<typename Func>
+    void each(Func func) const {
+
+        for (auto args : each()) {
+            if constexpr (is_applicable_v < Func, decltype(std::tuple_cat(std::tuple<EntityID>{}, std::declval<Group>().get({}))) > ) {
+                std::apply(func, args);
+            }
+            else {
+                std::apply([&func](auto, auto &&...less) { func(std::forward<decltype(less)>(less)...); }, args);
+            }
+        }
+    }
+
+    [[nodiscard]] iterable each() const noexcept {
+        const auto pools = getComponentPools(std::index_sequence_for<Get...>{});
+
+        iterator first{
+           begin(), pools
+        };
+
+        iterator last{
+           end(), pools
+        };
+
+        return { first,last };
+    }
+
 private:
     handler* m_handler;
 };
+
 }//namespace ECS
 
 #endif

@@ -11,6 +11,7 @@
 #include "Debug.h"
 
 namespace ECS{
+
 constexpr size_t NULL_INDEX = std::numeric_limits<size_t>::max();
 
 //一般型用のSparseSet実装
@@ -20,15 +21,77 @@ class SparseSetImpl;
 template<typename T>
 using SparseSet = SparseSetImpl<T>;
 
-/*
-class SparseSet_Itertor {
-    
+template<typename T>
+class SparseSet_iterator {
+    const std::vector<T>* ptr;  // underlying container
+    size_t                 off; // 末尾からのオフセット＋1
+
+public:
+    using value_type = T;
+    using reference = T&;
+    using pointer = T*;
+    using difference_type = std::ptrdiff_t;
+    using iterator_category = std::random_access_iterator_tag;
+
+    constexpr SparseSet_iterator() noexcept : ptr(nullptr), off(0) {}
+    constexpr SparseSet_iterator(const std::vector<T>& v, size_t idx) noexcept
+        : ptr(&v), off(idx + 1) {}
+
+    // ++ で先頭方向へ
+    constexpr SparseSet_iterator& operator++() noexcept { --off; return *this; }
+    constexpr SparseSet_iterator operator++(int) noexcept { vec_rev_it tmp = *this; ++* this; return tmp; }
+
+    constexpr SparseSet_iterator operator+(const difference_type value) const noexcept {
+        SparseSet_iterator copy = *this;
+        return (copy += value);
+    }
+
+    // -- で末尾方向へ
+    constexpr SparseSet_iterator& operator--() noexcept { ++off; return *this; }
+
+    constexpr SparseSet_iterator& operator+=(const difference_type value) noexcept {
+        offset -= value;
+        return *this;
+    }
+
+    constexpr SparseSet_iterator& operator-=(const difference_type value) noexcept {
+        (*this += -value);
+    }
+
+    constexpr SparseSet_iterator operator-(const difference_type value) const noexcept {
+        return (*this + -value);
+    }
+
+    // 現在の要素
+    constexpr reference operator*() const noexcept {
+        return (*ptr)[off - 1];
+    }
+    constexpr pointer operator->() const noexcept {
+        return &operator*();
+    }
+
+    // ランダムアクセス
+    constexpr reference operator[](difference_type d) const noexcept {
+        return (*ptr)[off - 1 - d];
+    }
+
+    constexpr pointer data() const noexcept {
+        return ptr ? ptr->data() : nullptr;
+    }
+
+    constexpr size_t index() const noexcept {
+        return off - 1;
+    }
 };
-*/
 
 // ランタイムでのインターフェース
 class ISparseSet {
 public:
+    using iterator = SparseSet_iterator<EntityID>;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_iterator = iterator;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+
     virtual ~ISparseSet() = default;
     virtual void Delete(EntityID) = 0;
     virtual void Clear() = 0;
@@ -41,22 +104,20 @@ public:
 
     virtual void swap_elements(const EntityID lhs,const EntityID rhs) = 0;
 
-    using iterator = std::vector<EntityID>::iterator;
-    using reverse_iterator = std::vector<EntityID>::reverse_iterator;
-    using const_iterator = std::vector<EntityID>::const_iterator;
-    using const_reverse_iterator = std::vector<EntityID>::const_reverse_iterator;
+    virtual iterator begin() const noexcept = 0;
+    virtual iterator end() const noexcept = 0;
 
-    virtual iterator begin() = 0;
-    virtual const_iterator begin() const = 0;
+    virtual const_iterator begin() const noexcept = 0;
+    virtual const_iterator end() const noexcept = 0;
 
-    virtual iterator end() = 0;
-    virtual const_iterator end() const = 0;
+    virtual reverse_iterator rbegin() const noexcept = 0;
+    virtual reverse_iterator rend() const noexcept = 0;
 
-    virtual reverse_iterator rbegin() = 0;
-    virtual const_reverse_iterator rbegin() const  = 0;
+    virtual const_reverse_iterator rbegin() const noexcept = 0;
+    virtual const_reverse_iterator crbegin() const noexcept = 0;
+    virtual const_reverse_iterator rend() const noexcept = 0;
+    virtual const_reverse_iterator crend() const noexcept = 0;
 
-    virtual reverse_iterator rend() = 0;
-    virtual const_reverse_iterator rend() const = 0;
 };
 
 // 非空型用
@@ -65,6 +126,7 @@ class SparseSetImpl<T, false>:public ISparseSet {
     static constexpr size_t SPARSE_MAX_SIZE = 2048;
 
     using Sparse = std::array<size_t,SPARSE_MAX_SIZE>;
+    using pointer = typename packed_container_type::const_pointer;
 
     static constexpr bool enable_hole_deletion =
         // ムーブ構築できない ＋ ムーブ代入できない 型 はホール削除
@@ -147,17 +209,34 @@ public:
         return std::forward_as_tuple(GetRef(entt));
     }
 
-    iterator begin() override { return m_denseToEntity.begin(); }
-    iterator end() override { return m_denseToEntity.end(); }
+    std::vector<EntityID>::const_pointer data() const noexcept {
+        return m_denseToEntity.data();
+    }
 
-    const_iterator begin() const override { return m_denseToEntity.begin(); }
-    const_iterator end() const override { return m_denseToEntity.end(); }
+    iterator begin() const noexcept override {
+        const auto pos = m_denseToEntity.size();
+        return iterator{m_denseToEntity,pos}; 
+    }
 
-    reverse_iterator rbegin() override { return m_denseToEntity.rbegin(); }
-    reverse_iterator rend() override { return m_denseToEntity.rend(); }
+    iterator end() const noexcept override {
+        return iterator{ m_denseToEntity,{}};
+    }
 
-    const_reverse_iterator rbegin() const override { return m_denseToEntity.rbegin(); }
-    const_reverse_iterator rend() const override { return m_denseToEntity.rend(); }
+    const_iterator begin() const noexcept override { return begin(); }
+    const_iterator end() const noexcept override { return end(); }
+
+    reverse_iterator rbegin() const noexcept override { return m_denseToEntity.rbegin(); }
+    reverse_iterator rend() const noexcept override { return m_denseToEntity.rend(); }
+
+    const_reverse_iterator rbegin() const noexcept override { std::make_reverse_iterator(end()); }
+    const_reverse_iterator crbegin() const noexcept override {
+        return rbegin();
+    }
+    const_reverse_iterator rend() const noexcept override { std::make_reverse_iterator(begin()); }
+
+    const_reverse_iterator crend() const noexcept override {
+        return rend();
+    }
 
 private:
     std::vector<Sparse> m_sparsePages; // 疎テーブル
@@ -508,6 +587,10 @@ public:
     //空チェック
     bool IsEmpty() const {
         return m_denseToEntity.empty();
+    }
+
+    std::tuple<> GetRef_as_tuple(EntityID entt)noexcept {
+        return std::tuple{};
     }
 
     iterator begin() override { return m_denseToEntity.begin(); }

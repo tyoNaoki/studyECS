@@ -31,9 +31,9 @@ class BasicStorage : public SparseSet<Type>,public StorageCRTP<BasicStorage<Type
 public:
     using BaseType = ISparseSet;
     using UnderingType = SparseSet<Type>;
-    using type = Type;
+    using value_type = Type;
     static constexpr StorageType storage_t = ST;
-    static constexpr bool has_data = !std::is_empty_v<type>;
+    static constexpr bool has_data = !std::is_empty_v<value_type>;
 
     // テンプレートメソッドなので virtual にできない点に注意
     template<typename... Args>
@@ -59,17 +59,18 @@ template<typename Type, StorageType S,typename... Mixins>
 class MixinStorage : public BasicStorage<Type,S>,public Mixins... {
     // 基底の Emplace を参照できるように using 宣言
     using Base = BasicStorage<Type, S>;
-
 public:
+    using typename Base::value_type;
+
     template<typename... Args>
-    Type* Emplace(const EntityID& entityID, Args&&... args) {
+    value_type* Emplace(const EntityID& entityID, Args&&... args) {
         this->notify_construct(entityID);
         
         return Base::Emplace(entityID, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    Type* Update(const EntityID& entityID, Args&&... args) {
+    value_type* Update(const EntityID& entityID, Args&&... args) {
         this->notify_update(entityID);
 
         return Base::Update(entityID, std::forward<Args>(args)...);

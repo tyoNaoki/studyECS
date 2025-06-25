@@ -28,29 +28,6 @@ namespace EVENT {
 		const std::type_info& type() const override { return typeid(T); }
 	};
 
-// ƒ‰ƒ€ƒ_‚Ìˆø”Œ^‚ğ”²‚«o‚·ƒƒ^ŠÖ”
-template<class> struct function_argument;
-
-template<class R, class Arg, class...Rest>
-struct function_argument<R(Arg, Rest...)> { using type = Arg; };
-
-template<class R, class C, class Arg, class...Rest>
-struct function_argument<R(C::*)(Arg, Rest...) const> { using type = Arg; };
-
-template<class F>
-struct function_argument : function_argument<decltype(&F::operator())> {};
-
-template<class F>
-using function_arg_t = typename function_argument<decltype(&F::operator())>::type;
-
-template<typename T, typename = void>
-inline constexpr bool has_get_v = false;
-
-template<typename T>
-inline constexpr bool has_get_v<T,
-	std::void_t<decltype(std::declval<T>().get())>
-> = std::is_pointer_v<decltype(std::declval<T>().get())>;
-
 class Signal : private EventDispatcher<ecs_map::id_type,void(void*)>
 {
 	using Base = EventDispatcher<ecs_map::id_type, void(void*)>;

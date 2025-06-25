@@ -866,19 +866,19 @@ struct testBasicStorageComponent {
 inline void test_create_group() {
 	struct A {int x = 0;};
 	struct B {int x = 10;};
-	struct C {int x = 10;};
-	struct D {int x = 10;};
+	struct C {int x = 20;};
+	struct D {int x = 30;};
 	struct tagA{};
 
 	bool isPrintSpawnLog = false;
 	bool isPrintDespawnLog = false;
 	auto spawnLog = [&isPrintSpawnLog](EntityID entt) {
-		std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
+		//std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
 		isPrintSpawnLog = true;
 	};
 
 	auto destroyLog = [&isPrintDespawnLog](EntityID entt) {
-		std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
+		//std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
 		isPrintDespawnLog = true;
 	};
 
@@ -888,8 +888,8 @@ inline void test_create_group() {
 	ECS::world().despawn(emptyEntity);
 
 	auto entity = ECS::world().spawn<A,C,D>();
-	auto entity2 = ECS::world().spawn<A, B>();
-	auto entity3 = ECS::world().spawn<A,B>("Apple");
+	auto entity2 = ECS::world().spawn<A, B,tagA>();
+	auto entity3 = ECS::world().spawn<A,B,tagA>("Apple");
 	auto entity4 = ECS::world().spawn<A,C>();
 	auto entity5 = ECS::world().spawn<A,B,C,D>("Banana");
 
@@ -918,6 +918,7 @@ inline void test_create_group() {
 
 	aPool.on_update().append(testOnUpdateFunction);
 
+	/*
 	aPool.patch(entity,[&entity](auto& pos) {
 		std::cout << GetEntityIndex(entity) << " only patch Updating" << std::endl;
 		});
@@ -926,12 +927,47 @@ inline void test_create_group() {
 		pos.x += 7;
 		std::cout << GetEntityIndex(entity)<<" patch Updating"<< std::endl;
 	});
+	*/
 
+	auto group = ECS::world().group<A>(ECS::get<B>,ECS::exclude<C>);
+	auto group2 = ECS::world().group<>(ECS::get<A,B>);
 
-	ECS::world().group<A>(ECS::get<B>,ECS::exclude<C>);
-	ECS::world().group<>(ECS::get<tagA>, ECS::exclude<C>);
+	group.each([](auto& compA,auto&compB) {
+		//std::cout << typeid(compA).name() << std::endl;
+		//std::cout <<"compA is " << compA.x << std::endl;
+		//std::cout <<"compB is " << compB.x<< std::endl;
+		});
+	
+	/*
+	group.each([](const auto &comp){
+		//std::cout << getentityindex(comp.x) << std::endl;
+	 
+		std::cout <<"gropu is " << typeid(comp).name() << std::endl;
+	});
+	*/
 
+	/*
+	group2.each([](auto& b, auto& c) {
+		//std::cout << b.x << std::endl;
+		//std::cout << c.x << std::endl;
+		});
+	
+	group2.each([](const auto& entity,auto&b,auto &c) {
+		std::cout << GetEntityIndex(entity) << std::endl;
+		std::cout << typeid(b).name() << std::endl;
+		std::cout << c.x << std::endl;
+		});
 
+	auto tupleAB = group2.get<A,B>(entity2);
+	auto [tA,tB] = tupleAB;
+	*/
+
+	for(auto [entt,a,b] : group2.each()){
+		std::cout << GetEntityIndex(entt) << std::endl;
+		std::cout << a.x << std::endl;
+		std::cout << b.x << std::endl;
+	}
+		
 
 	//auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
 	//auto group2 = ECS::world().group<ECS::StorageType::EventType,B>();

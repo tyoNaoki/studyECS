@@ -7,6 +7,36 @@
 
 namespace ECS{
 
+    /*! @brief Same as std::is_invocable, but with tuples. */
+    template<typename, typename>
+    struct is_applicable : std::false_type {};
+
+    /**
+     * @copybrief is_applicable
+     * @tparam Func A valid function type.
+     * @tparam Tuple Tuple-like type.
+     * @tparam Args The list of arguments to use to probe the function type.
+     */
+    template<typename Func, template<typename...> class Tuple, typename... Args>
+    struct is_applicable<Func, Tuple<Args...>> : std::is_invocable<Func, Args...> {};
+
+    /**
+     * @copybrief is_applicable
+     * @tparam Func A valid function type.
+     * @tparam Tuple Tuple-like type.
+     * @tparam Args The list of arguments to use to probe the function type.
+     */
+    template<typename Func, template<typename...> class Tuple, typename... Args>
+    struct is_applicable<Func, const Tuple<Args...>> : std::is_invocable<Func, Args...> {};
+
+    /**
+     * @brief Helper variable template.
+     * @tparam Func A valid function type.
+     * @tparam Args The list of arguments to use to probe the function type.
+     */
+    template<typename Func, typename Args>
+    inline constexpr bool is_applicable_v = is_applicable<Func, Args>::value;
+
 template<typename... Type>
 struct type_list {
     
@@ -43,8 +73,6 @@ struct type_list {
 
     template<std::size_t Index>
     using get = typename tuple_element_or_void<Index, type_tuple>::type;
-
-    /*! @brief Compile-time number of elements in the type list. */
    
 };
 
