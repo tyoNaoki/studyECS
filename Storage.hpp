@@ -61,6 +61,7 @@ class MixinStorage : public BasicStorage<Type,S>,public Mixins... {
     using Base = BasicStorage<Type, S>;
 public:
     using typename Base::value_type;
+    using typename Base::BaseType;
 
     template<typename... Args>
     value_type* Emplace(const EntityID& entityID, Args&&... args) {

@@ -11,6 +11,7 @@
 #include "HashFunctions.hpp"
 #include "typeList.hpp"
 #include "World.h"
+#include "SparseSet.h"
 
 namespace ECS {
 
@@ -64,13 +65,20 @@ class group_iterator<It,owned_t<Owned...>,get_t<Get...>>{
             return std::make_tuple();
         }
         else {
-            return std::forward_as_tuple(cpool.rbegin()[it.Index()]);
+            auto& values = cpool.GetValues();    // Å© values() ÇÕ vector<T>& Çï‘Ç∑ëzíË
+            return std::forward_as_tuple(
+                values.rbegin()[it.index()]
+            );
+
+            //return std::forward_as_tuple(cpool.rbegin()[it.index()]);
         }
     }
 
 public:
     using iterator_type = It;
+    
     using value_type = decltype(std::tuple_cat(std::make_tuple(*std::declval<It>()), std::declval<Owned>().GetRef_as_tuple({})..., std::declval<Get>().GetRef_as_tuple({})...));
+
     using pointer = input_iterator_pointer<value_type>;
     using reference = value_type;
     using difference_type = std::ptrdiff_t;
@@ -94,7 +102,6 @@ public:
         return ++(*this), orig;
     }
 
-    
     reference operator*() const noexcept {
         return std::tuple_cat(std::make_tuple(*it), index_to_element(*std::get<Owned*>(pools))..., std::get<Get*>(pools)->GetRef_as_tuple(*it)...);
     }
@@ -375,7 +382,6 @@ class Group;
 template<typename... Get, typename... Exclude>
 class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
     using common_type = std::common_type_t<typename Get::BaseType..., typename Exclude::BaseType...>;
-
     using group_type = common_type;
 
     //using group_type = std::common_type_t<typename storage_for_t<owner>::base_type..., Get, Exclude;
@@ -403,7 +409,7 @@ class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
 
 public:
     using handler = Group_handler<common_type, 0u, sizeof...(Get), sizeof...(Exclude)>;
-    using base_iterator = typename common_type::iterator;
+    using base_iterator = std::vector<EntityID>::const_iterator;
     using iterator = group_iterator<base_iterator, owned_t<>, get_t<Get...>>;
     using iterable = iterable_adapter<iterator>;
 
@@ -537,6 +543,7 @@ class Group<owned_t<Owner...>, get_t<Get...>, exclude_t<Exclude...>> {
 public:
     using handler = Group_handler<common_type, sizeof...(Owner), sizeof...(Get), sizeof...(Exclude)>;
     using base_iterator = typename common_type::iterator;
+    using reverse_iterator = typename common_type::reverse_iterator;
     using iterator = group_iterator<base_iterator, owned_t<Owner...>, get_t<Get...>>;
     using iterable = iterable_adapter<iterator>;
 
@@ -557,6 +564,42 @@ public:
         return m_handler ? handle().end() : base_iterator{};
     }
 
+    reverse_iterator rbegin() const noexcept {
+        return m_handler ? handle().rbegin() : reverse_iterator{};
+    }
+
+    reverse_iterator rend() const noexcept {
+        return m_handler ? (handle().rbegin() + static_cast<std::ptrdiff_t>(m_handler->length())) : reverse_iterator{};
+    }
+
+    EntityID front() const noexcept {
+        const auto it = begin();
+        return it != end() ? *it : NULL_INDEX;
+    }
+
+    EntityID back() const noexcept {
+        const auto it = rbegin();
+        return it != rend() ? *it : NULL_INDEX;
+    }
+
+    iterator find(const EntityID entt) const noexcept {
+        const auto it = m_handler ? handle().find(entt) : iterator{};
+        return it >= begin() ? it : iterator{};
+    }
+
+    EntityID operator[](const size_t pos) const {
+        return begin()[static_cast<std::ptrdiff_t>(pos)];
+    }
+
+    explicit operator bool() const noexcept {
+        return m_handler != nullptr;
+    }
+
+  
+    bool contains(const EntityID entt) const noexcept {
+        return m_handler && handle().contains(entt) && (handle().index(entt) < (m_handler->length()));
+    }
+
     constexpr size_t count() noexcept{
         return m_handler->groupCount;
     }
@@ -565,19 +608,26 @@ public:
         return !*this||!m_handler->len;
     }
 
-    const common_type handle() const noexcept{
+    const common_type *handle() const noexcept{
         return getComponentPool<0>();
     }
 
     template<typename Type>
-    auto getComponentPool() noexcept {
+    auto *getComponentPool() noexcept {
         return getComponentPool<typeIndex<Type>>();
     }
 
     template<std::size_t Index>
-    auto getComponentPool() noexcept {
+    auto *getComponentPool() noexcept {
         using element = typename type_list<Owner..., Get..., Exclude...>::template get<Index>;
-        return (m_handler&&Index!=npos) ? static_cast<element*>(m_handler->getComponentPool<Index>()) : nullptr;
+
+        if constexpr (Index != npos) {
+            return static_cast<element*>(m_handler->getComponentPool<Index>());
+        }
+        else {
+            return nullptr;
+        }
+
     }
 
     /**
@@ -620,8 +670,8 @@ public:
         }
     }
 
-    [[nodiscard]] iterable each() const noexcept {
-        const auto pools = getComponentPools(std::index_sequence_for<Get...>{});
+    iterable each() const noexcept {
+        const auto pools = getComponentPools(std::index_sequence_for<Owner...>{}, std::index_sequence_for<Get...>{});
 
         iterator first{
            begin(), pools

@@ -930,7 +930,7 @@ inline void test_create_group() {
 	*/
 
 	auto group = ECS::world().group<A>(ECS::get<B>,ECS::exclude<C>);
-	auto group2 = ECS::world().group<>(ECS::get<A,B>);
+	//auto group2 = ECS::world().group<>(ECS::get<A,B>);
 
 	group.each([](auto& compA,auto&compB) {
 		//std::cout << typeid(compA).name() << std::endl;
@@ -961,13 +961,13 @@ inline void test_create_group() {
 	auto tupleAB = group2.get<A,B>(entity2);
 	auto [tA,tB] = tupleAB;
 	*/
-
+/*
 	for(auto [entt,a,b] : group2.each()){
 		std::cout << GetEntityIndex(entt) << std::endl;
 		std::cout << a.x << std::endl;
 		std::cout << b.x << std::endl;
 	}
-		
+	*/	
 
 	//auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
 	//auto group2 = ECS::world().group<ECS::StorageType::EventType,B>();
