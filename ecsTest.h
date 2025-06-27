@@ -1,5 +1,5 @@
 #pragma once
-#include "Debug.h"
+#include "TestFramework.hpp"
 #include "Scene.h"
 #include "Component.h"
 #include "World.h"
@@ -17,6 +17,8 @@
 #include <random>
 #include "EventQueue.hpp"
 #include "Signal.hpp"
+
+using namespace ECS::test;
 
 // First let's define the event struct. e is the event type, priority determines the priority.
 struct MyEvent
@@ -68,19 +70,74 @@ struct TransformComponent {
 	TransformComponent(float x = 0, float y = 0, float z = 0) : _x(x), _y(y), _z(z) {}
 };
 
-void test_create_group();
 void hashMapBenchmarks();
-void typeListTest();
-void worldEventTest();
-void testEventQueue();
-void testCallbackList();
-void testDispatch();
-void test_wait_unblocks_on_event();
-void test_waitFor_times_out_and_succeeds();
 
-void test()
+int test()
 {
-	test_create_group();
+	RUN_TEST("test_create_group");
+	//RUN_PRIORITY_TESTS();
+}
+
+TEST_CASE_PRIORITY(test_sort_empty) {
+	std::vector<int> v;
+	ECS::algorithm::sort(v, std::less<>{});
+	assertTrue(v.empty(), "empty vector remains empty");
+}
+
+// 2) 要素1個 → そのまま
+TEST_CASE_PRIORITY(test_sort_single) {
+	std::vector<int> v{ 42 };
+	ECS::algorithm::sort(v, std::less<>{});
+	assertTrue(v.size() == 1 && v[0] == 42, "single element stays unchanged");
+}
+
+// 3) 昇順ソート
+TEST_CASE_PRIORITY(test_sort_ascending) {
+	std::vector<int> v{ 4,3,2,1,0 };
+	ECS::algorithm::sort(v, std::less<>{});
+	for(auto &x:v){
+		std::cout<<x<<",";
+	}
+	std::cout<<"\n";
+	assertTrue(std::is_sorted(v.begin(), v.end()),
+		"reverse-based sort yields descending");
+}
+
+// 4) 降順ソート (std::greater)
+TEST_CASE_PRIORITY(test_sort_descending) {
+	std::vector<int> v{ 3,1,4,2,5 };
+	ECS::algorithm::sort(v, std::greater<>{});
+	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}),
+		"reverse-based sort yields descending");
+}
+
+// 5) 既にソート済み → 変化なし
+TEST_CASE_PRIORITY(test_sort_already_sorted) {
+	std::vector<int> v{ 1,2,3,4,5 };
+	ECS::algorithm::sort(v, std::greater<>{});
+	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}), "already sorted remains sorted");
+}
+
+// 呼び出しフラグを立てるだけのダミーソート
+struct DummySort {
+	bool& flag;
+	DummySort(bool& f) : flag(f) { ; }
+
+	template<typename It, typename Compare, typename... Args>
+	void operator()(It first, It last, Compare compare = Compare{}, Args &&...args) const {
+		flag = true;
+		std::sort(std::forward<Args>(args)..., std::move(first), std::move(last), std::move(compare));
+	}
+};
+
+// 6) カスタムソートアルゴリズムを渡す
+TEST_CASE_PRIORITY(test_sort_with_custom_algo) {
+	bool called = false;
+
+	std::vector<int> v{ 2,1,3 };
+	ECS::algorithm::sort(v, std::less<>{}, DummySort{ called });
+	ASSERT(called, "custom sort algorithm called");
+	ASSERT(std::is_sorted(v.begin(), v.end(),std::less<>{}), "custom algo sorts");
 }
 
 bool myCallback(const int a, const std::unique_ptr<int>& b) {
@@ -94,7 +151,7 @@ bool myFallback() {
 inline ECS::ecs_map::id_type hash_idApple() { return 1; }
 inline ECS::ecs_map::id_type hash_idBanana() { return 2; }
 
-void worldEventTest()
+TEST_CASE(world_event_test)
 {
 	struct Apple{
 		int x = 5;
@@ -180,7 +237,7 @@ void worldEventTest()
 }
 
 
-void test_wait_unblocks_on_event() {
+TEST_CASE(test_wait_unblocks_on_event){
 	std::atomic<bool> unblocked{ false };
 	struct Apple {
 		int x = 5;
@@ -217,7 +274,7 @@ void test_wait_unblocks_on_event() {
 	std::cout << "test_wait_unblocks_on_event: OK\n";
 }
 
-void test_waitFor_times_out_and_succeeds() {
+TEST_CASE(test_waitFor_times_out_and_succeeds){
 	using namespace std::chrono;
 	struct Apple {
 		int x = 5;
@@ -259,7 +316,7 @@ void test_waitFor_times_out_and_succeeds() {
 		<< dt.count() << " ms )\n";
 }
 
-void testEventQueue()
+TEST_CASE(testEventQueue)
 {
 	
 	{
@@ -590,7 +647,7 @@ void testEventQueue()
 	
 }
 
-void testDispatch(){
+TEST_CASE(testDispatch){
 	// The namespace is eventpp
 // The first template parameter int is the event type,
 // the event type can be any type such as std::string, int, etc.
@@ -629,9 +686,9 @@ void testDispatch(){
 	dispatcher.removeListener(3, removeHandle);
 	dispatcher.dispatch(3);
 
-	assertEquals(dispatcher.hasAnyListener(3) == true, "dispatcher.hasAnyListener(3) == true");
+	assertTrue(dispatcher.hasAnyListener(3) == true, "dispatcher.hasAnyListener(3) == true");
 
-	assertEquals(dispatcher.haveHandle(5,handle) == true, "dispatcher.haveHandle(5,handle) == true");
+	assertTrue(dispatcher.haveHandle(5,handle) == true, "dispatcher.haveHandle(5,handle) == true");
 
 	std::cout << std::endl;
 	
@@ -707,7 +764,7 @@ struct testCallbackFunctionClass {
 };
 
 // テスト関数
-void testCallbackList() {
+TEST_CASE(testCallbackList) {
 
 	using CL = ECS::EVENT::CallbackList<std::string(const bool&, const std::string&)>;
 	CL callbackList;
@@ -727,16 +784,16 @@ void testCallbackList() {
 	auto handle4 = callbackList.append<&testCallbackFunctionClass::memberFunction>(testClass);
 
 	std::string result1 = handle1.lock()->callback(true, "Hello Handle");
-	assertEquals(result1 == "Callback 1: Hello Handle", "Callback 1 returned expected value.");
+	assertTrue(result1 == "Callback 1: Hello Handle", "Callback 1 returned expected value.");
 
 	std::string result2 = handle2.lock()->callback(false, "Hello Handle");
-	assertEquals(result2 == "Callback 2: Condition not met.", "Callback 2 returned expected value.");
+	assertTrue(result2 == "Callback 2: Condition not met.", "Callback 2 returned expected value.");
 
 	std::string result3 = handle3.lock()->callback(false, "Hello Handle");
-	assertEquals(result3 == "Callback 3: Condition not met.", "Callback 3 returned expected value.");
+	assertTrue(result3 == "Callback 3: Condition not met.", "Callback 3 returned expected value.");
 
 	std::string result4 = handle4.lock()->callback(false, "Hello Handle");
-	assertEquals(result4 == "Callback 4: Condition not met.", "Callback 4 returned expected value.");
+	assertTrue(result4 == "Callback 4: Condition not met.", "Callback 4 returned expected value.");
 
 	callbackList.remove(handle2);
 	std::cout << "\n--- After Removal Callback2---\n";
@@ -751,7 +808,7 @@ void testCallbackList() {
 	}
 }
 
-void typeListTest()
+TEST_CASE(typeListTest)
 {
 	// テスト
 	using MyList = ECS::type_list<int, double, char,float>;
@@ -863,7 +920,7 @@ struct testBasicStorageComponent {
 };
 
 //作成テスト
-inline void test_create_group() {
+TEST_CASE_ORDER(test_create_group) {
 	struct A {int x = 0;};
 	struct B {int x = 10;};
 	struct C {int x = 20;};
@@ -893,9 +950,8 @@ inline void test_create_group() {
 	auto entity4 = ECS::world().spawn<A,C>();
 	auto entity5 = ECS::world().spawn<A,B,C,D>("Banana");
 
-
-	assertEquals(isPrintSpawnLog, "entityPoolConstructor() print Log on Spawn Entity");
-	assertEquals(isPrintDespawnLog, "entityPoolDestructor() print Log on Despawn Entity");
+	assertTrue(isPrintSpawnLog, "entityPoolConstructor() print Log on Spawn Entity");
+	assertTrue(isPrintDespawnLog, "entityPoolDestructor() print Log on Despawn Entity");
 	
 	//assertEquals(ECS::world().getComponent<B>(entity)!=nullptr, "ECS::world().getComponent<B>(entity)!=nullptr");
 	//assertEquals(ECS::world().getComponent<A>(entity4) != nullptr, "ECS::world().getComponent<A>(entity4)!=nullptr");
@@ -907,10 +963,10 @@ inline void test_create_group() {
 	//componentPool.
 	
 	auto& aPool = ECS::world().getComponentPool<C>();
-	assertEquals(aPool.has_data, "A struct is dataPool");
+	assertTrue(aPool.hasData(), "A struct is dataPool");
 	ECS::world().emplaceOrUpdateComponent<tagA>(entity);
 	auto& tagAPool = ECS::world().getComponentPool<tagA>();
-	assertEquals(!tagAPool.has_data,"tagA struct is emptyPool");
+	assertTrue(!tagAPool.hasData(),"tagA struct is emptyPool");
 
 	auto testOnUpdateFunction = ([](const EntityID& entity) {
 		std::cout << GetEntityIndex(entity) << " has Updated" << std::endl;
@@ -929,45 +985,87 @@ inline void test_create_group() {
 	});
 	*/
 
-	auto group = ECS::world().group<A>(ECS::get<B>,ECS::exclude<C>);
-	//auto group2 = ECS::world().group<>(ECS::get<A,B>);
+	auto group = ECS::world().group<A>(ECS::get<B>,ECS::exclude<tagA>);
 
+	std::cout<<"group.each(auto&compA,auto&compB)"<<std::endl;
 	group.each([](auto& compA,auto&compB) {
-		//std::cout << typeid(compA).name() << std::endl;
+		std::cout << typeid(compB).name() << std::endl;
 		//std::cout <<"compA is " << compA.x << std::endl;
-		//std::cout <<"compB is " << compB.x<< std::endl;
+		std::cout <<"compB is " << compB.x<< std::endl;
 		});
-	
-	/*
-	group.each([](const auto &comp){
-		//std::cout << getentityindex(comp.x) << std::endl;
-	 
-		std::cout <<"gropu is " << typeid(comp).name() << std::endl;
-	});
-	*/
+	std::cout << "group.each(const auto&entity,auto&compA,auto&compB)" << std::endl;
 
-	/*
-	group2.each([](auto& b, auto& c) {
-		//std::cout << b.x << std::endl;
-		//std::cout << c.x << std::endl;
-		});
-	
-	group2.each([](const auto& entity,auto&b,auto &c) {
+	group.each([](const auto& entity, auto& compA,auto& compB){
 		std::cout << GetEntityIndex(entity) << std::endl;
-		std::cout << typeid(b).name() << std::endl;
-		std::cout << c.x << std::endl;
+		//std::cout << "compA is " << compA.x << std::endl;
+		std::cout << "compB is " << compB.x << std::endl;
 		});
 
-	auto tupleAB = group2.get<A,B>(entity2);
-	auto [tA,tB] = tupleAB;
-	*/
-/*
+	auto tupleAB = group.get<A,B>(entity5);
+	auto [tA, tB] = tupleAB;
+
+	std::cout << "auto [entt,a,b] : group.each" << std::endl;
+	for (auto [entt, a,b] : group.each()) {
+		std::cout << GetEntityIndex(entt) << std::endl;
+		std::cout << a.x << std::endl;
+		std::cout << b.x << std::endl;
+	}
+
+	std::cout << "auto&x:group" << std::endl;
+	for(auto&x:group){
+		std::cout<< GetEntityIndex(x) << std::endl;
+	}
+
+	assertTrue(group.contains(entity5),"group.contains(entity5) is true");
+	assertTrue(!group.contains(entity4),"group.contains(entity4) is false");
+
+	auto group2 = ECS::world().group<>(ECS::get<A,B,tagA>);
+	//使用時、tupleではtagAは除外される
+
+	std::cout<<"group2.each(auto&a,auto&b)"<<std::endl;
+	group2.each([](auto& a,auto&b) {
+		std::cout << a.x << std::endl;
+		std::cout << b.x << std::endl;
+		});
+	
+	std::cout << "group2.each(const auto&entity,auto&a,auto&b)" << std::endl;
+	group2.each([](const auto& entity,auto&a,auto&b) {
+		std::cout << GetEntityIndex(entity) << std::endl;
+		std::cout << a.x << std::endl;
+		std::cout << b.x << std::endl;
+		});
+
+	auto tuple2AB = group2.get<A,B,tagA>(entity2);
+	auto [t2A,t2B] = tuple2AB;
+	
+	std::cout << "auto [entt,a,b] : group2.each" << std::endl;
 	for(auto [entt,a,b] : group2.each()){
 		std::cout << GetEntityIndex(entt) << std::endl;
 		std::cout << a.x << std::endl;
 		std::cout << b.x << std::endl;
 	}
-	*/	
+
+	std::cout << "auto&x:group2" << std::endl;
+	for (auto& x : group2) {
+		std::cout << GetEntityIndex(x) << std::endl;
+	}
+	
+	assertTrue(group2.contains(entity2), "group2.contains(entity2) is true");
+	assertTrue(!group2.contains(entity4), "group2.contains(entity4) is false");
+
+	auto sortGroup = ECS::world().group<A>(ECS::get<B>);
+
+	std::cout<<"sort\n";
+	for(auto&x:sortGroup){
+		std::cout<<GetEntityIndex(x)<<",";
+	}
+
+	std::cout << "\n";
+
+	sortGroup.sort(std::greater<>{});
+	for (auto& x : sortGroup) {
+		std::cout << GetEntityIndex(x) << ",";
+	}
 
 	//auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
 	//auto group2 = ECS::world().group<ECS::StorageType::EventType,B>();
@@ -1060,44 +1158,43 @@ void test_event_trigger() {
 */
 
 // テスト関数
-void testGroupIdentifiers() {
+DISABLED_TEST_CASE(testGroupIdentifiers) {
 	struct Health {};
 	struct OwnerA {};
 	struct OwnerB {};
 	struct OwnerC {};
 
-	/*
-	using GroupA = ECS::Group<owned_t<OwnerA>, get_t<Position, Velocity>, exclude_t<>>;
-	using GroupB = ECS::Group<owned_t<OwnerB>, get_t<Position, Velocity>, exclude_t<>>;
-	using GroupC = ECS::Group<owned_t<OwnerC>, get_t<Position, Velocity>, exclude_t<>>;
-	using GroupD = ECS::Group<owned_t<OwnerA>, get_t<Position>, exclude_t<>>;
-	using GroupE = ECS::Group<owned_t<OwnerA>, get_t<Position, Velocity, Health>, exclude_t<>>;
+	//
+	//using GroupA = ECS::Group<owned_t<OwnerA>, get_t<Position, Velocity>, exclude_t<>>;
+	//using GroupB = ECS::Group<owned_t<OwnerB>, get_t<Position, Velocity>, exclude_t<>>;
+	//using GroupC = ECS::Group<owned_t<OwnerC>, get_t<Position, Velocity>, exclude_t<>>;
+	//using GroupD = ECS::Group<owned_t<OwnerA>, get_t<Position>, exclude_t<>>;
+	//using GroupE = ECS::Group<owned_t<OwnerA>, get_t<Position, Velocity, Health>, exclude_t<>>;
 
-	// 識別 ID を取得
-	ecs_map::id_type id_A = GroupA::group_id();
-	ecs_map::id_type id_B = GroupB::group_id();
-	ecs_map::id_type id_C = GroupC::group_id();
-	ecs_map::id_type id_D = GroupD::group_id();
-	ecs_map::id_type id_E = GroupE::group_id();
+	//// 識別 ID を取得
+	//ecs_map::id_type id_A = GroupA::group_id();
+	//ecs_map::id_type id_B = GroupB::group_id();
+	//ecs_map::id_type id_C = GroupC::group_id();
+	//ecs_map::id_type id_D = GroupD::group_id();
+	//ecs_map::id_type id_E = GroupE::group_id();
 
-	// 結果を出力
-	std::cout << "GroupA ID: " << id_A << std::endl;
-	std::cout << "GroupB ID: " << id_B << std::endl;
-	std::cout << "GroupC ID: " << id_C << std::endl;
-	std::cout << "GroupD ID: " << id_D << std::endl;
-	std::cout << "GroupE ID: " << id_E << std::endl;
+	//// 結果を出力
+	//std::cout << "GroupA ID: " << id_A << std::endl;
+	//std::cout << "GroupB ID: " << id_B << std::endl;
+	//std::cout << "GroupC ID: " << id_C << std::endl;
+	//std::cout << "GroupD ID: " << id_D << std::endl;
+	//std::cout << "GroupE ID: " << id_E << std::endl;
 
-	// 識別 ID の整合性チェック
-	assert(id_A != id_B && "OwnerA と OwnerB のグループ ID が同じ");
-	assert(id_A != id_C && "OwnerA と OwnerC のグループ ID が同じ");
-	assert(id_A != id_D && "異なるコンポーネントセットなのに同じグループ ID");
-	assert(id_A != id_E && "Health コンポーネントがあるのに ID が変わらない");
+	//// 識別 ID の整合性チェック
+	//assert(id_A != id_B && "OwnerA と OwnerB のグループ ID が同じ");
+	//assert(id_A != id_C && "OwnerA と OwnerC のグループ ID が同じ");
+	//assert(id_A != id_D && "異なるコンポーネントセットなのに同じグループ ID");
+	//assert(id_A != id_E && "Health コンポーネントがあるのに ID が変わらない");
 
-	std::cout << "すべての識別 ID のテストが正常に完了しました！" << std::endl;
-	*/
+	//std::cout << "すべての識別 ID のテストが正常に完了しました！" << std::endl;
 }
 
-void entityTest()
+TEST_CASE(entityTest)
 {
 	Position position = Position(0.0f, 5.0f);
 	auto entity = ECS::world().spawn("", position, Velocity(5.0f, 0.1f));
@@ -1161,6 +1258,41 @@ void entityTest()
 
 	//scene.getWorld().despawn(entity);
 	//scene.getWorld().despawn(entity);
+	MESSAGE("view test Clear");
+}
+
+TEST_CASE(test_hopscotchHashMap){
+	//InsertTest
+	{
+		ECS::ecs_map::HopscotchHashMap<EntityIndex, std::string> map;
+		map.insert(1, "hello");
+		auto result = map.find(1);
+		assertTrue("hello"!=*result,"hello!=result"); // ない場合は空文字と比較
+	}
+
+	//find nullTest
+	{
+		ECS::ecs_map::HopscotchHashMap<int, std::string> map;
+		assertTrue(nullptr!=map.find(99),"nullptr!=map.find(99)"); // 存在しないキーは null を返す
+	}
+
+	//eraseTest
+	{
+		ECS::ecs_map::HopscotchHashMap<int, std::string> map;
+		map.insert(1, "hello");
+		map.erase(1);
+		assertTrue(nullptr!=map.find(1),"nullptr!=map.find(1)"); // 削除後は null
+	}
+
+	//clearTest
+	{
+		ECS::ecs_map::HopscotchHashMap<int, std::string> map;
+		 map.insert(1, "hello");
+		 map.insert(2, "world");
+		 assertTrue(2!=map.size(),"2!=map.size()");
+		 map.clear();
+		 assertTrue(0!=map.size(),"0!=map.size()");
+	}
 }
 
 bool executeTimeTest()

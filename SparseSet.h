@@ -8,7 +8,7 @@
 #include <array>
 #include <limits>
 #include "HashFunctions.hpp"
-#include "Debug.h"
+#include "TestFramework.hpp"
 
 namespace ECS{
 
@@ -24,14 +24,14 @@ using SparseSet = SparseSetImpl<T>;
 template<typename T>
 struct SparseSet_iterator final{
     using value_type = T;
-    using reference = T&;
-    using pointer = T*;
+    using reference = const T&;
+    using pointer = const T*;
     using difference_type = std::ptrdiff_t;
     using iterator_category = std::random_access_iterator_tag;
 
     constexpr SparseSet_iterator() noexcept : ptr(nullptr), off(0) {}
-    constexpr SparseSet_iterator(const std::vector<T>& v, size_t idx) noexcept
-        : ptr(&v), off(idx + 1) {}
+    constexpr SparseSet_iterator(const std::vector<T>& v, const size_t idx) noexcept
+        : ptr(&v), off(idx) {}
 
     constexpr SparseSet_iterator& operator++() noexcept { --off; return *this; }
     constexpr SparseSet_iterator operator++(int) noexcept { SparseSet_iterator tmp = *this; ++* this; return tmp; }
@@ -55,7 +55,7 @@ struct SparseSet_iterator final{
         return (*this + -value);
     }
 
-    constexpr reference operator[](difference_type d) const noexcept {
+    constexpr reference operator[](const difference_type d) const noexcept {
         return (*ptr)[off - 1 - d];
     }
 
@@ -63,6 +63,7 @@ struct SparseSet_iterator final{
     constexpr reference operator*() const noexcept {
         return (*ptr)[off - 1];
     }
+
     constexpr pointer operator->() const noexcept {
         return &operator*();
     }
@@ -71,13 +72,41 @@ struct SparseSet_iterator final{
         return ptr ? ptr->data() : nullptr;
     }
 
-    constexpr size_t index() const noexcept {
+    constexpr difference_type index() const noexcept {
         return off - 1;
+    }
+
+    friend constexpr bool operator==(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return a.index() == b.index();
+    }
+
+    friend constexpr std::ptrdiff_t operator-(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return a.index() - b.index();
+    }
+
+    friend constexpr bool operator!=(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return !(a == b);
+    }
+
+    friend constexpr bool operator<(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return a.index() > b.index();
+    }
+
+    friend constexpr bool operator>(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return a < b;
+    }
+
+    friend constexpr bool operator<=(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return !(a > b);
+    }
+
+    friend constexpr bool operator>=(const SparseSet_iterator& a, const SparseSet_iterator& b) noexcept {
+        return !(a < b);
     }
 
 private:
     const std::vector<T>* ptr;  // underlying container
-    size_t                 off; // 末尾からのオフセット＋1
+    difference_type                 off; // 末尾からのオフセット＋1
 };
 
 // ランタイムでのインターフェース
@@ -91,11 +120,11 @@ public:
     virtual ~ISparseSet() = default;
     virtual void Delete(EntityID) = 0;
     virtual void Clear() = 0;
-    virtual size_t Size() = 0;
-    virtual bool ContainsEntity(EntityID) = 0;
-    virtual std::vector<EntityID>& GetEntityList() = 0;
-    virtual EntityID GetEntity(std::size_t) const = 0;
-    virtual size_t Index(EntityID) =  0;
+    virtual size_t Size() const noexcept= 0;
+    virtual bool ContainsEntity(const EntityID) const noexcept= 0;
+    virtual std::vector<EntityID>& GetEntityList() noexcept= 0;
+    virtual EntityID GetEntity(const std::size_t) const = 0;
+    virtual size_t Index(EntityID) const=  0;
     virtual ecs_map::id_type Hash()const = 0;
 
     virtual void swap_elements(const EntityID lhs,const EntityID rhs) = 0;
@@ -103,8 +132,8 @@ public:
     virtual iterator begin() noexcept = 0;
     virtual iterator end() noexcept = 0;
 
-    virtual const_iterator cbegin() const noexcept = 0;
-    virtual const_iterator cend() const noexcept = 0;
+    virtual const_iterator begin() const noexcept = 0;
+    virtual const_iterator end() const noexcept = 0;
 
     virtual reverse_iterator rbegin() noexcept = 0;
     virtual reverse_iterator rend() noexcept = 0;
@@ -162,7 +191,7 @@ public:
 
     T& GetRef(EntityID entity);
 
-    size_t Index(EntityID entity)override;
+    size_t Index(const EntityID entity)const override;
 
     ecs_map::id_type Hash() const override;
 
@@ -175,23 +204,23 @@ public:
     void Clear() override;
 
     //現在のdense配列の大きさ取得
-    size_t Size() override;
+    size_t Size() const noexcept override;
 
-    EntityID GetEntity(std::size_t position) const override;
-
-    //登録されているTオブジェ所持のEntityを配列で返す
-    std::vector<EntityID>& GetEntityList() override;
+    EntityID GetEntity(const std::size_t position) const override;
 
     //登録されているTオブジェ所持のEntityを配列で返す
-    std::vector<T>& GetValues();
+    std::vector<EntityID>& GetEntityList() noexcept override;
+
+    //登録されているTオブジェ所持のEntityを配列で返す
+    std::vector<T>& GetValues() noexcept;
 
     //対象のEntityがTオブジェを所持しているか
-    bool ContainsEntity(EntityID entity) override;
+    bool ContainsEntity(const EntityID entity) const noexcept override;
 
     //対象のEntityのdenseIndexを取得
-    inline size_t GetDenseIndex(EntityID entity);
+    inline size_t GetDenseIndex(const EntityID entity) const;
     //Sparse配列に設定
-    inline void SetSparseIndex(EntityID entity,size_t index);
+    inline void SetSparseIndex(const EntityID entity,const size_t index);
     
     //空チェック
     bool IsEmpty() const{
@@ -219,22 +248,22 @@ public:
         return iterator{m_denseToEntity,{}};
     }
 
-    const_iterator cbegin() const noexcept override {
+    const_iterator begin() const noexcept override {
         const auto pos = m_denseToEntity.size();
         return const_iterator{m_denseToEntity, pos };
-   }
+    }
 
-    const_iterator cend() const noexcept override {
+    const_iterator end() const noexcept override {
         return const_iterator{m_denseToEntity, std::ptrdiff_t{} };
     }
 
     reverse_iterator rbegin() noexcept override {return std::make_reverse_iterator(end());}
     reverse_iterator rend() noexcept override {return std::make_reverse_iterator(begin());}
 
-    const_reverse_iterator crbegin() const noexcept override {return std::make_reverse_iterator(cend());
+    const_reverse_iterator crbegin() const noexcept override {return std::make_reverse_iterator(end());
     }
     const_reverse_iterator crend() const noexcept override{
-        return std::make_reverse_iterator(cbegin());
+        return std::make_reverse_iterator(begin());
     }
 
 private:
@@ -301,7 +330,7 @@ inline T& SparseSetImpl<T, false>::GetRef(EntityID entity)
 }
 
 template<typename T>
-inline size_t SparseSetImpl<T, false>::Index(EntityID entity)
+inline size_t SparseSetImpl<T, false>::Index(const EntityID entity) const
 {
     size_t index = GetDenseIndex(entity);
     if(index != NULL_INDEX && m_denseToEntity[index] == entity) return index;
@@ -379,7 +408,7 @@ inline void SparseSetImpl<T, false>::Clear()
 }
 
 template<typename T>
-inline size_t SparseSetImpl<T, false>::Size()
+inline size_t SparseSetImpl<T, false>::Size() const noexcept
 {
     return m_dense.size();
 }
@@ -393,19 +422,19 @@ inline EntityID SparseSetImpl<T, false>::GetEntity(std::size_t position) const
 }
 
 template<typename T>
-inline std::vector<EntityID>& SparseSetImpl<T, false>::GetEntityList()
+inline std::vector<EntityID>& SparseSetImpl<T, false>::GetEntityList() noexcept
 {
     return m_denseToEntity;
 }
 
 template<typename T>
-inline std::vector<T>& SparseSetImpl<T, false>::GetValues()
+inline std::vector<T>& SparseSetImpl<T, false>::GetValues() noexcept
 {
     return m_dense;
 }
 
 template<typename T>
-inline bool SparseSetImpl<T, false>::ContainsEntity(EntityID entity)
+inline bool SparseSetImpl<T, false>::ContainsEntity(const EntityID entity) const noexcept
 {
     size_t index = GetDenseIndex(entity);
 
@@ -413,14 +442,14 @@ inline bool SparseSetImpl<T, false>::ContainsEntity(EntityID entity)
 }
 
 template<typename T>
-inline size_t SparseSetImpl<T, false>::GetDenseIndex(EntityID entity)
+inline size_t SparseSetImpl<T, false>::GetDenseIndex(const EntityID entity) const
 {
     size_t index = GetEntityIndex(entity);
     size_t page = index / SPARSE_MAX_SIZE;
     size_t sparseIndex = index % SPARSE_MAX_SIZE;
 
     if (page < m_sparsePages.size()) {
-        Sparse& sparse = m_sparsePages[page];
+        const Sparse& sparse = m_sparsePages[page];
         return sparse[sparseIndex];
     }
 
@@ -428,7 +457,7 @@ inline size_t SparseSetImpl<T, false>::GetDenseIndex(EntityID entity)
 }
 
 template<typename T>
-inline void SparseSetImpl<T, false>::SetSparseIndex(EntityID entity, size_t index)
+inline void SparseSetImpl<T, false>::SetSparseIndex(const EntityID entity,const size_t index)
 {
     size_t entityIndex = GetEntityIndex(entity);
     size_t page = entityIndex / SPARSE_MAX_SIZE;
@@ -457,8 +486,10 @@ class SparseSetImpl<T, true> :public ISparseSet{
         || (!std::is_move_assignable_v<T>);
 
 public:
+    using type = T;
+
     template<typename... Args>
-    T* Emplace(EntityID entity, Args&&... args){
+    T* Emplace(const EntityID entity, Args&&... args){
 
         (void)sizeof...(args);
 
@@ -472,20 +503,20 @@ public:
     }
 
     template<typename... Args>
-    T* Update(EntityID entity, Args&&... args) {
+    T* Update(const EntityID entity, Args&&... args) {
         return nullptr;
     };
 
     // エンティティに対応するコンポーネントを取得する
-    T* Get(EntityID entity){return nullptr;};
+    T* Get(const EntityID entity){return nullptr;};
 
     // 参照を返す
-    T& GetRef(EntityID entity){
+    T& GetRef(const EntityID entity){
         ASSERT(false,"do not use Empty struct pool GetRef()!!");
         return T();
     };
 
-    size_t Index(EntityID entity)override{
+    size_t Index(const EntityID entity)const override{
         size_t index = GetDenseIndex(entity);
         if (index != NULL_INDEX && m_denseToEntity[index] == entity) return index;
 
@@ -548,36 +579,36 @@ public:
     };
 
     //現在のdense配列の大きさ取得
-    size_t Size() override{
+    size_t Size() const noexcept override{
         return m_denseToEntity.size();
     };
 
-    EntityID GetEntity(std::size_t position) const override{
+    EntityID GetEntity(const std::size_t position) const override{
         if (position < m_denseToEntity.size()) return m_denseToEntity[position];
 
         return INVALID_ENTITY;
     };
 
     //登録されているTオブジェ所持のEntityを配列で返す
-    std::vector<EntityID>& GetEntityList() override{
+    std::vector<EntityID>& GetEntityList() noexcept override{
         return m_denseToEntity;
     };
 
     //対象のEntityがTオブジェを所持しているか
-    bool ContainsEntity(EntityID entity) override{
+    bool ContainsEntity(const EntityID entity) const noexcept override{
         size_t index = GetDenseIndex(entity);
 
         return (index != NULL_INDEX && m_denseToEntity[index] == entity);
     };
 
     //対象のEntityのdenseIndexを取得
-    inline size_t GetDenseIndex(EntityID entity){
+    inline size_t GetDenseIndex(const EntityID entity) const{
         size_t index = GetEntityIndex(entity);
         size_t page = index / SPARSE_MAX_SIZE;
         size_t sparseIndex = index % SPARSE_MAX_SIZE;
 
         if (page < m_sparsePages.size()) {
-            Sparse& sparse = m_sparsePages[page];
+            const Sparse& sparse = m_sparsePages[page];
             return sparse[sparseIndex];
         }
 
@@ -585,7 +616,7 @@ public:
     };
 
     //Sparse配列に設定
-    inline void SetSparseIndex(EntityID entity, size_t index){
+    inline void SetSparseIndex(const EntityID entity,const size_t index){
         size_t entityIndex = GetEntityIndex(entity);
         size_t page = entityIndex / SPARSE_MAX_SIZE;
         size_t sparseIndex = entityIndex % SPARSE_MAX_SIZE; // Index local to a page
@@ -622,12 +653,12 @@ public:
         return iterator{ m_denseToEntity,{} };
     }
 
-    const_iterator cbegin() const noexcept override {
+    const_iterator begin() const noexcept override {
         const auto pos = m_denseToEntity.size();
         return const_iterator{ m_denseToEntity, pos };
     }
 
-    const_iterator cend() const noexcept override {
+    const_iterator end() const noexcept override {
         return const_iterator{ m_denseToEntity, std::ptrdiff_t{} };
     }
 
@@ -635,10 +666,10 @@ public:
     reverse_iterator rend() noexcept override { return std::make_reverse_iterator(begin()); }
 
     const_reverse_iterator crbegin() const noexcept override {
-        return std::make_reverse_iterator(cend());
+        return std::make_reverse_iterator(end());
     }
     const_reverse_iterator crend() const noexcept override {
-        return std::make_reverse_iterator(cbegin());
+        return std::make_reverse_iterator(begin());
     }
 
 private:

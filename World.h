@@ -12,7 +12,7 @@
 #include <utility>
 #include "Entity.h"
 #include "EntityPool.h"
-#include "Debug.h"
+#include "TestFramework.hpp"
 #include "SparseSet.h"
 #include "HopscotchHashMap.h"
 #include "Storage.hpp"

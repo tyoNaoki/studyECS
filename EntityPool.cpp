@@ -1,6 +1,6 @@
 #include "EntityPool.h"
 #include <stdexcept>
-#include "Debug.h"
+#include "TestFramework.hpp"
 
 namespace ECS{
 

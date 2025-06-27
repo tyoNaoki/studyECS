@@ -28,7 +28,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	{
 		test();
 		//Transform2D trans(150,100);
-		DrawFormatString(0,0, Green, "座標[%d,%d]", 0,0); // 文字を描画する
+		//DrawFormatString(0,0, Green, "座標[%d,%d]", 0,0); // 文字を描画する
 	}
 
 	DxLib_End();				// ＤＸライブラリ使用の終了処理

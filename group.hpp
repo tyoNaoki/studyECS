@@ -5,15 +5,68 @@
 #include <utility>
 #include <string_view>
 #include <type_traits>
+#include <algorithm>
 #include "Entity.h"
 #include "Storage.hpp"
-#include "Debug.h"
+#include "TestFramework.hpp"
 #include "HashFunctions.hpp"
 #include "typeList.hpp"
 #include "World.h"
 #include "SparseSet.h"
 
 namespace ECS {
+
+    namespace algorithm{
+        template<typename Container, typename Compare, typename Sort = std_sort, typename... Args>
+        void sort_n(Container& container, const size_t length, Compare compare, Sort algo = Sort{}, Args &&...args) {
+            assert(!(length > container.size()), "Length exceeds the number of elements");
+
+            auto first = container.begin();
+            auto last = first + static_cast<decltype(first)::difference_type>(length);
+
+            algo(first, last, std::move(compare), std::forward<Args>(args)...);
+        }
+
+        template<typename Container, typename Compare, typename Sort = std_sort, typename... Args>
+        void sort(Container& container, Compare compare, Sort algo = Sort{}, Args &&...args) {
+            const size_t len = container.size();
+            sort_n(container, len, std::move(compare), std::move(algo), std::forward<Args>(args)...);
+        }
+
+        template<typename Container, typename It>
+        auto sort_as(Container& cont, It first, It last) {
+            using std::iter_swap;
+            using std::find;
+            using Iter = decltype(cont.begin());
+
+            Iter target = cont.begin();
+
+            //入力範囲を順にめぐり、cont中にあればtargetに移動
+            for (; first != last; ++first) {
+                auto const& id = *first;
+                //target 以降で探す
+                Iter pos = find(target, cont.end(), id);
+                if (pos == cont.end()) continue;    //contに存在しなければスキップ
+
+                //すでにtargetと同じなら何もしない、違えばswap
+                if (pos != target) {
+                    iter_swap(target, pos);
+                }
+
+                ++target;
+            }
+
+            //共通要素を詰めたブロックの末尾を指す
+            return target;
+        }
+
+        struct std_sort {
+            template<typename It, typename Compare = std::less<>, typename... Args>
+            void operator()(It first, It last, Compare compare = Compare{}, Args &&...args) const {
+                std::sort(std::forward<Args>(args)..., std::move(first), std::move(last), std::move(compare));
+            }
+        };
+    }// namespace algorithm
 
     //------------------------------------------------------------------------------
     // input_iterator_pointer<T>
@@ -65,12 +118,10 @@ class group_iterator<It,owned_t<Owned...>,get_t<Get...>>{
             return std::make_tuple();
         }
         else {
-            auto& values = cpool.GetValues();    // ← values() は vector<T>& を返す想定
+            auto& values = cpool.GetValues();
             return std::forward_as_tuple(
                 values.rbegin()[it.index()]
             );
-
-            //return std::forward_as_tuple(cpool.rbegin()[it.index()]);
         }
     }
 
@@ -230,7 +281,6 @@ public:
             }
         }
 
-
         return false;
     }
     
@@ -277,7 +327,6 @@ private:
     size_t len{};
 };
 
-
 //データ管理
 template<typename Type, std::size_t Get, std::size_t Exclude>
 class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
@@ -299,14 +348,12 @@ class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
             && std::apply([entt](auto *...cpool) { return (0u + ... + cpool->ContainsEntity(entt)) == 1u; }, filter)) {
             elem.push_back(entt);
         }
-
     }
 
     void remove_if(const EntityID entt) {
         auto newEnd = remove(elem.begin(), elem.end(), entt);
         elem.erase(newEnd, elem.end());
     }
-
 
 public:
     virtual ~Group_handler() = default;
@@ -346,6 +393,49 @@ public:
         }
     }
 
+    template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort_n(const size_t length, Compare compare, Sort algo = Sort{}, Args &&...args) {
+        assert(!(length > elem.size()), "Length exceeds the number of elements");
+
+        auto first = elem.begin();
+        auto last = first + static_cast<decltype(first)::difference_type>(length);
+
+        algo(first, last, std::move(compare), std::forward<Args>(args)...);
+    }
+
+    template<typename Compare, typename Sort = detail::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
+        const size_t len = elem.size();
+        sort_n(len, std::move(compare), std::move(algo), std::forward<Args>(args)...);
+    }
+
+    template<typename It>
+    auto sort_as(It first, It last) {
+        using std::iter_swap;
+        using std::find;
+        using Iter = decltype(elem.begin());
+
+        Iter target = elem.begin();
+
+        //入力範囲を順にめぐり、cont中にあればtargetに移動
+        for (; first != last; ++first) {
+            auto const& id = *first;
+            //target 以降で探す
+            Iter pos = find(target, elem.end(), id);
+            if (pos == elem.end()) continue;    //contに存在しなければスキップ
+
+            //すでにtargetと同じなら何もしない、違えばswap
+            if (pos != target) {
+                iter_swap(target, pos);
+            }
+
+            ++target;
+        }
+
+        //共通要素を詰めたブロックの末尾を指す
+        return target;
+    }
+
 private:
     bool contains(const EntityID& entt) const {
         return std::find(elem.begin(), elem.end(), entt) != elem.end();
@@ -368,8 +458,6 @@ private:
     }
 
 private:
-    //std::array<std::unique_ptr<handlerType>, (Owned + Get)> pools;
-    //std::array<std::unique_ptr<handlerType>, Exclude> filter;
     std::array<handlerType*, Get> pools;
     std::array<handlerType*, Exclude> filter;
     std::vector<EntityID> elem;
@@ -410,6 +498,7 @@ class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
 public:
     using handler = Group_handler<common_type, 0u, sizeof...(Get), sizeof...(Exclude)>;
     using base_iterator = std::vector<EntityID>::const_iterator;
+    using reverse_iterator = std::vector<EntityID>::const_reverse_iterator;
     using iterator = group_iterator<base_iterator, owned_t<>, get_t<Get...>>;
     using iterable = iterable_adapter<iterator>;
 
@@ -431,6 +520,14 @@ public:
         return m_handler ? handle().size() : size_t {};
     }
 
+    size_t capacity() const noexcept {
+        return m_handler ? handle().capacity() : size_t{};
+    }
+
+    void shrink_to_fit() {
+        if(m_handler) handle().shrink_to_fit();
+    }
+
     constexpr size_t count() const noexcept {
         return m_handler->groupCount;
     }
@@ -447,19 +544,44 @@ public:
         return m_handler ? handle().end() : base_iterator{};
     }
 
+    reverse_iterator rbegin() const noexcept {
+        return m_handler ? handle().rbegin() : reverse_iterator{};
+    }
+
+    reverse_iterator rend() const noexcept {
+        return m_handler ? handle().rend() : reverse_iterator{};
+    }
+
+    EntityID front() const noexcept {
+       return m_handler ? handle().front() : NULL_INDEX;
+    }
+
+    EntityID back() const noexcept {
+        return m_handler ? handle().back() : NULL_INDEX;
+    }
+
+    base_iterator find(const EntityID entt) const noexcept {
+        return m_handler ? 
+            std::find(handle().begin(),handle().end(),entt) : base_iterator{};
+    }
+
+    EntityID operator[](const size_t pos) const {
+        return begin()[static_cast<std::ptrdiff_t>(pos)];
+    }
+
     template<typename Type>
-    auto getComponentPool() noexcept {
+    auto* getComponentPool() noexcept {
         return getComponentPool<typeIndex<Type>>();
     }
 
     template<std::size_t Index>
-    auto getComponentPool() noexcept {
+    auto* getComponentPool() const noexcept {
         using element = typename type_list<Get..., Exclude...>::template get<Index>;
         return (m_handler && Index != npos) ? static_cast<element*>(m_handler->getComponentPool<Index>()) : nullptr;
     }
 
     bool contains(const EntityID entt)const noexcept{
-        return m_handler && handle().contains(entt);
+        return m_handler && std::any_of(handle().begin(), handle().end(), [&entt](const EntityID& e) { return e == entt; });
     }
 
     template<typename Type, typename... Other>
@@ -504,6 +626,42 @@ public:
         };
 
         return {first,last};
+    }
+
+    template<typename Type, typename... Other, typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
+        if(!m_handler) return;
+
+        sort<typeIndex<Type>, typeIndex<Other>...>(std::move(compare), std::move(algo), std::forward<Args>(args)...);
+    }
+
+    template<std::size_t... Index, typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
+        if (m_handler) {
+            if constexpr (sizeof...(Index) == 0) {
+                static_assert(std::is_invocable_v<Compare, const EntityID, const EntityID>, "Invalid comparison function");
+                m_handler->sort(std::move(compare), std::move(algo), std::forward<Args>(args)...);
+            }
+            else {
+                auto comp = [&compare, cpools = getComponentPools(std::index_sequence_for<Get...>{})](const EntityID lhs, const EntityID rhs) {
+                    if constexpr (sizeof...(Index) == 1) {
+                        return compare((std::get<Index>(cpools)->get(lhs), ...), (std::get<Index>(cpools)->get(rhs), ...));
+                    }
+                    else {
+                        return compare(std::forward_as_tuple(std::get<Index>(cpools)->get(lhs)...), std::forward_as_tuple(std::get<Index>(cpools)->get(rhs)...));
+                    }
+                };
+
+                m_handler->sort(std::move(comp), std::move(algo), std::forward<Args>(args)...);
+            }
+        }
+    }
+
+    template<typename It>
+    void sort_as(It first, It last) const {
+        if (m_handler) {
+            algorithm::sort_as(first, last);
+        }
     }
 
 private:
@@ -597,19 +755,27 @@ public:
 
   
     bool contains(const EntityID entt) const noexcept {
-        return m_handler && handle().contains(entt) && (handle().index(entt) < (m_handler->length()));
+        return m_handler && handle().ContainsEntity(entt) && (handle().Index(entt) < (m_handler->length()));
     }
 
     constexpr size_t count() noexcept{
         return m_handler->groupCount;
     }
 
+    size_t capacity() const noexcept {
+        return m_handler ? handle().capacity() : size_t{};
+    }
+
+    void shrink_to_fit() {
+        if (m_handler) handle().shrink_to_fit();
+    }
+
     bool empty() const noexcept{
         return !*this||!m_handler->len;
     }
 
-    const common_type *handle() const noexcept{
-        return getComponentPool<0>();
+    const common_type &handle() const noexcept{
+        return *getComponentPool<0>();
     }
 
     template<typename Type>
@@ -618,7 +784,7 @@ public:
     }
 
     template<std::size_t Index>
-    auto *getComponentPool() noexcept {
+    auto *getComponentPool() const noexcept {
         using element = typename type_list<Owner..., Get..., Exclude...>::template get<Index>;
 
         if constexpr (Index != npos) {
@@ -627,7 +793,6 @@ public:
         else {
             return nullptr;
         }
-
     }
 
     /**
@@ -682,6 +847,56 @@ public:
         };
 
         return { first,last };
+    }
+
+    template<typename Type, typename... Other, typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) const {
+        sort<index_of<Type>, index_of<Other>...>(std::move(compare), std::move(algo), std::forward<Args>(args)...);
+    }
+
+    /**
+     * @brief Sort a group according to the given comparison function.
+     *
+     * @sa sort
+     *
+     * @tparam Index Optional indexes of elements to compare.
+     * @tparam Compare Type of comparison function object.
+     * @tparam Sort Type of sort function object.
+     * @tparam Args Types of arguments to forward to the sort function object.
+     * @param compare A valid comparison function object.
+     * @param algo A valid sort function object.
+     * @param args Arguments to forward to the sort function object, if any.
+     */
+    template<std::size_t... Index, typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) const {
+        const auto cpools = getComponentPools(std::index_sequence_for<Owner...>{}, std::index_sequence_for<Get...>{});
+
+        if constexpr (sizeof...(Index) == 0) {
+            static_assert(std::is_invocable_v<Compare, const EntityID, const EntityID>, "Invalid comparison function");
+            storage<0>()->sort_n(descriptor->length(), std::move(compare), std::move(algo), std::forward<Args>(args)...);
+        }
+        else {
+            auto comp = [&compare, &cpools](const entity_type lhs, const entity_type rhs) {
+                if constexpr (sizeof...(Index) == 1) {
+                    return compare((std::get<Index>(cpools)->get(lhs), ...), (std::get<Index>(cpools)->get(rhs), ...));
+                }
+                else {
+                    return compare(std::forward_as_tuple(std::get<Index>(cpools)->get(lhs)...), std::forward_as_tuple(std::get<Index>(cpools)->get(rhs)...));
+                }
+            };
+
+            storage<0>()->sort_n(descriptor->length(), std::move(comp), std::move(algo), std::forward<Args>(args)...);
+        }
+
+        auto cb = [this](auto* head, auto *...other) {
+            for (auto next = descriptor->length(); next; --next) {
+                const auto pos = next - 1;
+                [[maybe_unused]] const auto entt = head->data()[pos];
+                (other->swap_elements(other->data()[pos], entt), ...);
+            }
+        };
+
+        std::apply(cb, cpools);
     }
 
 private:

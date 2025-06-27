@@ -2,7 +2,7 @@
 #include "SparseSet.h"
 #include <memory>
 #include <vector>
-#include "Debug.h"
+#include "TestFramework.hpp"
 #include <iostream>
 #include <cstdint>
 #include "HashFunctions.hpp"
@@ -24,17 +24,13 @@ class HopScotch_iterator {
     template <bool B,typename K, typename V>
     friend class HopScotch_iterator;
 
-    using size_type = std::size_t;
     using map_t = std::conditional_t<IsConst, const HopscotchHashMap<Key, Value>, HopscotchHashMap<Key, Value>>; 
     using value_t = std::conditional_t<IsConst, const Value, Value>;  
 
-    using iterator = size_type;
-
-    const HopscotchHashMap<Key,Value>* map_;
-    size_type pos_;
+    using iterator = size_t;
 
 public:
-    HopScotch_iterator(const HopscotchHashMap<Key,Value>* map, size_type pos) noexcept
+    HopScotch_iterator(const HopscotchHashMap<Key,Value>* map, size_t pos) noexcept
         : map_(map), pos_(pos) {}
 
     HopScotch_iterator& operator++() noexcept {
@@ -54,6 +50,10 @@ public:
     bool operator!=(const HopScotch_iterator<B, Key, Value>& other) const noexcept {
         return pos_ != other.pos_;
     }
+
+private:
+    const HopscotchHashMap<Key, Value>* map_;
+    size_t pos_;
 };
 
 template<typename Key, typename Value>
@@ -63,11 +63,10 @@ class HopscotchHashMap{
     using iterator = HopScotch_iterator<false,Key, Value>;
     using const_iterator = HopScotch_iterator<true,Key, Value>;
 
-    std::vector<std::pair<Key, Value>> data;
-    std::vector<uint16_t> hopscotch_Bitmap_dist;
-    std::size_t capacity;
-    uint8_t max_dist;
-
+    using Pack = std::pair<Key, Value>;
+    using DataContainer = std::vector<Pack>;
+    using DistBitmaps = std::vector<uint16_t>;
+    
 private:
     inline constexpr uint8_t dist_from_Bitmap(uint16_t bitmap) noexcept {
         return static_cast<uint8_t>(bitmap & 0xFF00) >> 8;
@@ -147,8 +146,8 @@ public:
     void rehash() {
         size_t newCapacity = capacity * 2;
 
-        std::vector<std::pair<Key, Value>> newData(newCapacity);
-        std::vector<uint16_t> newBitmap(newCapacity, 0);
+        DataContainer newData(newCapacity);
+        DistBitmaps newBitmap(newCapacity, 0);
 
         for (size_t i = 0; i < capacity; ++i) {
             if (hopscotch_Bitmap_dist[i]) {
@@ -247,39 +246,13 @@ private:
         return pos;
     }
     */
-    
+
+private:
+    DataContainer data;
+    DistBitmaps hopscotch_Bitmap_dist;
+    std::size_t capacity;
+    uint8_t max_dist;
 };
-
-namespace test {
-    inline void testInsertAndRetrieve() {
-        HopscotchHashMap<EntityIndex, std::string> map;
-        //map.insert(1, "hello");
-        //auto result = map.find(1);
-        //assertEquals("hello"!=*result,"hello!=result"); // Ç»Ç¢èÍçáÇÕãÛï∂éöÇ∆î‰är
-    }
-
-    inline void testKeyNotFound() {
-        HopscotchHashMap<int, std::string> map;
-        //assertEquals(nullptr!=map.find(99),"nullptr!=map.find(99)"); // ë∂ç›ÇµÇ»Ç¢ÉLÅ[ÇÕ null Çï‘Ç∑
-    }
-
-    inline void testErase() {
-        HopscotchHashMap<int, std::string> map;
-       // map.insert(1, "hello");
-        //map.erase(1);
-       // assertEquals(nullptr!=map.find(1),"nullptr!=map.find(1)"); // çÌèúå„ÇÕ null
-    }
-
-    inline void testSizeAndClear() {
-        HopscotchHashMap<int, std::string> map;
-       // map.insert(1, "hello");
-        //map.insert(2, "world");
-       // assertEquals(2!=map.size(),"2!=map.size()");
-       // map.clear();
-        //assertEquals(0!=map.size(),"0!=map.size()");
-    }
-    
-}//namespace test
 
 }//namespace ecs_map
 }//namespace ECS

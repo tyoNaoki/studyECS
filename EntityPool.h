@@ -10,13 +10,11 @@
 
 namespace ECS{
 
-class EntityIterator {
-public:
+struct EntityIterator {
     using iterator_category = std::forward_iterator_tag;
     using value_type = EntityID;
-    using difference_type = std::ptrdiff_t;
-    using reference = EntityID;
-    using pointer = void;
+    using reference = EntityID&;
+    using pointer = EntityID*;
 
     using DenseIterator = std::vector<std::pair<std::string, EntityID>>::iterator;
 

@@ -17,34 +17,38 @@ enum class StorageType {
     StorageTypeNum
 };
 
-// CRTP による共通インタフェース
+//CRTPによる共通インタフェース
 template<typename Derived>
-struct StorageCRTP {
-    static constexpr StorageType get_storage_type() {
-        return Derived::storage_t;
-    }
+class StorageCRTP {
+protected:
+    Derived& self() noexcept { return static_cast<Derived&>(*this); }
+    Derived const& self() const noexcept { return static_cast<Derived const&>(*this); }
 };
 
-// 基本ストレージ（コンポーネント管理のための SparseSet<T> をベースとする）
+//基本ストレージ（コンポーネント管理のためのSparseSet<T>をベースとする）
 template<typename Type,StorageType ST = StorageType::BasicType>
 class BasicStorage : public SparseSet<Type>,public StorageCRTP<BasicStorage<Type,ST>> {
+    static constexpr bool has_data = !std::is_empty_v<Type>;
+    static constexpr StorageType storage_t = ST;
+
 public:
     using BaseType = ISparseSet;
     using UnderingType = SparseSet<Type>;
-    using value_type = Type;
-    static constexpr StorageType storage_t = ST;
-    static constexpr bool has_data = !std::is_empty_v<value_type>;
+    using BaseCRTP = StorageCRTP<BasicStorage>;
 
-    // テンプレートメソッドなので virtual にできない点に注意
+    using pointer = Type*;
+
+    using value_type = std::conditional_t<has_data,
+        Type,  // コンポーネント
+        void>;       // タグ用
+
     template<typename... Args>
-    Type* Emplace(EntityID entity, Args&&... args) {
-        // ここではなんの前後処理もせず、親 (SparseSet<T>) の emplace を呼ぶだけ
+    pointer Emplace(EntityID entity, Args&&... args) {
         return UnderingType::Emplace(entity, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    Type* Update(EntityID entity, Args&&... args) {
-        // ここではなんの前後処理もせず、親 (SparseSet<T>) の emplace を呼ぶだけ
+    pointer Update(EntityID entity, Args&&... args) {
         return UnderingType::Update(entity, std::forward<Args>(args)...);
     }
 
@@ -52,26 +56,31 @@ public:
     void patch(EntityID entityID, F&& fn) {
         assert(false);
     }
+
+    bool hasData(){
+        return has_data;
+    }
 };
 
-// Mixin を合成可能なストレージテンプレート
+//Mixinを合成可能なストレージテンプレート
 template<typename Type, StorageType S,typename... Mixins>
 class MixinStorage : public BasicStorage<Type,S>,public Mixins... {
-    // 基底の Emplace を参照できるように using 宣言
+
     using Base = BasicStorage<Type, S>;
 public:
     using typename Base::value_type;
     using typename Base::BaseType;
+    using typename Base::pointer;
 
     template<typename... Args>
-    value_type* Emplace(const EntityID& entityID, Args&&... args) {
+    pointer Emplace(const EntityID& entityID, Args&&... args) {
         this->notify_construct(entityID);
         
         return Base::Emplace(entityID, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    value_type* Update(const EntityID& entityID, Args&&... args) {
+    pointer Update(const EntityID& entityID, Args&&... args) {
         this->notify_update(entityID);
 
         return Base::Update(entityID, std::forward<Args>(args)...);
@@ -134,7 +143,7 @@ struct StorageClass {
     using type = BasicStorage<Type,StorageType::BasicType>;
 };
 
-// イベント用には EventsMixin を合成
+//EventsMixinを合成
 template<typename Type>
 struct StorageClass<Type, StorageType::EventType> {
     using type = MixinStorage<Type,StorageType::EventType,EventsMixin>;

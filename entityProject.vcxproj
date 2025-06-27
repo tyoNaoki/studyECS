@@ -167,7 +167,7 @@
     <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
     <ClInclude Include="ComponentPoolManager.hpp" />
-    <ClInclude Include="Debug.h" />
+    <ClInclude Include="TestFramework.hpp" />
     <ClInclude Include="DebugHelpr.h" />
     <ClInclude Include="Event.hpp" />
     <ClInclude Include="EventDispatcher.hpp" />
