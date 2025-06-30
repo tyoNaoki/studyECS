@@ -851,7 +851,7 @@ public:
 
     template<typename Type, typename... Other, typename Compare, typename Sort = algorithm::std_sort, typename... Args>
     void sort(Compare compare, Sort algo = Sort{}, Args &&...args) const {
-        sort<index_of<Type>, index_of<Other>...>(std::move(compare), std::move(algo), std::forward<Args>(args)...);
+        sort<typeIndex<Type>, typeIndex<Other>...>(std::move(compare), std::move(algo), std::forward<Args>(args)...);
     }
 
     /**
@@ -873,25 +873,25 @@ public:
 
         if constexpr (sizeof...(Index) == 0) {
             static_assert(std::is_invocable_v<Compare, const EntityID, const EntityID>, "Invalid comparison function");
-            storage<0>()->sort_n(descriptor->length(), std::move(compare), std::move(algo), std::forward<Args>(args)...);
+            getComponentPool<0>()->sort_n(m_handler->length(), std::move(compare), std::move(algo), std::forward<Args>(args)...);
         }
         else {
-            auto comp = [&compare, &cpools](const entity_type lhs, const entity_type rhs) {
+            auto comp = [&compare, &cpools](const EntityID lhs, const EntityID rhs) {
                 if constexpr (sizeof...(Index) == 1) {
-                    return compare((std::get<Index>(cpools)->get(lhs), ...), (std::get<Index>(cpools)->get(rhs), ...));
+                    return compare((std::get<Index>(cpools)->GetRef(lhs), ...), (std::get<Index>(cpools)->GetRef(rhs), ...));
                 }
                 else {
-                    return compare(std::forward_as_tuple(std::get<Index>(cpools)->get(lhs)...), std::forward_as_tuple(std::get<Index>(cpools)->get(rhs)...));
+                    return compare(std::forward_as_tuple(std::get<Index>(cpools)->GetRef(lhs)...), std::forward_as_tuple(std::get<Index>(cpools)->GetRef(rhs)...));
                 }
             };
-
-            storage<0>()->sort_n(descriptor->length(), std::move(comp), std::move(algo), std::forward<Args>(args)...);
+             
+            getComponentPool<0>()->sort_n(m_handler->length(), std::move(comp), std::move(algo), std::forward<Args>(args)...);
         }
 
         auto cb = [this](auto* head, auto *...other) {
-            for (auto next = descriptor->length(); next; --next) {
+            for (auto next = m_handler->length(); next; --next) {
                 const auto pos = next - 1;
-                [[maybe_unused]] const auto entt = head->data()[pos];
+                const auto entt = head->data()[pos];
                 (other->swap_elements(other->data()[pos], entt), ...);
             }
         };

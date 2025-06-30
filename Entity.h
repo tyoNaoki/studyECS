@@ -16,7 +16,7 @@ inline EntityID CreateEntityId(EntityIndex index, EntityVersion version) {
 }
 
 inline EntityIndex GetEntityIndex(EntityID id) {
-    return id >> 32;
+    return id >> 32;//ãˆÊ32ƒrƒbƒg‚ğæ“¾
 }
 
 inline std::string EntityInfo(EntityID id) {

@@ -116,6 +116,7 @@ public:
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_iterator = iterator;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
+    using difference_type = std::ptrdiff_t;
 
     virtual ~ISparseSet() = default;
     virtual void Delete(EntityID) = 0;
@@ -128,6 +129,9 @@ public:
     virtual ecs_map::id_type Hash()const = 0;
 
     virtual void swap_elements(const EntityID lhs,const EntityID rhs) = 0;
+
+    virtual void swap_elementOnly(const size_t lhs, const size_t rhs) = 0;
+    virtual void swap_entityOnly(const size_t lhs, const size_t rhs) = 0;
 
     virtual iterator begin() noexcept = 0;
     virtual iterator end() noexcept = 0;
@@ -197,6 +201,10 @@ public:
 
     void swap_elements(const EntityID lhs, const EntityID rhs) override;
 
+    void swap_elementOnly(const size_t lhs,const size_t rhs) override;
+
+    void swap_entityOnly(const size_t lhs, const size_t rhs) override;
+
     // 指定エンティティのコンポーネントを削除する
     virtual void Delete(EntityID entity) override;
 
@@ -260,10 +268,100 @@ public:
     reverse_iterator rbegin() noexcept override {return std::make_reverse_iterator(end());}
     reverse_iterator rend() noexcept override {return std::make_reverse_iterator(begin());}
 
-    const_reverse_iterator crbegin() const noexcept override {return std::make_reverse_iterator(end());
-    }
+    const_reverse_iterator crbegin() const noexcept override {return std::make_reverse_iterator(end());}
+
     const_reverse_iterator crend() const noexcept override{
         return std::make_reverse_iterator(begin());
+    }
+
+    template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort_n(const size_t length, Compare compare, Sort algo = Sort{}, Args &&...args) {
+
+        algo(m_denseToEntity.rend() - length, m_denseToEntity.rend(), std::move(compare), std::forward<Args>(args)...);
+
+        for (size_t pos{}; pos < length; ++pos) {
+            auto curr = pos;//現在のポジション
+            size_t next = GetDenseIndex(m_denseToEntity[curr]);//currポジションにあるentityのdenseのポジション
+
+            //entityとdenseの配列ポジションが違う場合
+            if (curr != next&&next!=NULL_INDEX) {//(同じにする処理が走る)
+                const size_t idx = GetDenseIndex(m_denseToEntity[next]);//nextポジションのEntityからdenseポジションを割り出す
+                const auto entt_cur = m_denseToEntity[curr];//currポジションのentity
+                const auto entt_next = m_denseToEntity[next];  // 次の位置にあるエンティティ
+
+                //const EntityID lhs, const EntityID rhs
+
+                //    const auto fromIdx = Index(lhs);
+                //const auto toIdx = Index(rhs);
+                ////交換対象の Entity をキャッシュ
+                //const auto entFrom = lhs;
+                //const auto entTo = rhs;
+
+                ////dense交換
+                //std::swap(m_dense[fromIdx], m_dense[toIdx]);
+                //std::swap(m_denseToEntity[fromIdx], m_denseToEntity[toIdx]);
+
+                ////sparse交換
+                // setSparseIndex(new entity,new index);
+                //SetSparseIndex(entFrom, toIdx);
+                //SetSparseIndex(entTo, fromIdx);
+
+                swap_elementOnly(next,idx);//nextポジションとcurrポジションのdenseとentityをセットで入れ替える
+                SetSparseIndex(entt_cur,idx);
+                SetSparseIndex(entt_next,next);
+                curr = std::exchange(next, idx);//temp = next; next = idx; return temp;
+            }
+        }
+    }
+
+    /**
+     * @brief Sort all elements according to the given comparison function.
+     *
+     * @sa sort_n
+     *
+     * @tparam Compare Type of comparison function object.
+     * @tparam Sort Type of sort function object.
+     * @tparam Args Types of arguments to forward to the sort function object.
+     * @param compare A valid comparison function object.
+     * @param algo A valid sort function object.
+     * @param args Arguments to forward to the sort function object, if any.
+     */
+    template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
+        const size_t len = m_dense.size();
+        sort_n(len, std::move(compare), std::move(algo), std::forward<Args>(args)...);
+    }
+
+    /**
+     * @brief Sort entities according to their order in a range.
+     *
+     * Entities that are part of both the sparse set and the range are ordered
+     * internally according to the order they have in the range.<br/>
+     * All other entities goes to the end of the sparse set and there are no
+     * guarantees on their order.
+     *
+     * @tparam It Type of input iterator.
+     * @param first An iterator to the first element of the range of entities.
+     * @param last An iterator past the last element of the range of entities.
+     * @return An iterator past the last of the elements actually shared.
+     */
+    template<typename It>
+    iterator sort_as(It first, It last) {
+        const size_t len = m_dense.size();
+        auto it = end() - static_cast<difference_type>(len);
+
+        for (const auto other = end(); (it != other) && (first != last); ++first) {
+            if (const auto curr = *first; contains(curr)) {
+                if (const auto entt = *it; entt != curr) {
+                    // basic no-leak guarantee (with invalid state) if swapping throws
+                    swap_elements(entt, curr);
+                }
+
+                ++it;
+            }
+        }
+
+        return it;
     }
 
 private:
@@ -377,6 +475,22 @@ inline void SparseSetImpl<T, false>::swap_elements(const EntityID lhs, const Ent
     //sparse交換
     SetSparseIndex(entFrom, toIdx);
     SetSparseIndex(entTo, fromIdx);
+}
+
+template<typename T>
+inline void SparseSetImpl<T, false>::swap_elementOnly(const size_t lhs, const size_t rhs)
+{
+    ASSERT(m_dense.size()<=lhs || m_dense.size() <= rhs,"m_dense index out of bounds");
+
+    std::swap(m_dense[lhs], m_dense[rhs]);
+}
+
+template<typename T>
+inline void SparseSetImpl<T, false>::swap_entityOnly(const size_t lhs, const size_t rhs)
+{
+    ASSERT(m_denseToEntity.size() <= lhs || m_denseToEntity.size() <= rhs, "m_dense index out of bounds");
+
+    std::swap(m_denseToEntity[lhs], m_denseToEntity[rhs]);
 }
 
 template<typename T>
@@ -526,6 +640,15 @@ public:
     ecs_map::id_type Hash() const override{
         return ecs_map::type_hash<T>();
     };
+
+    void swap_elementOnly(const size_t lhs, const size_t rhs)override{return;}
+
+    void swap_entityOnly(const size_t lhs, const size_t rhs) override
+    {
+        ASSERT(m_denseToEntity.size() <= lhs || m_denseToEntity.size() <= rhs, "m_dense index out of bounds");
+
+        std::swap(m_denseToEntity[lhs], m_denseToEntity[rhs]);
+    }
 
     void swap_elements(const EntityID lhs, const EntityID rhs) override{
         if (lhs == INVALID_ENTITY || rhs == INVALID_ENTITY) {
