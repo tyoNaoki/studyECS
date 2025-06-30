@@ -229,6 +229,7 @@ class Group_handler final :public IHandler {
             && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
             swap_elements(len++, entt);
+            std::cout<< "push_on_construct : " << GetEntityIndex(entt)<<std::endl;
         }
     }
 
@@ -312,7 +313,7 @@ private:
     }
 
     void first_events() {
-        for (auto first = pools[0u]->begin(), last = first + static_cast<std::ptrdiff_t>(pools[0u]->Size()); first != last; ++first) {
+        for (auto first = pools[0u]->rbegin(), last = first + static_cast<std::ptrdiff_t>(pools[0u]->Size()); first != last; ++first) {
 
             push_on_construct(*first);
         }

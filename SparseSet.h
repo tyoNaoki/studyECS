@@ -480,7 +480,7 @@ inline void SparseSetImpl<T, false>::swap_elements(const EntityID lhs, const Ent
 template<typename T>
 inline void SparseSetImpl<T, false>::swap_elementOnly(const size_t lhs, const size_t rhs)
 {
-    ASSERT(m_dense.size()<=lhs || m_dense.size() <= rhs,"m_dense index out of bounds");
+    ASSERT(m_dense.size() > lhs && m_dense.size() > rhs,"m_dense index out of bounds");
 
     std::swap(m_dense[lhs], m_dense[rhs]);
 }

@@ -930,12 +930,12 @@ TEST_CASE_ORDER(test_create_group) {
 	bool isPrintSpawnLog = false;
 	bool isPrintDespawnLog = false;
 	auto spawnLog = [&isPrintSpawnLog](EntityID entt) {
-		//std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
+		std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
 		isPrintSpawnLog = true;
 	};
 
 	auto destroyLog = [&isPrintDespawnLog](EntityID entt) {
-		//std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
+		std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
 		isPrintDespawnLog = true;
 	};
 
@@ -945,10 +945,10 @@ TEST_CASE_ORDER(test_create_group) {
 	ECS::world().despawn(emptyEntity);
 
 	auto entity = ECS::world().spawn<A,C,D>();
-	auto entity2 = ECS::world().spawn<A, B,tagA>(A{ 2 });
-	auto entity3 = ECS::world().spawn<A,B,tagA>("Apple", A{ 3 });
-	auto entity4 = ECS::world().spawn<A,C>();
-	auto entity5 = ECS::world().spawn<A,B,C,D>("Banana", A{ 5 });
+	auto entity1 = ECS::world().spawn<A, B,tagA>(A{ 1 });
+	auto entity2 = ECS::world().spawn<A,B,tagA>("Apple", A{ 2 });
+	auto entity3 = ECS::world().spawn<A,C>();
+	auto entity4 = ECS::world().spawn<A,B,C,D>("Banana", A{ 4 });
 
 	assertTrue(isPrintSpawnLog, "entityPoolConstructor() print Log on Spawn Entity");
 	assertTrue(isPrintDespawnLog, "entityPoolDestructor() print Log on Despawn Entity");
@@ -1001,7 +1001,7 @@ TEST_CASE_ORDER(test_create_group) {
 	//	std::cout << "compB is " << compB.x << std::endl;
 	//	});
 
-	//auto tupleAB = group.get<A,B>(entity5);
+	//auto tupleAB = group.get<A,B>(entity4);
 	//auto [tA, tB] = tupleAB;
 
 	//std::cout << "auto [entt,a,b] : group.each" << std::endl;
@@ -1016,8 +1016,8 @@ TEST_CASE_ORDER(test_create_group) {
 	//	std::cout<< GetEntityIndex(x) << std::endl;
 	//}
 
-	//assertTrue(group.contains(entity5),"group.contains(entity5) is true");
-	//assertTrue(!group.contains(entity4),"group.contains(entity4) is false");
+	//assertTrue(group.contains(entity4),"group.contains(entity5) is true");
+	//assertTrue(!group.contains(entity3),"group.contains(entity4) is false");
 
 	//auto group2 = ECS::world().group<>(ECS::get<A,B,tagA>);
 	////使用時、tupleではtagAは除外される
@@ -1050,8 +1050,8 @@ TEST_CASE_ORDER(test_create_group) {
 	//	std::cout << GetEntityIndex(x) << std::endl;
 	//}
 	//
-	//assertTrue(group2.contains(entity2), "group2.contains(entity2) is true");
-	//assertTrue(!group2.contains(entity4), "group2.contains(entity4) is false");
+	//assertTrue(group2.contains(entity1), "group2.contains(entity1) is true");
+	//assertTrue(!group2.contains(entity3), "group2.contains(entity3) is false");
 
 	auto sortGroup = ECS::world().group<A>(ECS::get<B>);
 
@@ -1069,7 +1069,8 @@ TEST_CASE_ORDER(test_create_group) {
 	}
 	std::cout<<std::endl;
 
-	auto poolA =sortGroup.getComponentPool<A>();
+	auto poolA = sortGroup.getComponentPool<A>();
+
 	for(auto &x:poolA->GetValues()){
 		std::cout<<x.x<<std::endl;
 	}
