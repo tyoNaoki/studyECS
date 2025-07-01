@@ -1,7 +1,6 @@
 #ifndef ECS_SIGNAL_HPP
 #define ECS_SIGNAL_HPP
 
-#include "CallbackList.hpp"
 #include <vector>
 #include <shared_mutex>
 #include <functional>
@@ -33,12 +32,34 @@ class Signal : private EventDispatcher<ecs_map::id_type,void(void*)>
 	using Base = EventDispatcher<ecs_map::id_type, void(void*)>;
 	using HashID = ecs_map::id_type;
 	using RawArg = void*;
-	using Event = std::pair<HashID, std::unique_ptr<IEventArg>>;
+	//using Event = std::pair<HashID, std::unique_ptr<IEventArg>>;
 
 	using Wrapper = std::function<void(RawArg)>;
 
 	template<class U>
 	inline static constexpr HashID hash = ecs_map::type_hash<U>();
+
+	struct Event {
+		HashID                          id{};
+		std::unique_ptr<IEventArg>      arg{};   
+		int                             prio{};
+
+		Event() noexcept = default;
+
+		Event(HashID i,
+			std::unique_ptr<IEventArg> a,
+			int p) noexcept
+			: id(i), arg(std::move(a)), prio(p) {}
+
+	};
+
+	struct EventCompare {
+		bool operator()(Event const& a, Event const& b) const noexcept {
+			return a.prio < b.prio;
+		}
+	};
+
+	static constexpr EventCompare cmp_event{};
 
 public:
 	
@@ -65,16 +86,28 @@ public:
 	}
 
 	template<typename T>
-	void publish(T&& eventArg) {
+	void publish(T&& eventArg,int priority = 0) {
 		using Decayed = std::decay_t<T>;
 		HashID id = hash<Decayed>;
 		auto holder = std::make_unique<EventArg<Decayed>>(std::forward<T>(eventArg));
-		// イベントキューへの格納（ここでは piecewise_construct を利用）
+		// イベントキューへの格納（ここでは piecewise_construct を利用）[
+
 		queue_.emplace_back(
-			std::piecewise_construct,
-			std::forward_as_tuple(id),
-			std::forward_as_tuple(std::move(holder))
+			id,
+			std::move(holder),
+			priority
 		);
+
+		std::push_heap(queue_.begin(), queue_.end(), cmp_event);
+	}
+
+	template<typename T>
+	void publishAndDispatch(T&& eventArg,int priority = 0) {
+		publish(eventArg...,priority);
+
+		using Decayed = std::decay_t<T>;
+		HashID id = hash<Decayed>;
+		dispatch(id);
 	}
 	
 	void dispatch() {
@@ -87,11 +120,55 @@ public:
 		// キューの空状態を管理するカウンターのロック（スレッドセーフ性）
 		CounterLock<decltype(queueEmptyCount)> counterLock(queueEmptyCount);
 
-		for (auto& [id, holder] : tmp) {
-			auto it = listeners.find(id);
-			if (it == listeners.end()) continue;
-			// holder.get() は IEventArg* として渡す
-			it->second(holder.get());
+		while (!tmp.empty()) {
+			std::pop_heap(tmp.begin(), tmp.end(), cmp_event);
+			auto ev = std::move(tmp.back());
+			tmp.pop_back();
+			if (auto it = listeners.find(ev.id); it != listeners.end()) {
+				it->second(ev.arg.get());
+			}
+		}
+	}
+
+	void dispatchFilter(int minPriority){
+		std::vector<Event> tmp;
+		{
+			std::scoped_lock lk(mtx_);
+			tmp.swap(queue_);
+		}
+
+		// キューの空状態を管理するカウンターのロック（スレッドセーフ性）
+		CounterLock<decltype(queueEmptyCount)> counterLock(queueEmptyCount);
+
+		// 閾値未満を「rest」に分離 → tmpにはprio>=minPrioのみ残る
+		auto it = std::stable_partition(
+			tmp.begin(), tmp.end(),
+			[minPriority](auto& e) { return e.prio >= minPrio; }
+		);
+
+		std::vector<Event> rest;
+		rest.assign(std::make_move_iterator(it),
+			std::make_move_iterator(tmp.end()));
+		tmp.erase(it, tmp.end());
+
+		// dispatch
+		std::make_heap(tmp.begin(), tmp.end(), cmp_event);
+
+		while (!tmp.empty()) {
+			std::pop_heap(tmp.begin(), tmp.end(), cmp_event);
+			auto ev = std::move(tmp.back());
+			tmp.pop_back();
+			if (auto L = listeners.find(ev.id); L != listeners.end()) {
+				L->second(ev.arg.get());
+			}
+		}
+
+		// 閾値未満だったイベントを再キュー
+		{
+			std::scoped_lock lk(mtx_);
+			queue_.insert(queue_.end(),
+				std::make_move_iterator(rest.begin()),
+				std::make_move_iterator(rest.end()));
 		}
 	}
 
@@ -107,11 +184,11 @@ public:
 	
 		auto keepPos = std::partition(                   // 該当 ID を後ろ側へ集める
 			work.begin(), work.end(),
-			[id](const Event& e) { return e.first != id; });
+			[id](const Event& e) { return e.id != id; });
 	
 		if (auto li = this->listeners.find(id); li != this->listeners.end())
 			for (auto it = keepPos; it != work.end(); ++it)
-				li->second(it->second);
+				li->second(it->arg.get());
 	
 		// 先頭側 (非対象) をキューへ戻す
 		if (work.begin() != keepPos) {
@@ -120,6 +197,8 @@ public:
 			queue_.insert(queue_.end(),
 				std::make_move_iterator(work.begin()),
 				std::make_move_iterator(keepPos));
+
+			std::push_heap(queue_.begin(), queue_.end(), cmp_event);
 		}
 	}
 	
@@ -129,24 +208,28 @@ public:
 		{
 			std::lock_guard<std::mutex> lk(mtx_);
 			if (queue_.empty()) return false;  // 空なら何もしない
-			ev = std::move(queue_.back());    
+			std::pop_heap(queue_.begin(), queue_.end(), cmp_event);
+			ev = std::move(queue_.back());
 			queue_.pop_back();               
 		}
 	
-		auto id = ev.first;                               // リスナ呼び出し
+		auto id = ev.id;                               // リスナ呼び出し
 		auto it = this->listeners.find(id);
 	
 		if (it == this->listeners.end()){
 			std::lock_guard<std::mutex> lk(mtx_);
 			queue_.emplace_back(
-				std::piecewise_construct,
-				std::forward_as_tuple(ev.first),
-				std::forward_as_tuple(std::move(ev.second))
+				ev.id,
+				std::move(ev.arg),
+				ev.prio
 			);
+
+
+			std::push_heap(queue_.begin(), queue_.end(), cmp_event);
 			return false;
 		};
 	
-		it->second(ev.second.get());
+		it->second(ev.arg.get());
 		return true;
 	}
 	
@@ -303,7 +386,7 @@ public:
 			std::remove_if(
 				queue_.begin(),
 				queue_.end(),
-				[id](auto& ev) { return ev.first == id; }
+				[id](auto& ev) { return ev.id == id; }
 			),
 			queue_.end()
 		);
