@@ -1054,6 +1054,10 @@ TEST_CASE_ORDER(test_create_group) {
 	//assertTrue(!group2.contains(entity3), "group2.contains(entity3) is false");
 
 	auto sortGroup = ECS::world().group<A>(ECS::get<B>);
+	auto poolA = sortGroup.getComponentPool<A>();
+
+	auto& entity1afterRef = poolA->GetRef(entity1);
+	ASSERT(entity1afterRef.x == GetEntityIndex(entity1), "entity1 GetRef faild");
 
 	std::cout<<"sort\n";
 
@@ -1069,7 +1073,13 @@ TEST_CASE_ORDER(test_create_group) {
 	}
 	std::cout<<std::endl;
 
-	auto poolA = sortGroup.getComponentPool<A>();
+	auto& entity1Ref =  poolA->GetRef(entity1);
+	std::cout<<GetEntityIndex(entity1)<<"\n";
+	ASSERT(entity1Ref.x == GetEntityIndex(entity1),"entity1 GetRef faild");
+	auto& entity2Ref = poolA->GetRef(entity2);
+	ASSERT(entity2Ref.x == GetEntityIndex(entity2), "entity2 GetRef faild");
+	auto& entity4Ref = poolA->GetRef(entity4);
+	ASSERT(entity4Ref.x == GetEntityIndex(entity4), "entity4 GetRef faild");
 
 	for (auto& x : poolA->GetEntityList()) {
 		std::cout << GetEntityIndex(x) << ",";
