@@ -30,6 +30,9 @@
     <ClCompile Include="World.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="JobSystem.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Scene.h">
@@ -108,6 +111,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="StorageMixin.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="JobSystem.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
