@@ -285,31 +285,22 @@ public:
 
             //entityとdenseの配列ポジションが違う場合
             while(curr != next&&next!=NULL_INDEX) {//(同じにする処理が走る)
-                const size_t idx = GetDenseIndex(m_denseToEntity[next]);//nextポジションのEntityからdenseポジションを割り出す
+                //const size_t idx = GetDenseIndex(m_denseToEntity[next]);//nextポジションのEntityからdenseポジションを割り出す
                 const auto entt_cur = m_denseToEntity[curr];//currポジションのentity
                 const auto entt_next = m_denseToEntity[next];  // 次の位置にあるエンティティ
 
-                swap_elementOnly(next,idx);//nextポジションとcurrポジションのdenseとentityをセットで入れ替える
-                SetSparseIndex(entt_cur,idx);
+                swap_elementOnly(curr,next);//nextポジションとcurrポジションのdenseとentityをセットで入れ替える
+                SetSparseIndex(entt_cur,curr);
                 SetSparseIndex(entt_next,next);
-                curr = std::exchange(next, idx);//temp = next; next = idx; return temp;
+
+                const auto idx = GetDenseIndex(entt_next);
+                curr = next;    // new curr
+                next = idx;     // new next
             }
         }
 
     }
 
-    /**
-     * @brief Sort all elements according to the given comparison function.
-     *
-     * @sa sort_n
-     *
-     * @tparam Compare Type of comparison function object.
-     * @tparam Sort Type of sort function object.
-     * @tparam Args Types of arguments to forward to the sort function object.
-     * @param compare A valid comparison function object.
-     * @param algo A valid sort function object.
-     * @param args Arguments to forward to the sort function object, if any.
-     */
     template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>
     void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
         const size_t len = m_dense.size();
@@ -317,27 +308,29 @@ public:
     }
 
     /**
-     * @brief Sort entities according to their order in a range.
-     *
-     * Entities that are part of both the sparse set and the range are ordered
-     * internally according to the order they have in the range.<br/>
-     * All other entities goes to the end of the sparse set and there are no
-     * guarantees on their order.
-     *
-     * @tparam It Type of input iterator.
-     * @param first An iterator to the first element of the range of entities.
-     * @param last An iterator past the last element of the range of entities.
-     * @return An iterator past the last of the elements actually shared.
-     */
+    * @brief 指定した範囲の順序に合わせてエンティティを並び替えます。
+    *
+    * 入力イテレータ [first, last) で示される順序と、
+    * この sparse set（疎集合）に含まれるエンティティを突き合わせ、
+    * 範囲内の共通エンティティをそのままの順序で
+    * 内部の dense 配列上に並び替えます。
+    *
+    * 範囲に含まれないエンティティは末尾へまとめて配置され、
+    * そのグループ内での順序は保証されません。
+    *
+    * @tparam It     対象エンティティを指すイテレータの型
+    * @param first   ソート対象とするエンティティ範囲の先頭イテレータ
+    * @param last    ソート対象とするエンティティ範囲の終端イテレータ（末尾の次を指す）
+    * @return        実際に並び替えが行われた最後のエンティティの次を指すイテレータ
+    */
     template<typename It>
     iterator sort_as(It first, It last) {
-        const size_t len = m_dense.size();
+        size_t len = m_denseToEntity.size();
         auto it = end() - static_cast<difference_type>(len);
 
         for (const auto other = end(); (it != other) && (first != last); ++first) {
-            if (const auto curr = *first; contains(curr)) {
+            if (const auto curr = *first; ContainsEntity(curr)) {
                 if (const auto entt = *it; entt != curr) {
-                    // basic no-leak guarantee (with invalid state) if swapping throws
                     swap_elements(entt, curr);
                 }
 
@@ -777,6 +770,54 @@ public:
     }
     const_reverse_iterator crend() const noexcept override {
         return std::make_reverse_iterator(begin());
+    }
+
+    template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort_n(const size_t length, Compare compare, Sort algo = Sort{}, Args &&...args) {
+
+        algo(m_denseToEntity.rend() - length, m_denseToEntity.rend(), std::move(compare), std::forward<Args>(args)...);
+
+        for (size_t pos{}; pos < length; ++pos) {
+            auto curr = pos;//現在のポジション
+            size_t next = GetDenseIndex(m_denseToEntity[curr]);//currポジションにあるentityのdenseのポジション
+
+            //entityとdenseの配列ポジションが違う場合
+            while (curr != next && next != NULL_INDEX) {//(同じにする処理が走る)
+                const size_t idx = GetDenseIndex(m_denseToEntity[next]);//nextポジションのEntityからdenseポジションを割り出す
+                const auto entt_cur = m_denseToEntity[curr];//currポジションのentity
+                const auto entt_next = m_denseToEntity[next];  // 次の位置にあるエンティティ
+
+                SetSparseIndex(entt_cur, curr);
+                SetSparseIndex(entt_next, next);
+
+                curr = std::exchange(next, idx);//temp = next; next = idx; return temp;
+            }
+        }
+
+    }
+
+    template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>
+    void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
+        const size_t len = m_denseToEntity.size();
+        sort_n(len, std::move(compare), std::move(algo), std::forward<Args>(args)...);
+    }
+
+    template<typename It>
+    iterator sort_as(It first, It last) {
+        size_t len = m_denseToEntity.size();
+        auto it = end() - static_cast<difference_type>(len);
+
+        for (const auto other = end(); (it != other) && (first != last); ++first) {
+            if (const auto curr = *first; ContainsEntity(curr)) {
+                if (const auto entt = *it; entt != curr) {
+                    swap_elements(entt, curr);
+                }
+
+                ++it;
+            }
+        }
+
+        return it;
     }
 
 private:
