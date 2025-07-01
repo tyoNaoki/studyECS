@@ -1058,12 +1058,12 @@ TEST_CASE_ORDER(test_create_group) {
 	std::cout<<"sort\n";
 
 	for(auto&x:sortGroup){
-		std::cout<<GetEntityIndex(x)<<",";
+		//std::cout<<GetEntityIndex(x)<<",";
 	}
 
 	std::cout << "\n";
 
-	sortGroup.sort(std::greater<>{});
+	sortGroup.sort(std::less<>{});
 	for (auto& x : sortGroup) {
 		std::cout << GetEntityIndex(x) << ",";
 	}
@@ -1071,8 +1071,14 @@ TEST_CASE_ORDER(test_create_group) {
 
 	auto poolA = sortGroup.getComponentPool<A>();
 
+	for (auto& x : poolA->GetEntityList()) {
+		std::cout << GetEntityIndex(x) << ",";
+	}
+
+	std::cout<<"\n";
+
 	for(auto &x:poolA->GetValues()){
-		std::cout<<x.x<<std::endl;
+		std::cout<<x.x << ",";
 	}
 
 	//auto group = ECS::world().group<ECS::StorageType::EventType>(ECS::get<A,B>);
