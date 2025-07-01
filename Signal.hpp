@@ -130,6 +130,7 @@ public:
 		}
 	}
 
+	//閾値以上のイベント（つまいｒ優先度が高いイベント）を処理し、それ以外は未処理
 	void dispatchFilter(int minPriority){
 		std::vector<Event> tmp;
 		{
@@ -143,7 +144,7 @@ public:
 		// 閾値未満を「rest」に分離 → tmpにはprio>=minPrioのみ残る
 		auto it = std::stable_partition(
 			tmp.begin(), tmp.end(),
-			[minPriority](auto& e) { return e.prio >= minPrio; }
+			[minPriority](auto& e) { return e.prio >= minPriority; }
 		);
 
 		std::vector<Event> rest;
