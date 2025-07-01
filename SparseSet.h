@@ -284,27 +284,10 @@ public:
             size_t next = GetDenseIndex(m_denseToEntity[curr]);//currポジションにあるentityのdenseのポジション
 
             //entityとdenseの配列ポジションが違う場合
-            if (curr != next&&next!=NULL_INDEX) {//(同じにする処理が走る)
+            while(curr != next&&next!=NULL_INDEX) {//(同じにする処理が走る)
                 const size_t idx = GetDenseIndex(m_denseToEntity[next]);//nextポジションのEntityからdenseポジションを割り出す
                 const auto entt_cur = m_denseToEntity[curr];//currポジションのentity
                 const auto entt_next = m_denseToEntity[next];  // 次の位置にあるエンティティ
-
-                //const EntityID lhs, const EntityID rhs
-
-                //    const auto fromIdx = Index(lhs);
-                //const auto toIdx = Index(rhs);
-                ////交換対象の Entity をキャッシュ
-                //const auto entFrom = lhs;
-                //const auto entTo = rhs;
-
-                ////dense交換
-                //std::swap(m_dense[fromIdx], m_dense[toIdx]);
-                //std::swap(m_denseToEntity[fromIdx], m_denseToEntity[toIdx]);
-
-                ////sparse交換
-                // setSparseIndex(new entity,new index);
-                //SetSparseIndex(entFrom, toIdx);
-                //SetSparseIndex(entTo, fromIdx);
 
                 swap_elementOnly(next,idx);//nextポジションとcurrポジションのdenseとentityをセットで入れ替える
                 SetSparseIndex(entt_cur,idx);
@@ -312,6 +295,7 @@ public:
                 curr = std::exchange(next, idx);//temp = next; next = idx; return temp;
             }
         }
+
     }
 
     /**

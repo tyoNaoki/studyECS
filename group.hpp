@@ -229,7 +229,6 @@ class Group_handler final :public IHandler {
             && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
             swap_elements(len++, entt);
-            std::cout<< "push_on_construct : " << GetEntityIndex(entt)<<std::endl;
         }
     }
 
