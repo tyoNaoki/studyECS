@@ -17,6 +17,7 @@
 #include <random>
 #include "EventQueue.hpp"
 #include "Signal.hpp"
+#include "JobSystem.h"
 
 using namespace ECS::test;
 
@@ -74,25 +75,77 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_create_group");
-	//RUN_PRIORITY_TESTS();
+	//RUN_TEST("test_create_group",false);
+	RUN_PRIORITY_TESTS(false);
 }
 
-TEST_CASE_PRIORITY(test_sort_empty) {
+int generateRandomInt(int minNum, int maxNum) {
+	std::random_device rd;
+	std::mt19937 gen(rd());
+	std::uniform_int_distribution<> distribution(minNum, maxNum);
+	return distribution(gen);
+}
+
+void busyWait(std::chrono::nanoseconds duration) {
+	auto start_time = std::chrono::high_resolution_clock::now();
+	while (std::chrono::high_resolution_clock::now() - start_time < duration) {
+		// CPU時間を消費するためのアクティブな待機
+		// ループの中で何もしない
+	}
+}
+
+TEST_CASE_PRIORITY(test_jobSystem){
+	ECS::Job::TimelineRecorder recorder;
+	ECS::Job::JobSystem js{4,&recorder};
+
+	auto globalStart = ECS::Job::now();
+
+	// 3) 20 個のジョブをスケジュール
+	for (int i = 0; i < 20; ++i) {
+		// ジョブ名を 'A'～ に割り当て
+		char name = char('A' + (i % 26));
+
+		// schedule(name, ラムダ) を呼ぶだけで、
+		// ジョブ実行直前／直後に recorder.recordStart/recordEnd が走る
+		js.schedule(name, [name]() {
+			// ここでは処理時間だけシミュレート
+			int sleepTime = generateRandomInt(5, 10);
+			busyWait(std::chrono::milliseconds(sleepTime));
+			});
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	// 4) すべてのジョブ完了を待機
+	js.waitForAll();
+
+	// 5) テスト終了時刻を記録＆全体持続時間を計算
+	auto globalEnd = ECS::Job::now();
+	int  globalDuration = ECS::Job::duration(globalStart, globalEnd);
+	std::cout << "Total duration: "
+		<< globalDuration << " ms\n";
+
+	// 6) ログを取り出してスレッド別タイムラインを出力
+	auto& dataMap = recorder.getDataMap();
+	ECS::Job::printTimelines(dataMap, globalStart, globalDuration);
+}
+
+TEST_CASE(test_sort_empty) {
 	std::vector<int> v;
 	ECS::algorithm::sort(v, std::less<>{});
 	assertTrue(v.empty(), "empty vector remains empty");
 }
 
 // 2) 要素1個 → そのまま
-TEST_CASE_PRIORITY(test_sort_single) {
+TEST_CASE(test_sort_single) {
 	std::vector<int> v{ 42 };
 	ECS::algorithm::sort(v, std::less<>{});
 	assertTrue(v.size() == 1 && v[0] == 42, "single element stays unchanged");
 }
 
 // 3) 昇順ソート
-TEST_CASE_PRIORITY(test_sort_ascending) {
+TEST_CASE(test_sort_ascending) {
 	std::vector<int> v{ 4,3,2,1,0 };
 	ECS::algorithm::sort(v, std::less<>{});
 	for(auto &x:v){
@@ -104,7 +157,7 @@ TEST_CASE_PRIORITY(test_sort_ascending) {
 }
 
 // 4) 降順ソート (std::greater)
-TEST_CASE_PRIORITY(test_sort_descending) {
+TEST_CASE(test_sort_descending) {
 	std::vector<int> v{ 3,1,4,2,5 };
 	ECS::algorithm::sort(v, std::greater<>{});
 	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}),
@@ -112,7 +165,7 @@ TEST_CASE_PRIORITY(test_sort_descending) {
 }
 
 // 5) 既にソート済み → 変化なし
-TEST_CASE_PRIORITY(test_sort_already_sorted) {
+TEST_CASE(test_sort_already_sorted) {
 	std::vector<int> v{ 1,2,3,4,5 };
 	ECS::algorithm::sort(v, std::greater<>{});
 	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}), "already sorted remains sorted");
@@ -920,7 +973,7 @@ struct testBasicStorageComponent {
 };
 
 //作成テスト
-TEST_CASE_ORDER(test_create_group) {
+TEST_CASE(test_create_group) {
 	struct A {int x = 0;};
 	struct B {int x = 10;};
 	struct C {int x = 20;};

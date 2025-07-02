@@ -156,7 +156,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="EntityPool.cpp" />
-    <ClCompile Include="JobSystem.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Scene.cpp" />
     <ClCompile Include="SceneView.cpp" />
@@ -164,6 +163,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EntityEventMixin.hpp" />
+    <ClInclude Include="JobRecorder.h" />
     <ClInclude Include="JobSystem.h" />
     <ClInclude Include="Signal.hpp" />
     <ClInclude Include="CallbackList.hpp" />
