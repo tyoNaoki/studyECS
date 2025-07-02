@@ -138,10 +138,10 @@ inline void assertTrue(bool cond, const char* msg) {
     }
 }
 
-inline int run_test(const char* testName){
+inline int run_test(const char* testName,bool isLoop){
     static bool ran = false;
 
-    if (ran) {
+    if (ran&&!isLoop) {
         return 1;
     }
 
@@ -169,10 +169,12 @@ inline int run_test(const char* testName){
 }
 
 ///CategoryFilter‚Ü‚Å‚ğÀs‚µ‚Ä‚Ü‚Æ‚ß‚Ä•Ô‚·
-inline int run_tests(Category filter = Category::Standard) {
+inline int run_tests(Category filter = Category::Standard,bool isLoop = false) {
+    
+
     static bool ran = false;
 
-    if (ran) {
+    if (ran && !isLoop) {
         //std::cerr << "[ ERROR   ] run_tests() was already called, skipping.\n";
         return 1; 
     }
@@ -213,10 +215,10 @@ inline int run_tests(Category filter = Category::Standard) {
 }
 
 //ƒ}ƒNƒ
-#define RUN_ALL_TESTS()           return ECS::test::run_tests()
-#define RUN_PRIORITY_TESTS()      return ECS::test::run_tests(ECS::test::Category::Priority)
-#define RUN_ORDER_TESTS()         return ECS::test::run_tests(ECS::test::Category::OrderPriority)
-#define RUN_TEST(cond) return ECS::test::run_test(cond)
+#define RUN_ALL_TESTS(isLoop)           return ECS::test::run_tests(ECS::test::Category::Standard,isLoop)
+#define RUN_PRIORITY_TESTS(isLoop)      return ECS::test::run_tests(ECS::test::Category::Priority,isLoop)
+#define RUN_ORDER_TESTS(isLoop)         return ECS::test::run_tests(ECS::test::Category::OrderPriority,isLoop)
+#define RUN_TEST(name,isLoop) return ECS::test::run_test(name,isLoop)
 }// namespace ECS::test
 
 #ifndef ASSERT
