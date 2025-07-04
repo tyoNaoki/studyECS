@@ -163,6 +163,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EntityEventMixin.hpp" />
+    <ClInclude Include="JobQueue.hpp" />
     <ClInclude Include="JobRecorder.h" />
     <ClInclude Include="JobSystem.h" />
     <ClInclude Include="Signal.hpp" />
