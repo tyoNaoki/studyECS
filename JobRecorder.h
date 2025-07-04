@@ -5,7 +5,7 @@
 #include <sstream>
 #include <iomanip>
 
-namespace ECS::Job{
+namespace ECS::JobSystem{
 
 using time_point = std::chrono::high_resolution_clock::time_point;
 

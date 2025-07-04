@@ -95,10 +95,10 @@ void busyWait(std::chrono::nanoseconds duration) {
 }
 
 TEST_CASE_PRIORITY(test_jobSystem){
-	ECS::Job::TimelineRecorder recorder;
-	ECS::Job::JobSystem js{4,&recorder};
+	ECS::JobSystem::TimelineRecorder recorder;
+	ECS::JobSystem::JobSystem js{8,&recorder};
 
-	auto globalStart = ECS::Job::now();
+	auto globalStart = ECS::JobSystem::now();
 
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 20; ++i) {
@@ -121,14 +121,14 @@ TEST_CASE_PRIORITY(test_jobSystem){
 	js.waitForAll();
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
-	auto globalEnd = ECS::Job::now();
-	int  globalDuration = ECS::Job::duration(globalStart, globalEnd);
+	auto globalEnd = ECS::JobSystem::now();
+	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
 
 	// 6) ログを取り出してスレッド別タイムラインを出力
 	auto& dataMap = recorder.getDataMap();
-	ECS::Job::printTimelines(dataMap, globalStart, globalDuration);
+	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
 TEST_CASE(test_sort_empty) {
