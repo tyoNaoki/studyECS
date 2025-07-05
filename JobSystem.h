@@ -12,6 +12,9 @@
 
 namespace ECS::JobSystem{
 
+    template<typename Recorder>
+    class TestJobSystem;
+
 template<typename Recorder = NullRecorder>
 class JobSystem
 {
@@ -51,6 +54,7 @@ public:
 
     void schedule(char name,Job job) {
         // ジョブをラップして記録機構を入れる
+        
         auto wrapped = [this, name, job = std::move(job)]() mutable {
             auto h = recorder ? recorder->recordStart(name) : 0;
 
@@ -63,11 +67,11 @@ public:
         size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed)
             % jobQueues.size();
 
-        // 2) 未処理カウンタ増加
-        outstanding.fetch_add(1, std::memory_order_acq_rel);
-
         // 3) ローカルバッファにノーロックで push
         jobQueues[idx]->pushBottom(std::move(wrapped));
+
+        // 2) 未処理カウンタ増加
+        outstanding.fetch_add(1, std::memory_order_acq_rel);
 
         // 4) ワーカーを起床
         wakeCv.notify_one();
@@ -83,31 +87,25 @@ public:
     void workerThreadFunction(size_t queueIndex) {
         const size_t n = jobQueues.size();
 
-        // 無限ループで待機と実行を繰り返す
+        // 終了フラグと outstanding の組み合わせでループ制御
         while (true) {
-            Job job; // ジョブの入れ物を用意
+            //停止指示かつ未完了ジョブなしなら抜ける
+            if (stopFlag.load(std::memory_order_acquire) &&
+                outstanding.load(std::memory_order_acquire) == 0)
             {
-                std::unique_lock<std::mutex> lk(wakeMutex);
-                wakeCv.wait(lk, [&] {
-                    return stopFlag.load() ||
-                        outstanding.load(std::memory_order_acquire) > 0;
-                    });
-
-                if (stopFlag.load() &&
-                    outstanding.load(std::memory_order_acquire) == 0) {
-                    break;
-                }
+                break;
             }
 
             std::optional<Job> opt;
+
+            //自キューから pop
             if (auto p = jobQueues[queueIndex]->popBottom()) {
                 opt = std::move(p);
             }
             else {
-                // 他スレッドからスティールしてみる
+                //取れなければ他キューから steal
                 for (size_t i = 1; i < n; ++i) {
                     size_t idx = (queueIndex + i) % n;
-
                     if (auto s = jobQueues[idx]->stealTop()) {
                         opt = std::move(s);
                         break;
@@ -115,30 +113,36 @@ public:
                 }
             }
 
-            // 3) 取得できなければ一旦他スレッドへ譲ってループ
+            //どちらも取れなければ一旦 yield
             if (!opt) {
                 std::this_thread::yield();
                 continue;
             }
 
-            job = std::move(*opt);
+            //取得できたジョブを実行
+            Job job = std::move(*opt);
             job();
 
-            //完了待ち用通知
+            //完了カウンタを減らし、最後なら通知
             if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
                 std::lock_guard<std::mutex> lk(finishMutex);
                 finishCv.notify_all();
             }
         }
+
+        // シャットダウン時に残った自キューのジョブを掃く
+       while (auto p = jobQueues[queueIndex]->popBottom()) {
+            (*p)();
+       }
     }
 
 private:
 
-    bool popBottom(size_t queueIndex,Job& out){
+    bool popBottom(size_t queueIndex,std::optional<Job>& out){
         
         auto pop = jobQueues[queueIndex]->popBottom();
         if(pop){
-            out = std::move(*pop);
+            out = std::move(pop);
             return true;
         }
         
@@ -146,15 +150,13 @@ private:
     }
 
     // stealTop を使って他ワーカーから奪う
-    bool stealFromOthers(size_t stealOwner, Job& out) {
+    bool stealFromOthers(size_t stealOwner, std::optional<Job>& out) {
         size_t n = jobQueues.size();
 
         for (size_t i = 1; i < n; ++i) {
             size_t idx = (stealOwner + i) % n;
-            
-            auto steal = jobQueues[idx]->stealTop();
-            if (steal) {
-                out = std::move(*steal);
+            if (auto steal = jobQueues[idx]->stealTop()) {
+                out = std::move(steal);
                 return true;
             }
         }

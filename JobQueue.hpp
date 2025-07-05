@@ -14,141 +14,111 @@ namespace ECS::JobSystem {
             "T must be nothrow-move-constructible");
 
     public:
-        // capacity は必ず 2 の累乗
         explicit ChaseLevDeque(size_t capacity)
-            : capacity_(capacity),
-            mask_(capacity - 1),
-            buffer_(static_cast<Storage*>(
-                operator new[](capacity * sizeof(Storage)))),
-            top_(0),
-            bottom_(0)
-        {
-            assert((capacity & (capacity - 1)) == 0 &&
-                "Capacity must be a power of two");
-        }
+            : bottom(0),
+            top(0),
+            tail(0),
+            capacity(capacity),
+            mask(capacity - 1),
+            slotMutex(capacity),
+            slotData(capacity)
+        {}
+                
+        //~ChaseLevDeque() { ::operator delete[](buffer_); }
 
-        ~ChaseLevDeque() {
-            // ここでは live 要素の破棄を行いません。
-            // デストラクタ呼び出し責任はユーザーに委ねるか、
-            // clear() 等で明示的に行ってください。
-            operator delete[](buffer_);
-        }
-
-        // ボトムにタスクをプッシュ（オーナースレッドのみ呼ぶ）
+        // pushBottom: オーナースレッドのみ
         bool pushBottom(T&& task) {
-            size_t b = bottom_.load(std::memory_order_relaxed);
-            size_t t = top_.load(std::memory_order_acquire);
-            if (b - t >= capacity_)
-                return false;  // オーバーフロー
+            size_t b = bottom;
+            size_t idx = b & mask;
 
-            // 配置 new で要素をコンストラクト
-            new (&buffer_[b & mask_]) T(std::move(task));
+            std::unique_lock<std::mutex> lk(slotMutex[idx], std::try_to_lock);
+            if (!lk.owns_lock() || slotData[idx].has_value())
+                return false;
 
-            // リリースフェンス→他スレッドに要素が見えるように
-            std::atomic_thread_fence(std::memory_order_release);
-            bottom_.store(b + 1, std::memory_order_relaxed);
+            slotData[idx] = std::move(task);
+            bottom = b + 1;
             return true;
         }
 
-        // ボトムからポップ（オーナースレッドのみ呼ぶ）
-        // 何もなければ std::nullopt、あれば std::move で返す
+        // popBottom: オーナースレッドのみ
         std::optional<T> popBottom() {
-            //1) 空かどうかを先にチェック
-            size_t b0 = bottom_.load(std::memory_order_relaxed);
-            size_t t0 = top_.load(std::memory_order_acquire);
-            if (t0 >= b0) {
-                // 空なら何もしない
+            size_t b0 = bottom;
+            size_t t0 = top.load(std::memory_order_acquire);
+            if (t0 >= b0)
+                return std::nullopt;
+
+            size_t b1 = b0 - 1;
+            bottom = b1;
+
+            size_t idx = b1 & mask;
+            std::lock_guard<std::mutex> lk(slotMutex[idx]);
+            if (!slotData[idx].has_value()) {
+                bottom = b0;  // 元に戻す
                 return std::nullopt;
             }
 
-            // 2) 安全にデクリメントして要素を取る
-            size_t b = b0 - 1;
-            bottom_.store(b, std::memory_order_relaxed);
+            T result = std::move(*slotData[idx]);
+            slotData[idx].reset();
 
-            // 全スレッドと同期
-            std::atomic_thread_fence(std::memory_order_seq_cst);
-            size_t t = top_.load(std::memory_order_relaxed);
-
-            // 再チェック：空になってしまったか？
-            if (t > b) {
-                // 他スレッドに奪われたり空になった場合は bottom を復帰
-                bottom_.store(t, std::memory_order_relaxed);
-                return std::nullopt;
-            }
-
-            // 3) 要素を取り出して破棄
-            T* slot = reinterpret_cast<T*>(&buffer_[b & mask_]);
-            T result = std::move(*slot);
-            slot->~T();
-
-            // 4) “最後の 1 要素” なら top も進める
-            if (t == b) {
-                size_t expected = t;
-                if (!top_.compare_exchange_strong(
-                    expected, t + 1,
+            if (t0 == b1) {
+                size_t expected = t0;
+                if (top.compare_exchange_strong(expected, t0 + 1,
                     std::memory_order_seq_cst,
-                    std::memory_order_relaxed))
-                {
-                    // すでに steal された→空扱い
-                    bottom_.store(t + 1, std::memory_order_relaxed);
+                    std::memory_order_relaxed)) {
+                    bottom = b0;  // 底も進める
+                }
+                else {
+                    bottom = expected + 1;
                     return std::nullopt;
                 }
-                // bottom も一致させる
-                bottom_.store(t + 1, std::memory_order_relaxed);
             }
+            return result;
+        }
 
+        // stealTop: 他スレッド
+        std::optional<T> stealTop() {
+            std::lock_guard<std::mutex> lkTail(tailMutex);
+            size_t t = tail;
+            if (t >= bottom)
+                return std::nullopt;
+
+            size_t idx = t & mask;
+            std::lock_guard<std::mutex> lkSlot(slotMutex[idx]);
+            if (!slotData[idx].has_value())
+                return std::nullopt;
+
+            T result = std::move(*slotData[idx]);
+            slotData[idx].reset();
+            tail = t + 1;
             return result;
         }
 
 
-        // トップからスティール（他スレッドが呼ぶ）
-        std::optional<T> stealTop() {
-            size_t t = top_.load(std::memory_order_acquire);
-
-            // 強いフェンスで bottom と同期
-            std::atomic_thread_fence(std::memory_order_seq_cst);
-            size_t b = bottom_.load(std::memory_order_acquire);
-
-            if (t >= b)
-                return std::nullopt;  // 空
-
-            // 要素取り出し
-            T* slot = reinterpret_cast<T*>(&buffer_[t & mask_]);
-            T result = std::move(*slot);
-
-            // head を進める CAS
-            if (top_.compare_exchange_strong(
-                t, t + 1,
-                std::memory_order_seq_cst,
-                std::memory_order_relaxed))
-            {
-                slot->~T();  // 破棄
-                return result;
-            }
-            // CAS に失敗したら empty 扱い
-            return std::nullopt;
-        }
-
         bool empty() const {
-            size_t t = top_.load(std::memory_order_acquire);
-            size_t b = bottom_.load(std::memory_order_acquire);
+            size_t b = bottom;
+            size_t t = top.load(std::memory_order_acquire);
             return t >= b;
         }
 
         // スレッドセーフではありません。デバッグ用にのみ。
         size_t unsafe_size() const {
-            return bottom_.load() - top_.load();
+            return bottom - top.load();
         }
 
     private:
-        using Storage = typename std::aligned_storage<
-            sizeof(T), alignof(T)>::type;
 
-        const size_t        capacity_;
-        const size_t        mask_;
-        Storage* buffer_;
-        std::atomic<size_t> top_;
-        std::atomic<size_t> bottom_;
+        std::vector<std::mutex>        slotMutex;
+        std::vector<std::optional<T>>  slotData;
+
+        // インデックス管理
+        std::atomic<size_t> top;     // スティーラーが進める
+        size_t            bottom;    // オーナーのみ
+        size_t            tail;      // stealTop 用位置
+        const size_t      capacity;
+        const size_t      mask;      // capacity は 2^N の前提
+
+        std::mutex        tailMutex; // tail 更新用
+
     };
 
 }  // namespace ECS::JobSystem
