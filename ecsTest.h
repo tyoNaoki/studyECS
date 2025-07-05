@@ -96,7 +96,7 @@ void busyWait(std::chrono::nanoseconds duration) {
 
 TEST_CASE_PRIORITY(test_jobSystem){
 	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{8,&recorder};
+	ECS::JobSystem::JobSystem js{ 4,&recorder };
 
 	auto globalStart = ECS::JobSystem::now();
 
