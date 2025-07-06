@@ -8,7 +8,7 @@
 #include <atomic>
 #include <type_traits>
 #include "JobRecorder.h"
-#include "JobQueue.hpp"
+#include "JobDeque.hpp"
 
 namespace ECS::JobSystem{
 
@@ -25,7 +25,7 @@ public:
     {
         jobQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; i++) {
-            jobQueues.emplace_back(std::make_unique<ChaseLevDeque<Job>>(capacity));
+            jobQueues.emplace_back(std::make_unique<JobDeque<Job>>(capacity));
         }
 
         workers.reserve(threadCount);
@@ -53,28 +53,28 @@ public:
     }
 
     void schedule(char name,Job job) {
-        // ジョブをラップして記録機構を入れる
-        
+        //未処理カウンタ増加
+        outstanding.fetch_add(1, std::memory_order_acq_rel);
+
+        //ジョブをラップして記録
         auto wrapped = [this, name, job = std::move(job)]() mutable {
             auto h = recorder ? recorder->recordStart(name) : 0;
-
             job();
 
             if (recorder) recorder->recordEnd(h);
         };
 
-        // ラウンドロビンでキューを選択（== 過去の nextQueue に依存）
         size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed)
             % jobQueues.size();
 
-        // 3) ローカルバッファにノーロックで push
+        //ローカルバッファにpush
         jobQueues[idx]->pushBottom(std::move(wrapped));
 
-        // 2) 未処理カウンタ増加
-        outstanding.fetch_add(1, std::memory_order_acq_rel);
-
-        // 4) ワーカーを起床
-        wakeCv.notify_one();
+        {
+            std::lock_guard lk(wakeMutex);
+            std::cout << "[START] queue=" << idx << " outstanding=" << outstanding << std::endl;
+            wakeCv.notify_one();
+        }
     }
 
     void waitForAll() {
@@ -101,6 +101,7 @@ public:
             //自キューから pop
             if (auto p = jobQueues[queueIndex]->popBottom()) {
                 opt = std::move(p);
+                //std::cout << "[POP] queue=" << queueIndex << " outstanding=" << outstanding << std::endl;
             }
             else {
                 //取れなければ他キューから steal
@@ -108,6 +109,7 @@ public:
                     size_t idx = (queueIndex + i) % n;
                     if (auto s = jobQueues[idx]->stealTop()) {
                         opt = std::move(s);
+                        //std::cout << "[STEAL] queue=" << idx << " → queue=" << queueIndex << std::endl;
                         break;
                     }
                 }
@@ -126,7 +128,12 @@ public:
             //完了カウンタを減らし、最後なら通知
             if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
                 std::lock_guard<std::mutex> lk(finishMutex);
+                std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding << std::endl;
+
                 finishCv.notify_all();
+            }else{
+                std::lock_guard<std::mutex> lk(finishMutex);
+                std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding << std::endl;
             }
         }
 
@@ -171,7 +178,7 @@ private:
 
 private:
     std::vector<std::thread> workers;
-    std::vector<std::unique_ptr<ChaseLevDeque<Job>>> jobQueues;
+    std::vector<std::unique_ptr<JobDeque<Job>>> jobQueues;
 
     std::atomic<bool> stopFlag;
     std::atomic<size_t> outstanding{ 0 };

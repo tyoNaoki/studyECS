@@ -9,24 +9,23 @@
 namespace ECS::JobSystem {
 
     template<typename T>
-    class ChaseLevDeque {
+    class JobDeque {
         static_assert(std::is_nothrow_move_constructible<T>::value,
             "T must be nothrow-move-constructible");
 
     public:
-        explicit ChaseLevDeque(size_t capacity)
+        explicit JobDeque(size_t capacity)
             : bottom(0),
             top(0),
-            tail(0),
             capacity(capacity),
             mask(capacity - 1),
             slotMutex(capacity),
             slotData(capacity)
         {}
                 
-        //~ChaseLevDeque() { ::operator delete[](buffer_); }
+        ~JobDeque() = default;
 
-        // pushBottom: オーナースレッドのみ
+        //pushBottom:オーナースレッドのみ
         bool pushBottom(T&& task) {
             size_t b = bottom;
             size_t idx = b & mask;
@@ -40,20 +39,21 @@ namespace ECS::JobSystem {
             return true;
         }
 
-        // popBottom: オーナースレッドのみ
+        //popBottom:オーナースレッドのみ
         std::optional<T> popBottom() {
-            size_t b0 = bottom;
+            size_t b0 = bottom.load(std::memory_order_relaxed);
             size_t t0 = top.load(std::memory_order_acquire);
             if (t0 >= b0)
                 return std::nullopt;
 
             size_t b1 = b0 - 1;
-            bottom = b1;
+            bottom.store(b1, std::memory_order_release);
 
             size_t idx = b1 & mask;
             std::lock_guard<std::mutex> lk(slotMutex[idx]);
             if (!slotData[idx].has_value()) {
-                bottom = b0;  // 元に戻す
+                //元に戻す
+                bottom.store(b0, std::memory_order_release);
                 return std::nullopt;
             }
 
@@ -65,33 +65,50 @@ namespace ECS::JobSystem {
                 if (top.compare_exchange_strong(expected, t0 + 1,
                     std::memory_order_seq_cst,
                     std::memory_order_relaxed)) {
-                    bottom = b0;  // 底も進める
+                    bottom.store(b0, std::memory_order_release); 
                 }
                 else {
-                    bottom = expected + 1;
+                    bottom.store(expected + 1, std::memory_order_release);
                     return std::nullopt;
                 }
             }
+
+            checkInvariants();
             return result;
         }
 
-        // stealTop: 他スレッド
+        //他スレッドからのstealTop
         std::optional<T> stealTop() {
-            std::lock_guard<std::mutex> lkTail(tailMutex);
-            size_t t = tail;
-            if (t >= bottom)
-                return std::nullopt;
+            //topを読み出し
+            size_t t0 = top.load(std::memory_order_acquire);
+            size_t b = bottom.load(std::memory_order_acquire);
+            if (t0 >= b)
+                return std::nullopt;    // 空
 
-            size_t idx = t & mask;
-            std::lock_guard<std::mutex> lkSlot(slotMutex[idx]);
-            if (!slotData[idx].has_value())
-                return std::nullopt;
+            size_t idx = t0 & mask;
+            T result;
+            {
+                std::lock_guard<std::mutex> lk(slotMutex[idx]);
+                if (!slotData[idx].has_value())
+                    return std::nullopt;
+                
+                result = std::move(*slotData[idx]);
+                slotData[idx].reset();
+            }
 
-            T result = std::move(*slotData[idx]);
-            slotData[idx].reset();
-            tail = t + 1;
+            size_t expected = t0;
+            if (!top.compare_exchange_strong(
+                expected, t0 + 1,
+                std::memory_order_seq_cst,
+                std::memory_order_relaxed))
+            {
+                //他者が同じ要素を奪った可能性あり
+                return std::nullopt;
+            }
+
             return result;
         }
+
 
 
         bool empty() const {
@@ -106,18 +123,29 @@ namespace ECS::JobSystem {
         }
 
     private:
+        void checkInvariants() {
+            size_t t = top.load(std::memory_order_acquire);
+            size_t b = bottom;
+            assert(t <= b);
+            assert(b - t <= capacity);
+            // slotData の参照カウントと実際の occupied を一致させる
+            size_t occ = 0;
+            for (auto& opt : slotData) if (opt.has_value()) ++occ;
+            assert(occ == b - t);
+        }
+
+
+
+    private:
 
         std::vector<std::mutex>        slotMutex;
         std::vector<std::optional<T>>  slotData;
 
         // インデックス管理
         std::atomic<size_t> top;     // スティーラーが進める
-        size_t            bottom;    // オーナーのみ
-        size_t            tail;      // stealTop 用位置
+        std::atomic<size_t> bottom;    // オーナーのみ
         const size_t      capacity;
         const size_t      mask;      // capacity は 2^N の前提
-
-        std::mutex        tailMutex; // tail 更新用
 
     };
 
