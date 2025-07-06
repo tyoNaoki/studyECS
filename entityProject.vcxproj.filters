@@ -116,7 +116,7 @@
     <ClInclude Include="JobRecorder.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="JobQueue.hpp">
+    <ClInclude Include="JobDeque.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

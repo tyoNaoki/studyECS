@@ -69,11 +69,11 @@ struct TimelineRecorder {
     RecordHandle recordStart(char name){
         auto thisId = std::this_thread::get_id();
         auto t = now();
-
+        
         JobData data{name,t,t};
 
         std::lock_guard<std::mutex> lock(mtx);
-
+        //std::cout << "[START] Job=" << jobData[thisId].size() << " T=" << thisId << std::endl;
         jobData[thisId].push_back(data);
 
         return jobData[thisId].size() - 1;
@@ -86,6 +86,7 @@ struct TimelineRecorder {
 
         std::lock_guard<std::mutex> lock(mtx);
 
+        //std::cout << "[END] Job=" << handle << " T=" << thisId << std::endl;
         auto it = jobData.find(thisId);
         if (it == jobData.end() || it->second.empty())
             return;
