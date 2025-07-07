@@ -94,7 +94,13 @@ void busyWait(std::chrono::nanoseconds duration) {
 	}
 }
 
-TEST_CASE_PRIORITY(test_jobSystem){
+void func(){
+	// ここでは処理時間だけシミュレート
+	int sleepTime = generateRandomInt(5, 10);
+	busyWait(std::chrono::milliseconds(sleepTime));
+}
+
+TEST_CASE_ORDER(test_jobSystem) {
 	ECS::JobSystem::TimelineRecorder recorder;
 	ECS::JobSystem::JobSystem js{ 4,&recorder };
 
@@ -103,19 +109,101 @@ TEST_CASE_PRIORITY(test_jobSystem){
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 20; ++i) {
 		// ジョブ名を 'A'～ に割り当て
-		char name = char('A' + (i % 26));
+		char name = char('A' + i % 26);
 
-		// schedule(name, ラムダ) を呼ぶだけで、
-		// ジョブ実行直前／直後に recorder.recordStart/recordEnd が走る
-		js.schedule(name, [name]() {
-			// ここでは処理時間だけシミュレート
-			int sleepTime = generateRandomInt(5, 10);
-			busyWait(std::chrono::milliseconds(sleepTime));
+		auto handle = js.schedule(name, []() {
+			func();
 			});
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}
+
+	// 4) すべてのジョブ完了を待機
+	js.waitForAll();
+
+	// 5) テスト終了時刻を記録＆全体持続時間を計算
+	auto globalEnd = ECS::JobSystem::now();
+	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+	std::cout << "Total duration: "
+		<< globalDuration << " ms\n";
+
+	// 6) ログを取り出してスレッド別タイムラインを出力
+	auto& dataMap = recorder.getDataMap();
+	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+}
+
+TEST_CASE_PRIORITY(test_particalJobSystem){
+	ECS::JobSystem::TimelineRecorder recorder;
+	ECS::JobSystem::JobSystem js{ 4,&recorder };
+
+	auto globalStart = ECS::JobSystem::now();
+
+	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
+
+	// 3) 20 個のジョブをスケジュール
+	for (int i = 0; i < 4; ++i) {
+		// ジョブ名を 'A'～ に割り当て
+		char name = char('A');
+
+		auto handle = js.schedule(name, []() {
+				func();
+			});
+
+		jobAHandles.push_back(handle);
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	// 3) 20 個のジョブをスケジュール
+	for (int i = 0; i < 4; ++i) {
+		// ジョブ名を 'A'～ に割り当て
+		char name = char('B');
+
+		js.schedule(name, []() {
+			func();
+			},jobAHandles);
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	// 4) すべてのジョブ完了を待機
+	js.waitForAll();
+
+	// 5) テスト終了時刻を記録＆全体持続時間を計算
+	auto globalEnd = ECS::JobSystem::now();
+	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+	std::cout << "Total duration: "
+		<< globalDuration << " ms\n";
+
+	// 6) ログを取り出してスレッド別タイムラインを出力
+	auto& dataMap = recorder.getDataMap();
+	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+}
+
+TEST_CASE_ORDER(test_bigJobSystem) {
+	ECS::JobSystem::TimelineRecorder recorder;
+	ECS::JobSystem::JobSystem js{ 4,&recorder };
+
+	std::vector<uint32_t> resultData(10'000'000);
+
+	auto globalStart = ECS::JobSystem::now();
+
+	uint32_t jobCount = 8;
+	uint32_t size = resultData.size() / jobCount;
+
+	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
+
+	char name = 'A';
+
+	js.schedule(jobCount,name,[size,&resultData](uint32_t jobIndex) {
+		for(uint32_t index = 0;index < size;index++){
+			uint32_t globalIndex = size * jobIndex + index;
+			resultData[globalIndex] = globalIndex * globalIndex;
+		}
+	});
 
 	// 4) すべてのジョブ完了を待機
 	js.waitForAll();

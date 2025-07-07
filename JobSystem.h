@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <type_traits>
+#include <future>
 #include "JobRecorder.h"
 #include "JobDeque.hpp"
 
@@ -15,10 +16,13 @@ namespace ECS::JobSystem{
     template<typename Recorder>
     class TestJobSystem;
 
+    using Job = std::packaged_task<void()>;
+    using JobHandle = std::shared_future<void>;
+
 template<typename Recorder = NullRecorder>
 class JobSystem
 {
-    using Job = std::function<void()>;
+    using InputJob = std::function<void()>;
 
 public:
     explicit JobSystem(size_t threadCount,Recorder* rec = nullptr,size_t capacity = 1024) : recorder(rec),stopFlag(0),nextQueue(0)
@@ -34,8 +38,6 @@ public:
                 this->workerThreadFunction(i);
                 });
         }
-
-        int testBreak = 0;
     }
 
     ~JobSystem(){
@@ -52,9 +54,30 @@ public:
 
     }
 
-    void schedule(char name,Job job) {
+    //通常Job追加
+    JobHandle schedule(const InputJob& job){
+        std::packaged_task<void()> task(job);
+        auto future = task.get_future().share();
+
         //未処理カウンタ増加
         outstanding.fetch_add(1, std::memory_order_acq_rel);
+        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
+
+        {
+            std::lock_guard lk(wakeMutex);
+
+            //ローカルバッファにpush
+            jobQueues[idx]->pushBottom(std::move(task));
+
+            std::cout << "[START] queue=" << idx << " outstanding=" << outstanding << std::endl;
+            wakeCv.notify_one();
+        }
+
+        return future;
+    }
+
+    //debug付きJob追加
+    JobHandle schedule(char name,const InputJob& job) {
 
         //ジョブをラップして記録
         auto wrapped = [this, name, job = std::move(job)]() mutable {
@@ -64,17 +87,45 @@ public:
             if (recorder) recorder->recordEnd(h);
         };
 
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed)
-            % jobQueues.size();
+        return schedule(wrapped);
+    }
 
-        //ローカルバッファにpush
-        jobQueues[idx]->pushBottom(std::move(wrapped));
+    //依存関係付きJob
+    JobHandle schedule(char name,const InputJob& job,
+        const std::vector<JobHandle>& dependencies) {
 
-        {
-            std::lock_guard lk(wakeMutex);
-            std::cout << "[START] queue=" << idx << " outstanding=" << outstanding << std::endl;
-            wakeCv.notify_one();
+        auto wrapper = [this,name,job, dependencies]() mutable{
+            // 全ての依存ジョブが終わるまで待機する
+            for (auto& dep : dependencies) {
+                if (dep.valid()) {
+                    dep.wait();
+                }
+            }
+
+            auto h = recorder ? recorder->recordStart(name) : 0;
+            job();
+
+            if (recorder) recorder->recordEnd(h);
+        };
+
+       return schedule(wrapper);
+    }
+
+    std::vector<JobHandle> schedule(uint32_t jobCount,char name,
+        const std::function<void(uint32_t)>& job) {
+        std::vector<JobHandle> handles(jobCount);
+        for (uint32_t jobIndex = 0; jobIndex < jobCount; jobIndex++) {
+            auto wrapper = [this,name,job, jobIndex]() {
+                auto h = recorder ? recorder->recordStart(name) : 0;
+                job(jobIndex);
+
+                if (recorder) recorder->recordEnd(h);
+            };
+
+            handles[jobIndex] = schedule(wrapper);
         }
+
+        return handles;
     }
 
     void waitForAll() {
@@ -101,7 +152,6 @@ public:
             //自キューから pop
             if (auto p = jobQueues[queueIndex]->popBottom()) {
                 opt = std::move(p);
-                //std::cout << "[POP] queue=" << queueIndex << " outstanding=" << outstanding << std::endl;
             }
             else {
                 //取れなければ他キューから steal
@@ -109,7 +159,6 @@ public:
                     size_t idx = (queueIndex + i) % n;
                     if (auto s = jobQueues[idx]->stealTop()) {
                         opt = std::move(s);
-                        //std::cout << "[STEAL] queue=" << idx << " → queue=" << queueIndex << std::endl;
                         break;
                     }
                 }
