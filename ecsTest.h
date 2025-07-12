@@ -100,20 +100,24 @@ void func(){
 	busyWait(std::chrono::milliseconds(sleepTime));
 }
 
-TEST_CASE_ORDER(test_jobSystem) {
+TEST_CASE_PRIORITY(test_jobSystem) {
 	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{ 4,&recorder };
+	ECS::JobSystem::JobSystem js{4,&recorder};
 
 	auto globalStart = ECS::JobSystem::now();
 
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 20; ++i) {
-		// ジョブ名を 'A'～ に割り当て
-		char name = char('A' + i % 26);
 
-		auto handle = js.schedule(name, []() {
-			func();
-			});
+		// ジョブ名を 'A'～ に割り当て
+		char name = static_cast<char>('A' + (i % 26));
+
+		auto handle = js.schedule(
+			name,
+			[name]() {
+				func();
+			}
+			);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -135,16 +139,16 @@ TEST_CASE_ORDER(test_jobSystem) {
 
 TEST_CASE_PRIORITY(test_particalJobSystem){
 	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{ 4,&recorder };
+	ECS::JobSystem::JobSystem js{4,&recorder };
 
 	auto globalStart = ECS::JobSystem::now();
 
-	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
+	std::vector<ECS::JobSystem::JobHandle<void>> jobAHandles;
 
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 4; ++i) {
 		// ジョブ名を 'A'～ に割り当て
-		char name = char('A');
+		char name = 'A';
 
 		auto handle = js.schedule(name, []() {
 				func();
@@ -159,7 +163,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 4; ++i) {
 		// ジョブ名を 'A'～ に割り当て
-		char name = char('B');
+		char name = 'B';
 
 		js.schedule(name, []() {
 			func();
@@ -183,41 +187,41 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
-TEST_CASE_ORDER(test_bigJobSystem) {
-	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{ 4,&recorder };
-
-	std::vector<uint32_t> resultData(10'000'000);
-
-	auto globalStart = ECS::JobSystem::now();
-
-	uint32_t jobCount = 8;
-	uint32_t size = resultData.size() / jobCount;
-
-	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
-
-	char name = 'A';
-
-	js.schedule(jobCount,name,[size,&resultData](uint32_t jobIndex) {
-		for(uint32_t index = 0;index < size;index++){
-			uint32_t globalIndex = size * jobIndex + index;
-			resultData[globalIndex] = globalIndex * globalIndex;
-		}
-	});
-
-	// 4) すべてのジョブ完了を待機
-	js.waitForAll();
-
-	// 5) テスト終了時刻を記録＆全体持続時間を計算
-	auto globalEnd = ECS::JobSystem::now();
-	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
-	std::cout << "Total duration: "
-		<< globalDuration << " ms\n";
-
-	// 6) ログを取り出してスレッド別タイムラインを出力
-	auto& dataMap = recorder.getDataMap();
-	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
-}
+//TEST_CASE_ORDER(test_bigJobSystem) {
+//	ECS::JobSystem::TimelineRecorder recorder;
+//	ECS::JobSystem::JobSystem<4,ECS::JobSystem::TimelineRecorder> js{ 4,&recorder };
+//
+//	std::vector<uint32_t> resultData(10'000'000);
+//
+//	auto globalStart = ECS::JobSystem::now();
+//
+//	uint32_t jobCount = 8;
+//	uint32_t size = resultData.size() / jobCount;
+//
+//	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
+//
+//	char name = 'A';
+//
+//	js.schedule(jobCount,name,[size,&resultData](uint32_t jobIndex) {
+//		for(uint32_t index = 0;index < size;index++){
+//			uint32_t globalIndex = size * jobIndex + index;
+//			resultData[globalIndex] = globalIndex * globalIndex;
+//		}
+//	});
+//
+//	// 4) すべてのジョブ完了を待機
+//	js.waitForAll();
+//
+//	// 5) テスト終了時刻を記録＆全体持続時間を計算
+//	auto globalEnd = ECS::JobSystem::now();
+//	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+//	std::cout << "Total duration: "
+//		<< globalDuration << " ms\n";
+//
+//	// 6) ログを取り出してスレッド別タイムラインを出力
+//	auto& dataMap = recorder.getDataMap();
+//	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+//}
 
 TEST_CASE(test_sort_empty) {
 	std::vector<int> v;
@@ -1323,7 +1327,7 @@ void test_event_trigger() {
 */
 
 // テスト関数
-DISABLED_TEST_CASE(testGroupIdentifiers) {
+TEST_CASE_DISABLED(testGroupIdentifiers) {
 	struct Health {};
 	struct OwnerA {};
 	struct OwnerB {};

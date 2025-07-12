@@ -114,7 +114,7 @@ struct TestRegistrar {
     static void name()
 
 //スキップ
-#define DISABLED_TEST_CASE(name)                                  \
+#define TEST_CASE_DISABLED(name)                                  \
     static void name();                                           \
     static ECS::test::TestRegistrar _reg_##name{                 \
         #name, &name, false, ECS::test::Category::Standard       \

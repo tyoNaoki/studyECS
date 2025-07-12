@@ -21,12 +21,26 @@ namespace ECS::JobSystem {
             mask(capacity - 1),
             slotMutex(capacity),
             slotData(capacity)
-        {}
+        {
+            if ((capacity & (capacity - 1)) != 0) {
+                throw std::invalid_argument("capacity must be a power of 2");
+            }
+
+            // capacity はゼロ以上でなければならない
+            if (capacity == 0) {
+                throw std::invalid_argument("capacity must be greater than zero");
+            }
+        }
                 
         ~JobDeque() = default;
 
+        JobDeque(const JobDeque&) = delete;  // コピー禁止
+        JobDeque& operator=(const JobDeque&) = delete;
+        JobDeque(JobDeque&&) noexcept = default; // ムーブのみ OK
+        JobDeque& operator=(JobDeque&&) noexcept = default;
+
         //pushBottom:オーナースレッドのみ
-        bool pushBottom(T&& task) {
+        bool pushBottom(T task) {
             size_t b = bottom;
             size_t idx = b & mask;
 
@@ -34,7 +48,7 @@ namespace ECS::JobSystem {
             if (!lk.owns_lock() || slotData[idx].has_value())
                 return false;
 
-            slotData[idx] = std::move(task);
+            slotData[idx] = task;
             bottom = b + 1;
             return true;
         }
