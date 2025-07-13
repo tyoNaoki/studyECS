@@ -83,8 +83,6 @@ namespace ECS::JobSystem{
                 delete this;
             }
         }
-
-       
     };
 
     inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
@@ -105,12 +103,14 @@ namespace ECS::JobSystem{
         std::atomic<bool> ready{ false };
     };
 
+    struct IFuture {
+        virtual bool isReady() const = 0;
+        virtual void wait() = 0;
+    };
+
     // 待ち手（読み取り専用ハンドル）
     template<typename T>
-    class JobFuture {
-        std::shared_ptr<FutureInner<T>> inner;
-
-    public:
+    struct JobFuture : public IFuture {
         explicit JobFuture(std::shared_ptr<FutureInner<T>> i)
             : inner(std::move(i)){}
 
@@ -135,16 +135,39 @@ namespace ECS::JobSystem{
             }
         }
 
-        bool isReady() const{
+        void wait() override{
+            return;
+        }
+
+        bool isReady() const override{
             return inner->ready;
         }
+
+    private:
+        std::shared_ptr<FutureInner<T>> inner;
+    };
+
+    //voidバージョン
+    template<>
+    struct JobFuture<void> : public IFuture {
+        explicit JobFuture(std::shared_ptr<FutureInner<void>> i)
+            : inner(std::move(i)) {}
+
+        void wait() override {
+            return;
+        }
+
+        bool isReady() const override {
+            return inner->ready;
+        }
+
+    private:
+        std::shared_ptr<FutureInner<void>> inner;
     };
 
     // 書き込み手（セット専用ハンドル）
     template<typename T>
-    class SettableJobFuture {
-        std::shared_ptr<FutureInner<T>> inner;
-    public:
+    struct SettableJobFuture{
         explicit SettableJobFuture(std::shared_ptr<FutureInner<T>> i)
             : inner(std::move(i)) {}
 
@@ -163,6 +186,9 @@ namespace ECS::JobSystem{
             inner->result = std::move(v);
             inner->ready = true;
         }
+
+        private:
+            std::shared_ptr<FutureInner<T>> inner;
     };
 
     // void 専用 write-only specialization
@@ -190,8 +216,7 @@ namespace ECS::JobSystem{
 
     using TaskPtr = Ptr::intrusive_ptr<Task>;
 
-    template<typename T>
-    using JobHandle = std::pair<TaskPtr,JobFuture<T>>;
+    //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
 
 template<typename Recorder = NullRecorder>
 class JobSystem
@@ -268,8 +293,8 @@ public:
     }
 
     //通常Job追加
-    template<typename F,typename T>
-    auto schedule_job(F&& func,const std::vector<JobHandle<T>>& deps) {
+    template<typename F>
+    auto schedule_job(F&& func,const std::vector<TaskPtr>& deps) {
 
         auto [settable, future] = SettableJobFuture<void>::create();
 
@@ -286,9 +311,9 @@ public:
         outstanding.fetch_add(1, std::memory_order_acq_rel);
 
         for (auto &d : deps) {
-            std::lock_guard<std::mutex> lk(d.first->taskMutex);
-            if (!d.second.isReady()) {
-                addDependent(d.first.get(), t.get());
+            std::lock_guard<std::mutex> lk(d->taskMutex);
+            if (d->job) {
+                addDependent(d.get(), t.get());
             }
         }
 
@@ -303,8 +328,8 @@ public:
         );
     }
 
-    template<typename F,typename T>
-    auto schedule_with_future(F&& func, const std::vector<JobHandle<T>>& deps){
+    template<typename F>
+    auto schedule_with_future(F&& func, const std::vector<TaskPtr>& deps){
 
         using R = std::invoke_result_t<F>;  // func() の戻り値型
 
@@ -324,9 +349,9 @@ public:
         outstanding.fetch_add(1, std::memory_order_acq_rel);
 
         for (auto& d : deps) {
-            std::lock_guard<std::mutex> lk(d.first->taskMutex);
-            if(!d.second.isReady()){
-                addDependent(d.first.get(), t.get());
+            std::lock_guard<std::mutex> lk(d->taskMutex);
+            if(d->job){
+                addDependent(d.get(), t.get());
             }
         }
 
@@ -342,8 +367,8 @@ public:
     }
 
     //debug付きJob追加
-    template<typename F, typename R = std::invoke_result_t<std::decay_t<F>>>
-    auto schedule(char name,F&& func)-> JobHandle<R> {
+    template<typename F>
+    auto schedule(char name,F&& func){
 
         auto wrapped = [this,
             name,
@@ -358,8 +383,8 @@ public:
     }
 
     //debug付きJob追加
-    template<typename F,typename R = std::invoke_result_t<std::decay_t<F>>,typename T>
-    auto schedule(char name, F&& func, const std::vector<JobHandle<T>>& deps)-> JobHandle<R> {
+    template<typename F>
+    auto schedule(char name, F&& func, const std::vector<TaskPtr>& deps){
     
         auto wrapped = [this,
             name,
@@ -450,7 +475,14 @@ public:
 
             //取得できたジョブを実行
             TaskPtr task = std::move(*opt);
-            task->job.invoke();
+            {
+                std::lock_guard lk(task->taskMutex);
+
+                assert(task->job, "task is invoked in JobQueue!!");
+
+                task->job.invoke();
+            }
+            
 
             //繋がっているchildの依存カウントを減らしていく
             for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
@@ -508,6 +540,7 @@ private:
                 return true;
             }
         }
+
         return false;
     }
 
