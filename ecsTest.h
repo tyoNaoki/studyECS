@@ -143,7 +143,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	auto globalStart = ECS::JobSystem::now();
 
-	std::vector<ECS::JobSystem::JobHandle<void>> jobAHandles;
+	std::vector<ECS::JobSystem::TaskPtr> jobAHandles;
 
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 4; ++i) {
@@ -154,7 +154,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 				func();
 			});
 
-		jobAHandles.push_back(handle);
+		jobAHandles.push_back(handle.first);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
