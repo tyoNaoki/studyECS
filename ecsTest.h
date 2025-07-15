@@ -120,7 +120,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 			);
 
 		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
+		//busyWait(std::chrono::milliseconds(2));
 	}
 
 	// 4) すべてのジョブ完了を待機
@@ -168,6 +168,18 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		js.schedule(name, []() {
 			func();
 			},jobAHandles);
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	for (int i = 0; i < 4; ++i) {
+		// ジョブ名を 'A'～ に割り当て
+		char name = 'C';
+
+		auto handle = js.schedule(name, []() {
+			func();
+			});
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));

@@ -15,76 +15,6 @@
 
 namespace ECS::JobSystem{
 
-    struct Job {
-
-    private:
-        // 最大キャプチャ領域
-        static constexpr size_t BufferSize = 32;
-
-        // 呼び出し時の関数ポインタ型
-        using Invoker = void(*)(void*);
-
-        // 実データ格納＋呼び出し子
-        alignas(void*) char  buf[BufferSize];
-        Invoker              invoke_fn = nullptr;
-
-    public:
-        Job() = default;
-
-        Job(Job&& o) noexcept {
-            invoke_fn = o.invoke_fn;
-            memcpy(buf, o.buf, BufferSize);
-            o.invoke_fn = nullptr;
-        }
-
-        // 任意の小さいラムダ／関数オブジェクトをムーブキャプチャ
-        template<typename F>
-        Job(F&& f) noexcept {
-            static_assert(sizeof(F) <= BufferSize,
-                "Job function over BufferSize");
-            new (buf) F(std::move(f));
-            invoke_fn = [](void* p) {
-                auto fp = static_cast<F*>(p);
-                (*fp)();
-            };
-        }
-
-        // 一度きりの実行
-        void invoke() noexcept {
-            if (invoke_fn) {
-                invoke_fn(buf);
-                invoke_fn = nullptr;
-            }
-        }
-
-        explicit operator bool() const noexcept {
-            return invoke_fn != nullptr;
-        }
-    };
-
-    struct Task {
-        std::atomic<uint32_t> refCount{ 0 };
-        Job job;
-        std::atomic<int>   inDegree{ 0 };
-        Ptr::intrusive_ptr<Task> nextDependent;
-        std::mutex taskMutex;
-
-        Task(Job jb, int degree)
-            : refCount(0)
-            , job(std::move(jb))
-            , inDegree(degree)
-            , nextDependent(nullptr)
-        {}
-
-        void add_ref() { refCount.fetch_add(1, std::memory_order_relaxed); }
-        
-        void release() {
-            if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                delete this;
-            }
-        }
-    };
-
     inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
     inline void intrusive_ptr_release(Task* p) { p->release(); }
 
@@ -214,14 +144,14 @@ namespace ECS::JobSystem{
         }
     };
 
-    using TaskPtr = Ptr::intrusive_ptr<Task>;
+   
 
     //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
 
 template<typename Recorder = NullRecorder>
 class JobSystem
 {
-    using JobQueue = std::unique_ptr<JobDeque<TaskPtr>>;
+    using JobQueue = std::unique_ptr<JobDeque>;
 
 public:
 
@@ -237,7 +167,7 @@ public:
         jobQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; ++i) {
             jobQueues.emplace_back(
-                std::make_unique<JobDeque<TaskPtr>>(capacity)
+                std::make_unique<JobDeque>(capacity)
             );
         }
 
@@ -267,7 +197,9 @@ public:
     template<typename F>
     auto schedule_job(F&& func){
 
-        auto [settable, future] = SettableJobFuture<void>::create();
+        using R = std::invoke_result_t<F>;  // func() の戻り値型
+
+        auto [settable, future] = SettableJobFuture<R>::create();
 
         TaskPtr t{ new Task(
             Job([fn = std::forward<F>(func),
@@ -277,9 +209,6 @@ public:
             }),
             0
         ) };
-
-        //未処理カウンタ増加
-        outstanding.fetch_add(1, std::memory_order_acq_rel);
 
         if (t->inDegree.load() == 0) {
             std::lock_guard lk(wakeMutex);
@@ -296,7 +225,9 @@ public:
     template<typename F>
     auto schedule_job(F&& func,const std::vector<TaskPtr>& deps) {
 
-        auto [settable, future] = SettableJobFuture<void>::create();
+        using R = std::invoke_result_t<F>;  // func() の戻り値型
+
+        auto [settable, future] = SettableJobFuture<R>::create();
 
         TaskPtr t{ new Task(
             Job([fn = std::forward<F>(func),
@@ -307,9 +238,6 @@ public:
             0
         ) };
 
-        //未処理カウンタ増加
-        outstanding.fetch_add(1, std::memory_order_acq_rel);
-
         for (auto &d : deps) {
             std::lock_guard<std::mutex> lk(d->taskMutex);
             if (d->job) {
@@ -318,7 +246,6 @@ public:
         }
 
         if (t->inDegree.load() == 0) {
-            std::lock_guard lk(wakeMutex);
             pushBottom(t);
         }
 
@@ -345,9 +272,6 @@ public:
             0
         )};
 
-        //未処理カウンタ増加
-        outstanding.fetch_add(1, std::memory_order_acq_rel);
-
         for (auto& d : deps) {
             std::lock_guard<std::mutex> lk(d->taskMutex);
             if(d->job){
@@ -355,8 +279,7 @@ public:
             }
         }
 
-        if (t->in_degree.load() == 0) {
-            std::lock_guard lk(wakeMutex);
+        if (t->inDegree.load() == 0) {
             pushBottom(t);
         }
 
@@ -439,8 +362,8 @@ public:
     }
 
     void workerThreadFunction(size_t queueIndex) {
-        const size_t n = jobQueues.size();
 
+        const size_t index = queueIndex;
         // 終了フラグと outstanding の組み合わせでループ制御
         while (true) {
             //停止指示かつ未完了ジョブなしなら抜ける
@@ -450,98 +373,193 @@ public:
                 break;
             }
 
-            std::optional<TaskPtr> opt;
-
             //自キューから pop
-            if (auto p = jobQueues[queueIndex]->popBottom()) {
-                opt = std::move(p);
-            }
-            else {
-                //取れなければ他キューから steal
-                for (size_t i = 1; i < n; ++i) {
-                    size_t idx = (queueIndex + i) % n;
-                    if (auto s = jobQueues[idx]->stealTop()) {
-                        opt = std::move(s);
-                        break;
-                    }
-                }
-            }
-
-            //どちらも取れなければ一旦 yield
-            if (!opt) {
-                std::this_thread::yield();
-                continue;
-            }
-
-            //取得できたジョブを実行
-            TaskPtr task = std::move(*opt);
-            {
-                std::lock_guard lk(task->taskMutex);
-
-                assert(task->job, "task is invoked in JobQueue!!");
-
-                task->job.invoke();
-            }
-            
-
-            //繋がっているchildの依存カウントを減らしていく
-            for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
-                if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1){
-                    std::lock_guard lk(wakeMutex);
-                    pushBottom(child);
-                }
-            }
-
-            //完了カウンタを減らし、最後なら通知
-            if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                std::lock_guard<std::mutex> lk(finishMutex);
-                std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding << std::endl;
-
-                finishCv.notify_all();
-            }else{
-                std::lock_guard<std::mutex> lk(finishMutex);
-                std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding << std::endl;
-            }
+            run_pending_job(index);
         }
+
+        run_while_validQueue(index);
     }
 
 private:
-
-    
-    void pushBottom(TaskPtr handle){
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
-        jobQueues[idx]->pushBottom(handle);
-        std::cout   << "[START] queue=" << idx
-                    << " outstanding=" << outstanding.load()
-                    << std::endl;
-
-        wakeCv.notify_one();
-    }
-
-    bool popBottom(size_t queueIndex,std::optional<Job>& out){
+    void pushBottom(TaskPtr task) {
         
-        auto pop = jobQueues[queueIndex]->popBottom();
-        if(pop){
-            out = std::move(pop);
-            return true;
+        auto start = std::chrono::steady_clock::now();
+        const auto  timeout = std::chrono::milliseconds(2);
+
+        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
+        auto& queue = jobQueues[idx];
+
+        while (true) {
+            PushResult res queue->pushBottom(std::move(task));
+
+            //{
+            //    //std::lock_guard lk(wakeMutex);
+            //    res = queue->pushBottom(std::move(task));
+            //}
+            
+            switch (res.status) {
+                case PushStatus::Success:
+                    //未処理カウンタ増加
+                    outstanding.fetch_add(1, std::memory_order_acq_rel);
+                    /*std::cout << "[START] queue=" << idx
+                        << " outstanding=" << outstanding.load(std::memory_order_acquire)
+                        << std::endl;*/
+                    wakeCv.notify_one();
+                    return;
+
+                case PushStatus::WouldBlock:
+                    if (std::chrono::steady_clock::now() - start >= timeout) {
+                        fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
+                        return;
+                    }
+                    // 軽めのバックオフ
+                    std::this_thread::yield();
+                    break;
+
+                case PushStatus::Full:
+                    
+                    if (std::chrono::steady_clock::now() - start < timeout) {
+                        //少し待って再挑戦
+                        std::this_thread::sleep_for(std::chrono::microseconds(50));
+                    }
+                    else {
+                        fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
+                        return;
+                    }
+
+                    break;
+            }
+
+        }
+    }
+    
+    /*void pushBottom(TaskPtr handle){
+        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
+        if(jobQueues[idx]->pushBottom(handle)){
+            std::cout << "[START] queue=" << idx
+                << " outstanding=" << outstanding.load()
+                << std::endl;
+
+            wakeCv.notify_one();
+        }
+    }*/
+
+    void run_pending_job(size_t queueIndex){
+        const size_t n = jobQueues.size();
+        std::optional<TaskPtr> opt;
+
+        //自キューからPOP
+        {
+            auto popRes = jobQueues[queueIndex]->popBottom();
+
+            if (popRes.status == PopStatus::Success){
+                runJob(queueIndex,popRes.value);
+                return;
+            }else if(popRes.status == PopStatus::WouldBlock){
+                //再挑戦
+                std::this_thread::yield();
+                return;
+            }
         }
         
-        return false;
-    }
-
-    // stealTop を使って他ワーカーから奪う
-    bool stealFromOthers(size_t stealOwner, std::optional<TaskPtr>& out) {
-        size_t n = jobQueues.size();
-
-        for (size_t i = 1; i < n; ++i) {
-            size_t idx = (stealOwner + i) % n;
-            if (auto steal = jobQueues[idx]->stealTop()) {
-                out = std::move(steal);
-                return true;
+        {
+            auto stealRes = stealFromOthers(queueIndex);
+            
+            if(stealRes.status == StealStatus::Success){
+                runJob(queueIndex,stealRes.value);
+                return;
             }
         }
 
-        return false;
+        //どちらも取れなければ一旦 yield
+        std::this_thread::yield();
+    }
+
+    //stealTopを使って他ワーカーから奪う
+    StealResult stealFromOthers(size_t stealOwner) {
+        size_t n = jobQueues.size();
+
+        StealResult result;
+        for (size_t i = 1; i < n; ++i) {
+            size_t idx = (stealOwner + i) % n;
+            result  = jobQueues[idx]->stealTop();
+
+            if (result.status == StealStatus::Success) {
+                return result;
+            }
+        }
+
+        return { StealStatus::Empty, std::nullopt };
+    }
+
+    void fallbackExecuteOrEnqueue(size_t queueIndex,TaskPtr job) {
+        const size_t MaxFallbackTrials = jobQueues.size();
+
+        //他ワーカーのローカルキューを数回トライ
+        for (size_t trial = 1; trial < MaxFallbackTrials; ++trial) {
+            size_t idx = (queueIndex + trial) % MaxFallbackTrials;
+            auto res = jobQueues[idx]->pushBottom(job);
+            if (res.status == PushStatus::Success) {
+                outstanding.fetch_add(1, std::memory_order_acq_rel);
+                wakeCv.notify_one();
+                return;
+            }
+            if (res.status != PushStatus::Success) {
+                job = std::move(res.notPushed);
+                continue;
+            }
+        }
+
+        //グローバルキューへフォールバック
+        {
+            std::lock_guard lk(globalQueueMtx);
+            globalQueue.push_back(std::move(job));
+        }
+    }
+
+    void runJob(size_t queueIndex,std::optional<TaskPtr>& optTask){
+
+        assert(optTask, "runJob optTask is nullopt!!");
+
+        TaskPtr task = std::move(*optTask);
+
+        assert(task->job, "task is invoked in JobQueue!!");
+
+        task->job.invoke();
+
+        //繋がっているchildの依存カウントを減らしていく
+        for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
+            if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                pushBottom(child);
+            }
+        }
+
+        //完了カウンタを減らし、最後なら通知
+        if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            std::lock_guard<std::mutex> lk(finishMutex);
+            std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding.load(std::memory_order_acquire) << std::endl;
+
+            finishCv.notify_all();
+        }
+        else {
+            //std::lock_guard<std::mutex> lk(finishMutex);
+            std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding.load(std::memory_order_acquire) << std::endl;
+        }
+    }
+
+    void run_while_validQueue(size_t queueIndex) {
+         while(true){
+             auto popRes = jobQueues[queueIndex]->popBottom();
+
+             if (popRes.status == PopStatus::Success) {
+                 runJob(queueIndex, popRes.value);
+                 continue;
+             }
+             
+             if (popRes.status == PopStatus::Empty) {
+                 break;
+             }
+         }
     }
 
     bool allQueuesEmpty() const {
@@ -557,9 +575,22 @@ private:
         child->inDegree.fetch_add(1);
     }
 
+    bool canInvorkJob(const std::vector<TaskPtr>& deps){
+        for (auto& d : deps) {
+            if (d->job) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 private:
     std::vector<std::thread> workers;
     std::vector<JobQueue> jobQueues;
+
+    std::vector<TaskPtr> globalQueue;
+    std::mutex globalQueueMtx;
 
     std::atomic<bool> stopFlag;
     std::atomic<size_t> outstanding{ 0 };
