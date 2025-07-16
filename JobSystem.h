@@ -12,6 +12,7 @@
 #include "JobDeque.hpp"
 #include <utility>
 #include "taskPtr.hpp"
+#include "JobBarrier.h"
 
 namespace ECS::JobSystem{
 
@@ -160,7 +161,8 @@ public:
         size_t capacity = 1024)
         : recorder(rec),
         stopFlag(false),
-        nextQueue(0)
+        nextQueue(0),
+        jobBarrier(threadCount + 1)
     {
         assert(threadCount > 0, "JobSystem is ThreadCount <= 0");
 
@@ -174,9 +176,14 @@ public:
         // workers 初期化
         for (size_t i = 0; i < threadCount; ++i) {
             workers.emplace_back([this, i]() noexcept {
+
+                //jobBarrier.wait();
+
                 this->workerThreadFunction(i);
                 });
         }
+
+        //jobBarrier.wait();
     }
 
     ~JobSystem(){
@@ -211,7 +218,7 @@ public:
         ) };
 
         if (t->inDegree.load() == 0) {
-            std::lock_guard lk(wakeMutex);
+            //std::lock_guard lk(wakeMutex);
             pushBottom(t);
         }
 
@@ -240,7 +247,7 @@ public:
 
         for (auto &d : deps) {
             std::lock_guard<std::mutex> lk(d->taskMutex);
-            if (d->job) {
+            if (d&&d->job.valid()) {
                 addDependent(d.get(), t.get());
             }
         }
@@ -390,8 +397,8 @@ private:
         auto& queue = jobQueues[idx];
 
         while (true) {
-            PushResult res queue->pushBottom(std::move(task));
-
+            PushResult res = queue->pushBottom(std::move(task));
+            
             //{
             //    //std::lock_guard lk(wakeMutex);
             //    res = queue->pushBottom(std::move(task));
@@ -412,6 +419,8 @@ private:
                         fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
                         return;
                     }
+
+                    task = std::move(res.notPushed);
                     // 軽めのバックオフ
                     std::this_thread::yield();
                     break;
@@ -419,6 +428,7 @@ private:
                 case PushStatus::Full:
                     
                     if (std::chrono::steady_clock::now() - start < timeout) {
+                        task = std::move(res.notPushed);
                         //少し待って再挑戦
                         std::this_thread::sleep_for(std::chrono::microseconds(50));
                     }
@@ -453,7 +463,7 @@ private:
             auto popRes = jobQueues[queueIndex]->popBottom();
 
             if (popRes.status == PopStatus::Success){
-                runJob(queueIndex,popRes.value);
+                runJob(queueIndex,std::move(popRes.value));
                 return;
             }else if(popRes.status == PopStatus::WouldBlock){
                 //再挑戦
@@ -466,7 +476,7 @@ private:
             auto stealRes = stealFromOthers(queueIndex);
             
             if(stealRes.status == StealStatus::Success){
-                runJob(queueIndex,stealRes.value);
+                runJob(queueIndex,std::move(stealRes.value));
                 return;
             }
         }
@@ -517,13 +527,13 @@ private:
         }
     }
 
-    void runJob(size_t queueIndex,std::optional<TaskPtr>& optTask){
+    void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask){
 
         assert(optTask, "runJob optTask is nullopt!!");
 
         TaskPtr task = std::move(*optTask);
 
-        assert(task->job, "task is invoked in JobQueue!!");
+        assert(task&&task->job.valid(), "task is invoked in JobQueue!!");
 
         task->job.invoke();
 
@@ -552,7 +562,7 @@ private:
              auto popRes = jobQueues[queueIndex]->popBottom();
 
              if (popRes.status == PopStatus::Success) {
-                 runJob(queueIndex, popRes.value);
+                 runJob(queueIndex, std::move(popRes.value));
                  continue;
              }
              
@@ -607,6 +617,8 @@ private:
 
     Recorder* recorder;
     inline static NullRecorder nullrecorder;
+
+    JobBarrier jobBarrier;
 };
 
 } //namespace ECS::JobSystem

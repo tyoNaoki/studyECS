@@ -55,7 +55,8 @@ namespace ECS::JobSystem {
             capacity(capacity),
             mask(capacity - 1),
             slotMutex(capacity),
-            slotData(capacity)
+            slotData(capacity),
+            count(0)
         {
             if ((capacity & (capacity - 1)) != 0) {
                 throw std::invalid_argument("capacity must be a power of 2");
@@ -76,6 +77,8 @@ namespace ECS::JobSystem {
 
         //pushBottom:オーナースレッドのみ
         PushResult pushBottom(TaskPtr task) {
+            ASSERT(task!=nullptr, "enqueue null TaskPtr in pushBottom");
+
             size_t b = bottom;
             size_t idx = b & mask;
 
@@ -87,8 +90,11 @@ namespace ECS::JobSystem {
                 return { PushStatus::Full, std::move(task) };
             }
 
-            slotData[idx] = task;
-            bottom = b + 1;
+            slotData[idx] = std::move(task);
+            bottom.store(b+1, std::memory_order_release);
+            //bottom = b + 1;
+            //count++;
+            //checkInvariants();
             return { PushStatus::Success, {} };
         }
 
@@ -100,26 +106,25 @@ namespace ECS::JobSystem {
                 return { PopStatus::Empty, std::nullopt };
 
             size_t b1 = b0 - 1;
-            bottom.store(b1, std::memory_order_release);
             size_t idx = b1 & mask;
 
             std::unique_lock<std::mutex> lk(slotMutex[idx], std::try_to_lock);
 
             if(!lk.owns_lock()){
-                bottom.store(b0, std::memory_order_release);
                 return { PopStatus::WouldBlock, std::nullopt };
             }
 
             if (!slotData[idx].has_value()) {
-                //元に戻す
-                bottom.store(b0, std::memory_order_release);
-                assert(false,"slotData have nullptr");
+                //bottom.store(b0, std::memory_order_release);
                 return { PopStatus::Empty, std::nullopt };
             }
+
+            bottom.store(b1, std::memory_order_release);
 
             TaskPtr result = std::move(*slotData[idx]);
             slotData[idx].reset();
 
+            //最後の一要素の場合、stealと競合する可能性があるのでチェックする
             if (t0 == b1) {
                 size_t expected = t0;
                 if (top.compare_exchange_strong(expected, t0 + 1,
@@ -128,12 +133,15 @@ namespace ECS::JobSystem {
                     bottom.store(b0, std::memory_order_release); 
                 }
                 else {
+                    //stealと競合して取得失敗
                     bottom.store(expected + 1, std::memory_order_release);
                     return { PopStatus::Empty, std::nullopt };
                 }
             }
 
-            checkInvariants();
+            //checkInvariants();
+            //count--;
+            //checkInvariants();
             return { PopStatus::Success, std::optional<TaskPtr>{std::move(result)} };
         }
 
@@ -146,6 +154,7 @@ namespace ECS::JobSystem {
                 return { StealStatus::Empty, std::nullopt };    // 空
 
             size_t idx = t0 & mask;
+
             std::unique_lock<std::mutex> lk(slotMutex[idx], std::try_to_lock);
             if(!lk.owns_lock()){
                 return {StealStatus::WouldBlock,std::nullopt};
@@ -170,6 +179,8 @@ namespace ECS::JobSystem {
                 return { StealStatus::Empty, std::nullopt };
             }
 
+            //count--;
+            //checkInvariants();
             return { StealStatus::Success, std::optional<TaskPtr>{std::move(result)} };
         }
 
@@ -187,16 +198,27 @@ namespace ECS::JobSystem {
     private:
         void checkInvariants() {
             size_t t = top.load(std::memory_order_acquire);
-            size_t b = bottom;
-            assert(t <= b);
-            assert(b - t <= capacity);
-            // slotData の参照カウントと実際の occupied を一致させる
-            size_t occ = 0;
-            for (auto& opt : slotData) if (opt.has_value()) ++occ;
-            assert(occ == b - t);
+            size_t b = bottom.load(std::memory_order_acquire);
+            size_t cnt = count.load(std::memory_order_acquire);
+
+            // 基本の不変条件
+            ASSERT(t <= b,
+                "Invariant failed: top > bottom"
+                "  top=" << t
+                << " bottom=" << b);
+
+            ASSERT(b - t <= capacity,
+                "Invariant failed: queue size exceeds capacity"
+                "  size(b-t)=" << (b - t)
+                << " capacity=" << capacity);
+
+            ASSERT(cnt == b - t,
+                "Invariant failed: element counter mismatch"
+                " element count=" << cnt
+                << " expected(b-t)=" << (b - t)
+                << "  top=" << t
+                << " bottom=" << b);
         }
-
-
 
     private:
 
@@ -209,6 +231,7 @@ namespace ECS::JobSystem {
         const size_t      capacity;
         const size_t      mask;      // capacity は 2^N の前提
 
+        std::atomic<size_t> count;
     };
 
 }  // namespace ECS::JobSystem
