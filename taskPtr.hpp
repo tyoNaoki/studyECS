@@ -108,10 +108,12 @@ private:
 
     // 呼び出し時の関数ポインタ型
     using Invoker = void(*)(void*);
+    using Destroyer = void(*)(void*);
 
     // 実データ格納＋呼び出し子
     alignas(void*) char  buf[BufferSize];
-    Invoker              invoke_fn = nullptr;
+    Invoker invoke_fn = nullptr;
+    Destroyer  destroy_fn = nullptr;
 
 public:
     Job() = default;
@@ -120,6 +122,7 @@ public:
         invoke_fn = o.invoke_fn;
         memcpy(buf, o.buf, BufferSize);
         o.invoke_fn = nullptr;
+        o.destroy_fn = nullptr;
     }
 
     // 任意の小さいラムダ／関数オブジェクトをムーブキャプチャ
@@ -132,6 +135,28 @@ public:
             auto fp = static_cast<F*>(p);
             (*fp)();
         };
+
+        destroy_fn = [](void* p) {
+            static_cast<F*>(p)->~F();
+        };
+    }
+
+    // ← ここで必要になるのがムーブ代入演算子
+    Job& operator=(Job&& o) noexcept {
+        if (this != &o) {
+            // 1) 既存のキャプチャを破棄
+            if (destroy_fn) destroy_fn(buf);
+
+            // 2) データをムーブ
+            invoke_fn = o.invoke_fn;
+            destroy_fn = o.destroy_fn;
+            std::memcpy(buf, o.buf, BufferSize);
+
+            // 3) ムーブ元をクリア
+            o.invoke_fn = nullptr;
+            o.destroy_fn = nullptr;
+        }
+        return *this;
     }
 
     // 一度きりの実行
@@ -142,9 +167,12 @@ public:
         }
     }
 
-    explicit operator bool() const noexcept {
+    bool valid() const noexcept {
         return invoke_fn != nullptr;
     }
+
+    // 暗黙の bool 変換は禁止
+    explicit operator bool() const noexcept = delete;
 };
 
 struct Task {

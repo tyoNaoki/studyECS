@@ -241,14 +241,14 @@ TEST_CASE(test_sort_empty) {
 	assertTrue(v.empty(), "empty vector remains empty");
 }
 
-// 2) 要素1個 → そのまま
+// 要素1個
 TEST_CASE(test_sort_single) {
 	std::vector<int> v{ 42 };
 	ECS::algorithm::sort(v, std::less<>{});
 	assertTrue(v.size() == 1 && v[0] == 42, "single element stays unchanged");
 }
 
-// 3) 昇順ソート
+// 昇順ソート
 TEST_CASE(test_sort_ascending) {
 	std::vector<int> v{ 4,3,2,1,0 };
 	ECS::algorithm::sort(v, std::less<>{});
@@ -260,7 +260,7 @@ TEST_CASE(test_sort_ascending) {
 		"reverse-based sort yields descending");
 }
 
-// 4) 降順ソート (std::greater)
+// 降順ソート (std::greater)
 TEST_CASE(test_sort_descending) {
 	std::vector<int> v{ 3,1,4,2,5 };
 	ECS::algorithm::sort(v, std::greater<>{});
@@ -268,7 +268,7 @@ TEST_CASE(test_sort_descending) {
 		"reverse-based sort yields descending");
 }
 
-// 5) 既にソート済み → 変化なし
+// 既にソート済み 
 TEST_CASE(test_sort_already_sorted) {
 	std::vector<int> v{ 1,2,3,4,5 };
 	ECS::algorithm::sort(v, std::greater<>{});
@@ -287,7 +287,7 @@ struct DummySort {
 	}
 };
 
-// 6) カスタムソートアルゴリズムを渡す
+//カスタムソートアルゴリズムを渡す
 TEST_CASE_PRIORITY(test_sort_with_custom_algo) {
 	bool called = false;
 
@@ -308,6 +308,7 @@ bool myFallback() {
 inline ECS::ecs_map::id_type hash_idApple() { return 1; }
 inline ECS::ecs_map::id_type hash_idBanana() { return 2; }
 
+//SignalEventDispatherのテスト
 TEST_CASE(world_event_test)
 {
 	struct Apple{
@@ -393,7 +394,7 @@ TEST_CASE(world_event_test)
 	
 }
 
-
+//Signalのwaitイベントテスト
 TEST_CASE(test_wait_unblocks_on_event){
 	std::atomic<bool> unblocked{ false };
 	struct Apple {

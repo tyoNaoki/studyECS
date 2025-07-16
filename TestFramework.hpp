@@ -221,28 +221,31 @@ inline int run_tests(Category filter = Category::Standard,bool isLoop = false) {
 #define RUN_TEST(name,isLoop) return ECS::test::run_test(name,isLoop)
 }// namespace ECS::test
 
-#ifndef ASSERT
-#define ASSERT(cond, ...)                                     \
-    do {                                                       \
-        if(!(cond)) {                                          \
-            std::cerr << "[ASSERT_ERROR]: ";                  \
-            std::cerr << __VA_ARGS__;                         \
-            std::cerr << std::endl;                           \
-            std::abort();                                      \
-        }                                                      \
-    } while(0)
+#ifdef NDEBUG
+    #define ASSERT(cond, ...)   ((void)0)
+#else
+    #define ASSERT(cond, ...)                                     \
+        do {                                                       \
+            if(!(cond)) {                                          \
+                std::cerr << "[ASSERT_ERROR]: ";                  \
+                std::cerr << __VA_ARGS__;                         \
+                std::cerr << std::endl;                           \
+                std::abort();                                      \
+            }                                                      \
+        } while(0)
 #endif
 
-#ifndef CUSTOM_INFO
-#  ifdef CUSTOM_INFO_ENABLED
-#    define CUSTOM_INFO(msg)    std::cout << "[ INFO    ] " << msg << "\n"
-#  else
-#    define CUSTOM_INFO(msg)    /* nothing */
-#  endif
+#if !defined(NDEBUG) && defined(CUSTOM_INFO_ENABLED)
+#define CUSTOM_INFO(msg)    std::cout << "[ INFO    ] " << msg << "\n"
+#else
+#define CUSTOM_INFO(msg)    ((void)0)
 #endif
 
-#ifndef MESSAGE
-#  define MESSAGE(msg)          std::cout << "[ MESSAGE ] " << msg << "\n"
+#ifdef NDEBUG
+#undef MESSAGE
+#define MESSAGE(msg)    ((void)0)
+#else
+#define MESSAGE(msg)    std::cout << "[ MESSAGE ] " << msg << "\n"
 #endif
 
 
