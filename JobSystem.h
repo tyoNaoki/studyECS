@@ -15,138 +15,7 @@
 #include "JobBarrier.h"
 
 namespace ECS::JobSystem{
-
-    inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
-    inline void intrusive_ptr_release(Task* p) { p->release(); }
-
-    // 未 specialization：結果を持てる型用
-    template<typename T>
-    struct FutureInner {
-        std::mutex       mtx;
-        std::atomic<bool> ready{ false };
-        std::optional<T>  result;
-    };
-
-    // void 専用 specialization：result を持たない
-    template<>
-    struct FutureInner<void> {
-        std::mutex       mtx;
-        std::atomic<bool> ready{ false };
-    };
-
-    struct IFuture {
-        virtual bool isReady() const = 0;
-        virtual void wait() = 0;
-    };
-
-    // 待ち手（読み取り専用ハンドル）
-    template<typename T>
-    struct JobFuture : public IFuture {
-        explicit JobFuture(std::shared_ptr<FutureInner<T>> i)
-            : inner(std::move(i)){}
-
-        //JobSystem::run_one_pending_job() を呼びつつ待ち
-        T get() {
-            while (true) {
-                // まず mutex を獲得して ready フラグをチェック
-                {
-                    std::lock_guard lk(inner->mtx);
-                    if (inner->ready) {
-                        if constexpr (!std::is_void_v<T>) {
-                            return std::move(*inner->result);
-                        }
-                        else {
-                            return;
-                        }
-                    }
-                }
-
-                // まだ ready でなければ他ジョブをひとつ消化
-                //jobSystem.run_one_pending_job();
-            }
-        }
-
-        void wait() override{
-            return;
-        }
-
-        bool isReady() const override{
-            return inner->ready;
-        }
-
-    private:
-        std::shared_ptr<FutureInner<T>> inner;
-    };
-
-    //voidバージョン
-    template<>
-    struct JobFuture<void> : public IFuture {
-        explicit JobFuture(std::shared_ptr<FutureInner<void>> i)
-            : inner(std::move(i)) {}
-
-        void wait() override {
-            return;
-        }
-
-        bool isReady() const override {
-            return inner->ready;
-        }
-
-    private:
-        std::shared_ptr<FutureInner<void>> inner;
-    };
-
-    // 書き込み手（セット専用ハンドル）
-    template<typename T>
-    struct SettableJobFuture{
-        explicit SettableJobFuture(std::shared_ptr<FutureInner<T>> i)
-            : inner(std::move(i)) {}
-
-        // Futureペアを作って返すユーティリティ
-        static auto create() {
-            auto ptr = std::make_shared<FutureInner<T>>();
-            return std::make_pair(
-                SettableJobFuture{ ptr },
-                JobFuture<T>{ptr}
-            );
-        }
-
-        // 実行タスク側が結果をセットする
-        void set_value(T v) {
-            std::lock_guard lk(inner->mtx);
-            inner->result = std::move(v);
-            inner->ready = true;
-        }
-
-        private:
-            std::shared_ptr<FutureInner<T>> inner;
-    };
-
-    // void 専用 write-only specialization
-    template<>
-    class SettableJobFuture<void> {
-        std::shared_ptr<FutureInner<void>> inner;
-    public:
-        explicit SettableJobFuture(std::shared_ptr<FutureInner<void>> i)
-            : inner(std::move(i)) {}
-
-        static auto create() {
-            auto ptr = std::make_shared<FutureInner<void>>();
-            return std::make_pair(
-                SettableJobFuture{ ptr },
-                JobFuture<void>{ptr}
-            );
-        }
-
-        // 結果なしの通知だけ
-        void set_value() {
-            std::lock_guard lk(inner->mtx);
-            inner->ready = true;
-        }
-    };
-
    
-
     //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
 
 template<typename Recorder = NullRecorder>
@@ -164,7 +33,7 @@ public:
         nextQueue(0),
         jobBarrier(threadCount + 1)
     {
-        assert(threadCount > 0, "JobSystem is ThreadCount <= 0");
+        ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
 
         jobQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; ++i) {
@@ -177,13 +46,13 @@ public:
         for (size_t i = 0; i < threadCount; ++i) {
             workers.emplace_back([this, i]() noexcept {
 
-                //jobBarrier.wait();
+                jobBarrier.wait();
 
                 this->workerThreadFunction(i);
                 });
         }
 
-        //jobBarrier.wait();
+        jobBarrier.wait();
     }
 
     ~JobSystem(){
@@ -204,15 +73,19 @@ public:
     template<typename F>
     auto schedule_job(F&& func){
 
-        using R = std::invoke_result_t<F>;  // func() の戻り値型
+        using R = std::invoke_result_t<std::decay_t<F>>;
 
         auto [settable, future] = SettableJobFuture<R>::create();
 
         TaskPtr t{ new Task(
             Job([fn = std::forward<F>(func),
             setter = std::move(settable)]() mutable {
-                fn();
-                setter.set_value();
+                 if constexpr (std::is_void_v<R>) {
+                    fn();           
+                    setter.set_value(); //実行完了フラグを建てる
+                }else {
+                    setter.set_value(fn()); // 戻り値を取り出してセット
+                }
             }),
             0
         ) };
@@ -228,19 +101,23 @@ public:
         );
     }
 
-    //通常Job追加
+    //通常Job追加(依存Task)
     template<typename F>
     auto schedule_job(F&& func,const std::vector<TaskPtr>& deps) {
 
-        using R = std::invoke_result_t<F>;  // func() の戻り値型
+        using R = std::invoke_result_t<std::decay_t<F>>;
 
         auto [settable, future] = SettableJobFuture<R>::create();
 
         TaskPtr t{ new Task(
             Job([fn = std::forward<F>(func),
             setter = std::move(settable)]() mutable {
-                fn();
-                setter.set_value();
+                if constexpr (std::is_void_v<R>) {
+                    fn();            
+                    setter.set_value(); //実行完了フラグを建てる
+                }else {
+                    setter.set_value(fn()); // 戻り値を取り出してセット
+                }
             }),
             0
         ) };
@@ -257,43 +134,101 @@ public:
         }
 
         return std::make_pair(
-            t,
+            t, 
             future
         );
     }
 
-    template<typename F>
-    auto schedule_with_future(F&& func, const std::vector<TaskPtr>& deps){
+    template<size_t BufSize>
+    void schedule_parallelJob(std::vector<ParallelJob<BufSize>>&& jobs) {
 
-        using R = std::invoke_result_t<F>;  // func() の戻り値型
+        auto jobsPtr
+            = std::make_shared<std::vector<ParallelJob<BufSize>>>(
+                std::move(jobs)
+                );
 
-        //Future ペアを作成
-        auto [settable, future] = SettableJobFuture<R>::create();
+        for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
 
-        TaskPtr t{new Task(
-            Job([fn = std::forward<F>(func),
-            setter = std::move(settable)]() mutable {
-                R r = fn();
-                setter.set_value(std::move(r));
-            }),
-            0
-        )};
 
-        for (auto& d : deps) {
+            TaskPtr t{ new Task(
+                Job([jobsPtr,i]() mutable {
+                        (*jobsPtr)[i].invoke();
+                }
+                ),
+                0
+            ) };
+
+            pushBottom(t);
+        }
+    }
+
+    template<size_t BufSize>
+    void schedule_parallelJob(char name,std::vector<ParallelJob<BufSize>>&&jobs) {
+
+       auto jobsPtr
+           = std::make_shared<std::vector<ParallelJob<BufSize>>>(
+               std::move(jobs)
+               );
+
+       auto rec = recorder;
+
+       for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
+
+            //auto job = jobsPtr[i];
+            TaskPtr t{ new Task(
+                Job([jobsPtr,i,name,rec]() mutable {
+                        int h = rec ? rec->recordStart(name) : 0;
+                        (*jobsPtr)[i].invoke();
+                        if (rec) rec->recordEnd(h);
+                }
+                ),
+                0
+            )};
+            
+            pushBottom(t);
+       }
+        
+        /*batches.emplace_back(
+                [&](size_t b, size_t l) {
+
+                    int h = recorder ? recorder->recordStart(name) : 0;
+                    for (size_t i = b; i < b + l; ++i) fn(i);
+                    if (recorder) recorder->recordEnd(h);
+
+                    if(counter->fetch_sub(1) == 1){
+                        settable.set_value();
+                    }
+                },
+                begin, len
+                    );*/
+
+        /*for()
+        TaskPtr t{ new Task(
+            Job{ [=]() {
+        size_t count = (total + grain - 1) / grain;
+        for (size_t chunk = 0; chunk < count; ++chunk) {
+            size_t begin = chunk * grain;
+            size_t end = min(begin + grain, total);
+            for (size_t i = begin; i < end; ++i) {
+                f(i);
+            }
+        }
+        } };*/
+
+        
+
+        /*for (auto& d : deps) {
             std::lock_guard<std::mutex> lk(d->taskMutex);
-            if(d->job){
+            if (d && d->job.valid()) {
                 addDependent(d.get(), t.get());
             }
         }
 
         if (t->inDegree.load() == 0) {
             pushBottom(t);
-        }
+        }*/
 
-        return std::make_pair(
-            t,
-            future
-        );
+        //return future;
     }
 
     //debug付きJob追加
@@ -329,37 +264,39 @@ public:
     }
 
     //通常、並列Job追加
-    //std::vector<JobHandle> schedule(uint32_t jobCount,
-    //    const std::function<void(uint32_t)>& job, const std::vector<JobHandle>& deps = {}) {
-    //    std::vector<JobHandle> handles(jobCount);
-    //    for (uint32_t jobIndex = 0; jobIndex < jobCount; jobIndex++) {
-    //        auto wrapper = [job, jobIndex]() {
-    //            job(jobIndex);
-    //        };
+    template<typename F>
+    auto schedule(size_t total,size_t grain,char name,
+        F&& func) {
 
-    //        handles[jobIndex] = schedule(wrapper,deps);
-    //    }
+        auto wrapped = [this,
+            name,
+            fn = std::forward<F>(func)]() mutable
+        {
+            int h = recorder ? recorder->recordStart(name) : 0;
+            fn();
+            if (recorder) recorder->recordEnd(h);
+        };
 
-    //    return handles;
-    //}
+        return schedule_parallelJob(total,grain,name,std::move(wrapped));
+    }
 
-    ////debug付き並列Job追加
-    //std::vector<JobHandle> schedule(uint32_t jobCount,char name,
-    //    const std::function<void(uint32_t)>& job, const std::vector<JobHandle>& deps = {}) {
-    //    std::vector<JobHandle> handles(jobCount);
-    //    for (uint32_t jobIndex = 0; jobIndex < jobCount; jobIndex++) {
-    //        auto wrapper = [this,name,job, jobIndex]() {
-    //            auto h = recorder ? recorder->recordStart(name) : 0;
-    //            job(jobIndex);
+    //debug付き並列Job追加
+   /* std::vector<JobHandle> schedule(uint32_t jobCount,char name,
+        const std::function<void(uint32_t)>& job, const std::vector<JobHandle>& deps = {}) {
+        std::vector<JobHandle> handles(jobCount);
+        for (uint32_t jobIndex = 0; jobIndex < jobCount; jobIndex++) {
+            auto wrapper = [this,name,job, jobIndex]() {
+                auto h = recorder ? recorder->recordStart(name) : 0;
+                job(jobIndex);
 
-    //            if (recorder) recorder->recordEnd(h);
-    //        };
+                if (recorder) recorder->recordEnd(h);
+            };
 
-    //        handles[jobIndex] = schedule(wrapper,deps);
-    //    }
+            handles[jobIndex] = schedule(wrapper,deps);
+        }
 
-    //    return handles;
-    //}
+        return handles;
+    }*/
 
     void waitForAll() {
         std::unique_lock<std::mutex> lk(finishMutex);
@@ -367,6 +304,12 @@ public:
             return outstanding.load(std::memory_order_acquire) == 0;
             });
     }
+
+    void run_one_job(){
+        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
+
+        run_pending_job(idx);
+    };
 
     void workerThreadFunction(size_t queueIndex) {
 
@@ -388,6 +331,7 @@ public:
     }
 
 private:
+
     void pushBottom(TaskPtr task) {
         
         auto start = std::chrono::steady_clock::now();
@@ -456,7 +400,6 @@ private:
 
     void run_pending_job(size_t queueIndex){
         const size_t n = jobQueues.size();
-        std::optional<TaskPtr> opt;
 
         //自キューからPOP
         {
@@ -472,6 +415,8 @@ private:
             }
         }
         
+        //他スレッドからsteal
+        //Block時、steal再挑戦にする
         {
             auto stealRes = stealFromOthers(queueIndex);
             
@@ -479,6 +424,20 @@ private:
                 runJob(queueIndex,std::move(stealRes.value));
                 return;
             }
+        }
+
+        std::optional<TaskPtr> fallback;
+        {
+            std::lock_guard lk(globalQueueMtx);
+            if (!globalQueue.empty()) {
+                fallback = globalQueue.back();
+                globalQueue.pop_back();
+            }
+        }
+
+        if (fallback) {
+            runJob(queueIndex, std::move(*fallback));
+            return;
         }
 
         //どちらも取れなければ一旦 yield
@@ -523,17 +482,17 @@ private:
         //グローバルキューへフォールバック
         {
             std::lock_guard lk(globalQueueMtx);
-            globalQueue.push_back(std::move(job));
+            globalQueue.push_back(std::optional(std::move(job)));
         }
     }
 
     void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask){
 
-        assert(optTask, "runJob optTask is nullopt!!");
+        ASSERT(optTask, "runJob optTask is nullopt!!");
 
         TaskPtr task = std::move(*optTask);
 
-        assert(task&&task->job.valid(), "task is invoked in JobQueue!!");
+        ASSERT(task&&task->job.valid(), "task is invoked in JobQueue!!");
 
         task->job.invoke();
 
@@ -552,10 +511,12 @@ private:
             finishCv.notify_all();
         }
         else {
-            //std::lock_guard<std::mutex> lk(finishMutex);
+            std::lock_guard<std::mutex> lk(finishMutex);
             std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding.load(std::memory_order_acquire) << std::endl;
         }
     }
+
+
 
     void run_while_validQueue(size_t queueIndex) {
          while(true){
@@ -599,7 +560,7 @@ private:
     std::vector<std::thread> workers;
     std::vector<JobQueue> jobQueues;
 
-    std::vector<TaskPtr> globalQueue;
+    std::vector<std::optional<TaskPtr>> globalQueue;
     std::mutex globalQueueMtx;
 
     std::atomic<bool> stopFlag;
