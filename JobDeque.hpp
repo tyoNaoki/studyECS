@@ -55,19 +55,11 @@ namespace ECS::JobSystem {
             capacity(capacity),
             mask(capacity - 1),
             slotMutex(capacity),
-            slotData(capacity),
-            count(0)
+            slotData(capacity)
         {
-            if ((capacity & (capacity - 1)) != 0) {
-                throw std::invalid_argument("capacity must be a power of 2");
-            }
-
-            // capacity はゼロ以上でなければならない
-            if (capacity == 0) {
-                throw std::invalid_argument("capacity must be greater than zero");
-            }
+            ASSERT(capacity > 0 && (capacity & (capacity - 1)) == 0 , "capacity must be power of two");
         }
-                
+
         ~JobDeque() = default;
 
         JobDeque(const JobDeque&) = delete;  // コピー禁止
@@ -92,15 +84,13 @@ namespace ECS::JobSystem {
 
             slotData[idx] = std::move(task);
             bottom.store(b+1, std::memory_order_release);
-            //bottom = b + 1;
-            //count++;
-            //checkInvariants();
             return { PushStatus::Success, {} };
         }
 
         //popBottom:オーナースレッドのみ
         PopResult popBottom() {
             size_t b0 = bottom.load(std::memory_order_relaxed);
+            //std::atomic_thread_fence(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_acquire);
             if (t0 >= b0)
                 return { PopStatus::Empty, std::nullopt };
@@ -139,17 +129,16 @@ namespace ECS::JobSystem {
                 }
             }
 
-            //checkInvariants();
-            //count--;
-            //checkInvariants();
             return { PopStatus::Success, std::optional<TaskPtr>{std::move(result)} };
         }
 
         //他スレッドからのstealTop
-        StealResult stealTop() {
+        StealResult stealTop() noexcept{
             //topを読み出し
             size_t t0 = top.load(std::memory_order_acquire);
+            std::atomic_thread_fence(std::memory_order_seq_cst);
             size_t b = bottom.load(std::memory_order_acquire);
+
             if (t0 >= b)
                 return { StealStatus::Empty, std::nullopt };    // 空
 
@@ -179,8 +168,6 @@ namespace ECS::JobSystem {
                 return { StealStatus::Empty, std::nullopt };
             }
 
-            //count--;
-            //checkInvariants();
             return { StealStatus::Success, std::optional<TaskPtr>{std::move(result)} };
         }
 
@@ -190,35 +177,35 @@ namespace ECS::JobSystem {
             return t >= b;
         }
 
-        // スレッドセーフではありません。デバッグ用にのみ。
+        //デバッグ用にのみ。
         size_t unsafe_size() const {
             return bottom - top.load();
         }
 
     private:
-        void checkInvariants() {
-            size_t t = top.load(std::memory_order_acquire);
-            size_t b = bottom.load(std::memory_order_acquire);
-            size_t cnt = count.load(std::memory_order_acquire);
+        //void checkInvariants() {
+        //    size_t t = top.load(std::memory_order_acquire);
+        //    size_t b = bottom.load(std::memory_order_acquire);
+        //    size_t cnt = count.load(std::memory_order_acquire);
 
-            // 基本の不変条件
-            ASSERT(t <= b,
-                "Invariant failed: top > bottom"
-                "  top=" << t
-                << " bottom=" << b);
+        //    // 基本の不変条件
+        //    ASSERT(t <= b,
+        //        "Invariant failed: top > bottom"
+        //        "  top=" << t
+        //        << " bottom=" << b);
 
-            ASSERT(b - t <= capacity,
-                "Invariant failed: queue size exceeds capacity"
-                "  size(b-t)=" << (b - t)
-                << " capacity=" << capacity);
+        //    ASSERT(b - t <= capacity,
+        //        "Invariant failed: queue size exceeds capacity"
+        //        "  size(b-t)=" << (b - t)
+        //        << " capacity=" << capacity);
 
-            ASSERT(cnt == b - t,
-                "Invariant failed: element counter mismatch"
-                " element count=" << cnt
-                << " expected(b-t)=" << (b - t)
-                << "  top=" << t
-                << " bottom=" << b);
-        }
+        //    ASSERT(cnt == b - t,
+        //        "Invariant failed: element counter mismatch"
+        //        " element count=" << cnt
+        //        << " expected(b-t)=" << (b - t)
+        //        << "  top=" << t
+        //        << " bottom=" << b);
+        //}
 
     private:
 
@@ -230,8 +217,6 @@ namespace ECS::JobSystem {
         std::atomic<size_t> bottom;    // オーナーのみ
         const size_t      capacity;
         const size_t      mask;      // capacity は 2^N の前提
-
-        std::atomic<size_t> count;
     };
 
 }  // namespace ECS::JobSystem

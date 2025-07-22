@@ -199,41 +199,42 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
-//TEST_CASE_ORDER(test_bigJobSystem) {
-//	ECS::JobSystem::TimelineRecorder recorder;
-//	ECS::JobSystem::JobSystem<4,ECS::JobSystem::TimelineRecorder> js{ 4,&recorder };
-//
-//	std::vector<uint32_t> resultData(10'000'000);
-//
-//	auto globalStart = ECS::JobSystem::now();
-//
-//	uint32_t jobCount = 8;
-//	uint32_t size = resultData.size() / jobCount;
-//
-//	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
-//
-//	char name = 'A';
-//
-//	js.schedule(jobCount,name,[size,&resultData](uint32_t jobIndex) {
-//		for(uint32_t index = 0;index < size;index++){
-//			uint32_t globalIndex = size * jobIndex + index;
-//			resultData[globalIndex] = globalIndex * globalIndex;
-//		}
-//	});
-//
-//	// 4) すべてのジョブ完了を待機
-//	js.waitForAll();
-//
-//	// 5) テスト終了時刻を記録＆全体持続時間を計算
-//	auto globalEnd = ECS::JobSystem::now();
-//	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
-//	std::cout << "Total duration: "
-//		<< globalDuration << " ms\n";
-//
-//	// 6) ログを取り出してスレッド別タイムラインを出力
-//	auto& dataMap = recorder.getDataMap();
-//	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
-//}
+TEST_CASE_PRIORITY(test_bigJobSystem) {
+	ECS::JobSystem::TimelineRecorder recorder;
+	ECS::JobSystem::JobSystem js{ 8,&recorder };
+
+	std::vector<uint32_t> resultData(10'000'000);
+	//std::vector<uint32_t> resultData(10);
+
+	uint32_t batchSize = 1000;
+
+	auto fn = [&resultData](uint32_t jobIndex) {
+
+		ASSERT(resultData.size() > jobIndex, "globalIndex out of bounds");
+		resultData[jobIndex] = jobIndex * jobIndex;	
+	};
+
+	char name = 'A';
+
+	auto jobs = ECS::JobSystem::ParallelJob<32>::create(fn,resultData.size(),batchSize);
+
+	auto globalStart = ECS::JobSystem::now();
+
+	js.schedule_parallelJob(name,std::move(jobs));
+
+	// 4) すべてのジョブ完了を待機
+	js.waitForAll();
+
+	// 5) テスト終了時刻を記録＆全体持続時間を計算
+	auto globalEnd = ECS::JobSystem::now();
+	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+	std::cout << "Total duration: "
+		<< globalDuration << " ms\n";
+
+	// 6) ログを取り出してスレッド別タイムラインを出力
+	auto& dataMap = recorder.getDataMap();
+	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+}
 
 TEST_CASE(test_sort_empty) {
 	std::vector<int> v;
@@ -558,9 +559,7 @@ TEST_CASE(testEventQueue)
 	std::cout << std::endl;
 	}
 	
-	
 	///////////////2
-	
 	
 	{
 	using EQ = ECS::EVENT::EventQueueBase<int, void(int)>;
