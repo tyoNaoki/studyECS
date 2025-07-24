@@ -350,15 +350,15 @@ private:
             
             switch (res.status) {
                 case PushStatus::Success:
-                    //未処理カウンタ増加
+                {
+                    std::lock_guard<std::mutex> lk(wakeMutex);
                     outstanding.fetch_add(1, std::memory_order_acq_rel);
-                    /*std::cout << "[START] queue=" << idx
-                        << " outstanding=" << outstanding.load(std::memory_order_acquire)
-                        << std::endl;*/
                     wakeCv.notify_one();
                     return;
+                }
 
                 case PushStatus::WouldBlock:
+                {
                     if (std::chrono::steady_clock::now() - start >= timeout) {
                         fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
                         return;
@@ -368,13 +368,14 @@ private:
                     // 軽めのバックオフ
                     std::this_thread::yield();
                     break;
-
+                }
                 case PushStatus::Full:
-                    
+                {
                     if (std::chrono::steady_clock::now() - start < timeout) {
                         task = std::move(res.notPushed);
                         //少し待って再挑戦
-                        std::this_thread::sleep_for(std::chrono::microseconds(50));
+                        std::this_thread::yield();
+                        //std::this_thread::sleep_for(std::chrono::microseconds(50));
                     }
                     else {
                         fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
@@ -382,6 +383,7 @@ private:
                     }
 
                     break;
+                }
             }
 
         }
@@ -409,8 +411,6 @@ private:
                 runJob(queueIndex,std::move(popRes.value));
                 return;
             }else if(popRes.status == PopStatus::WouldBlock){
-                //再挑戦
-                std::this_thread::yield();
                 return;
             }
         }
@@ -426,18 +426,22 @@ private:
             }
         }
 
-        std::optional<TaskPtr> fallback;
-        {
-            std::lock_guard lk(globalQueueMtx);
-            if (!globalQueue.empty()) {
-                fallback = globalQueue.back();
-                globalQueue.pop_back();
+        if (!globalQueue.empty()) {
+            
+            std::optional<TaskPtr> fallback;
+            {
+                std::lock_guard lk(globalQueueMtx);
+                
+                if (!globalQueue.empty()) {
+                    fallback = globalQueue.back();
+                    globalQueue.pop_back();
+                }
             }
-        }
 
-        if (fallback) {
-            runJob(queueIndex, std::move(*fallback));
-            return;
+            if (fallback) {
+                runJob(queueIndex, std::move(*fallback));
+                return;
+            }
         }
 
         //どちらも取れなければ一旦 yield
@@ -462,26 +466,29 @@ private:
     }
 
     void fallbackExecuteOrEnqueue(size_t queueIndex,TaskPtr job) {
-        const size_t MaxFallbackTrials = jobQueues.size();
+        //const size_t MaxFallbackTrials = jobQueues.size();
 
-        //他ワーカーのローカルキューを数回トライ
-        for (size_t trial = 1; trial < MaxFallbackTrials; ++trial) {
-            size_t idx = (queueIndex + trial) % MaxFallbackTrials;
-            auto res = jobQueues[idx]->pushBottom(job);
-            if (res.status == PushStatus::Success) {
-                outstanding.fetch_add(1, std::memory_order_acq_rel);
-                wakeCv.notify_one();
-                return;
-            }
-            if (res.status != PushStatus::Success) {
-                job = std::move(res.notPushed);
-                continue;
-            }
-        }
+        ////他ワーカーのローカルキューを数回トライ
+        //for (size_t trial = 1; trial < MaxFallbackTrials; ++trial) {
+        //    size_t idx = (queueIndex + trial) % MaxFallbackTrials;
+        //    auto res = jobQueues[idx]->pushBottom(job);
+        //    if (res.status == PushStatus::Success) {
+        //        std::lock_guard lk(wakeMutex);
+        //        outstanding.fetch_add(1, std::memory_order_acq_rel);
+        //        wakeCv.notify_one();
+        //        return;
+        //    }
+        //    if (res.status != PushStatus::Success) {
+        //        job = std::move(res.notPushed);
+        //        continue;
+        //    }
+        //}
 
         //グローバルキューへフォールバック
         {
             std::lock_guard lk(globalQueueMtx);
+            std::lock_guard wakelk(wakeMutex);
+            outstanding.fetch_add(1, std::memory_order_acq_rel);
             globalQueue.push_back(std::optional(std::move(job)));
         }
     }
@@ -503,20 +510,29 @@ private:
             }
         }
 
-        //完了カウンタを減らし、最後なら通知
-        if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            std::lock_guard<std::mutex> lk(finishMutex);
-            std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding.load(std::memory_order_acquire) << std::endl;
+        static std::mutex logMutex;
 
+        // runJob 内
+        auto prev = outstanding.fetch_sub(1, std::memory_order_acq_rel);
+        bool didAllFinish = (prev == 1);
+
+        if (didAllFinish) {
+            std::lock_guard<std::mutex> lk(finishMutex);
             finishCv.notify_all();
         }
-        else {
-            std::lock_guard<std::mutex> lk(finishMutex);
-            std::cout << "[FINISH] queue=" << queueIndex << " outstanding=" << outstanding.load(std::memory_order_acquire) << std::endl;
+
+        {
+            std::lock_guard<std::mutex> lk2(logMutex);
+            if (didAllFinish) {
+                std::cout << "[All FINISH] queue=" << queueIndex
+                    << " outstanding=" << outstanding.load() << "\n";
+            }
+            else {
+                std::cout << "[FINISH] queue=" << queueIndex
+                    << " outstanding=" << outstanding.load() << "\n";
+            }
         }
     }
-
-
 
     void run_while_validQueue(size_t queueIndex) {
          while(true){
