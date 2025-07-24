@@ -211,7 +211,7 @@ TEST_CASE_PRIORITY(test_bigJobSystem) {
 	auto fn = [&resultData](uint32_t jobIndex) {
 
 		ASSERT(resultData.size() > jobIndex, "globalIndex out of bounds");
-		resultData[jobIndex] = jobIndex * jobIndex;	
+		resultData[jobIndex] = jobIndex * jobIndex;
 	};
 
 	char name = 'A';

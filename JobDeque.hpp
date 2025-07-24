@@ -67,108 +67,126 @@ namespace ECS::JobSystem {
         JobDeque(JobDeque&&) noexcept = default; // ムーブのみ OK
         JobDeque& operator=(JobDeque&&) noexcept = default;
 
-        //pushBottom:オーナースレッドのみ
-        PushResult pushBottom(TaskPtr task) {
-            ASSERT(task!=nullptr, "enqueue null TaskPtr in pushBottom");
+        PushResult pushBottom(TaskPtr job) {
+            // 1) カウンタをロード
+            size_t b0 = bottom.load(std::memory_order_seq_cst);
+            size_t t0 = top.load(std::memory_order_seq_cst);
 
-            size_t b = bottom;
-            size_t idx = b & mask;
-
-            std::unique_lock<std::mutex> lk(slotMutex[idx], std::try_to_lock);
-            if (!lk.owns_lock())
-                return { PushStatus::WouldBlock,std::move(task)};
-
-            if(slotData[idx].has_value()){
-                return { PushStatus::Full, std::move(task) };
+            // 2) 満杯判定：要素数 = b0 - t0
+            if (b0 - t0 >= capacity) {
+                return { PushStatus::Full, std::move(job) };
             }
 
-            slotData[idx] = std::move(task);
-            bottom.store(b+1, std::memory_order_release);
+            // 3) インデックス計算
+            size_t idx = b0 & mask;
+
+            // 4) スロットロック
+            std::unique_lock lk(slotMutex[idx], std::try_to_lock);
+            if (!lk.owns_lock()) {
+                return { PushStatus::WouldBlock, std::move(job) };
+            }
+
+            // 5) 二重書き込み禁止判定
+            if (slotData[idx].has_value()) {
+                return { PushStatus::Full, std::move(job) };
+            }
+
+            // 6) 書き込み & カウンタを単調増加
+            slotData[idx] = std::move(job);
+            bottom.store(b0 + 1, std::memory_order_seq_cst);
+
             return { PushStatus::Success, {} };
         }
 
-        //popBottom:オーナースレッドのみ
+        //―――――――――――――――――――――――――――――――――――
+        // オーナースレッド専用：ボトムから pop
         PopResult popBottom() {
-            size_t b0 = bottom.load(std::memory_order_relaxed);
-            //std::atomic_thread_fence(std::memory_order_seq_cst);
-            size_t t0 = top.load(std::memory_order_acquire);
-            if (t0 >= b0)
+            // 1) empty 判定 (要素数==0 のみ)
+            size_t b0 = bottom.load(std::memory_order_seq_cst);
+            size_t t0 = top.load(std::memory_order_seq_cst);
+            if (b0 == t0) {
                 return { PopStatus::Empty, std::nullopt };
+            }
 
+            // 2) 取り出し候補位置
             size_t b1 = b0 - 1;
             size_t idx = b1 & mask;
 
-            std::unique_lock<std::mutex> lk(slotMutex[idx], std::try_to_lock);
-
-            if(!lk.owns_lock()){
+            // 3) スロットロック＋中身チェック
+            std::unique_lock lk(slotMutex[idx], std::try_to_lock);
+            if (!lk.owns_lock()) {
                 return { PopStatus::WouldBlock, std::nullopt };
             }
-
             if (!slotData[idx].has_value()) {
-                //bottom.store(b0, std::memory_order_release);
+                // （ここは実際は起きないはずだが安全策として Empty）
                 return { PopStatus::Empty, std::nullopt };
             }
 
-            bottom.store(b1, std::memory_order_release);
-
+            // 4) 要素を取り出し
             TaskPtr result = std::move(*slotData[idx]);
             slotData[idx].reset();
 
-            //最後の一要素の場合、stealと競合する可能性があるのでチェックする
-            if (t0 == b1) {
+            // 5) 最後の１要素レース対応
+            if (b1 == t0) {
                 size_t expected = t0;
-                if (top.compare_exchange_strong(expected, t0 + 1,
+                // pop と steal のどちらが最後の 1 要素を取るか CAS で決める
+                if (!top.compare_exchange_strong(
+                    expected, t0 + 1,
                     std::memory_order_seq_cst,
-                    std::memory_order_relaxed)) {
-                    bottom.store(b0, std::memory_order_release); 
-                }
-                else {
-                    //stealと競合して取得失敗
-                    bottom.store(expected + 1, std::memory_order_release);
+                    std::memory_order_seq_cst))
+                {
+                    // steal 側が勝利 → bottom はそのまま、Empty 扱い
                     return { PopStatus::Empty, std::nullopt };
                 }
             }
 
-            return { PopStatus::Success, std::optional<TaskPtr>{std::move(result)} };
+            // 6) pop 側が勝利 or 要素が複数あった → bottom を単調減少
+            bottom.store(b1, std::memory_order_seq_cst);
+            return { PopStatus::Success, std::move(result) };
         }
 
-        //他スレッドからのstealTop
-        StealResult stealTop() noexcept{
-            //topを読み出し
-            size_t t0 = top.load(std::memory_order_acquire);
-            std::atomic_thread_fence(std::memory_order_seq_cst);
-            size_t b = bottom.load(std::memory_order_acquire);
-
-            if (t0 >= b)
-                return { StealStatus::Empty, std::nullopt };    // 空
+        //―――――――――――――――――――――――――――――――――――
+        // 他スレッドから stealTop
+        StealResult stealTop() {
+            // 1) empty 判定
+            size_t t0 = top.load(std::memory_order_seq_cst);
+            size_t b0 = bottom.load(std::memory_order_seq_cst);
+            if (t0 >= b0) {
+                return { StealStatus::Empty, std::nullopt };
+            }
 
             size_t idx = t0 & mask;
 
-            std::unique_lock<std::mutex> lk(slotMutex[idx], std::try_to_lock);
-            if(!lk.owns_lock()){
-                return {StealStatus::WouldBlock,std::nullopt};
+            // 2) 内部 tailMutex で一意制御 & スロットロック
+            std::unique_lock tailLk(tailMutex, std::try_to_lock);
+            if (!tailLk.owns_lock()) {
+                return { StealStatus::WouldBlock, std::nullopt };
+            }
+            std::unique_lock lk(slotMutex[idx], std::try_to_lock);
+            if (!lk.owns_lock()) {
+                return { StealStatus::WouldBlock, std::nullopt };
             }
 
-            if(!slotData[idx].has_value()){
+            if (!slotData[idx].has_value()) {
                 return { StealStatus::Empty, std::nullopt };
             }
 
+            // 3) 要素を取り出し
             TaskPtr result = std::move(*slotData[idx]);
             slotData[idx].reset();
 
+            // 4) 最後の 1 要素レース決着
             size_t expected = t0;
-
-            //最後の一要素の場合
             if (!top.compare_exchange_strong(
                 expected, t0 + 1,
                 std::memory_order_seq_cst,
-                std::memory_order_relaxed))
+                std::memory_order_seq_cst))
             {
-                //他者が同じ要素を奪った可能性あり
+                // pop 側に負けた → Empty
                 return { StealStatus::Empty, std::nullopt };
             }
 
-            return { StealStatus::Success, std::optional<TaskPtr>{std::move(result)} };
+            return { StealStatus::Success, std::move(result) };
         }
 
         bool empty() const {
@@ -210,6 +228,7 @@ namespace ECS::JobSystem {
     private:
 
         std::vector<std::mutex>        slotMutex;
+        std::mutex tailMutex;
         std::vector<std::optional<TaskPtr>>  slotData;
 
         // インデックス管理
