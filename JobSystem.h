@@ -38,7 +38,7 @@ public:
         jobQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; ++i) {
             jobQueues.emplace_back(
-                std::make_unique<JobDeque>(capacity)
+                std::make_unique<JobDeque>(capacity,i)
             );
         }
 
@@ -46,13 +46,13 @@ public:
         for (size_t i = 0; i < threadCount; ++i) {
             workers.emplace_back([this, i]() noexcept {
 
-                jobBarrier.wait();
+                //jobBarrier.wait();
 
                 this->workerThreadFunction(i);
                 });
         }
 
-        jobBarrier.wait();
+        //jobBarrier.wait();
     }
 
     ~JobSystem(){
@@ -343,15 +343,9 @@ private:
         while (true) {
             PushResult res = queue->pushBottom(std::move(task));
             
-            //{
-            //    //std::lock_guard lk(wakeMutex);
-            //    res = queue->pushBottom(std::move(task));
-            //}
-            
             switch (res.status) {
                 case PushStatus::Success:
                 {
-                    std::lock_guard<std::mutex> lk(wakeMutex);
                     outstanding.fetch_add(1, std::memory_order_acq_rel);
                     wakeCv.notify_one();
                     return;
@@ -466,28 +460,26 @@ private:
     }
 
     void fallbackExecuteOrEnqueue(size_t queueIndex,TaskPtr job) {
-        //const size_t MaxFallbackTrials = jobQueues.size();
+        const size_t MaxFallbackTrials = jobQueues.size();
 
-        ////他ワーカーのローカルキューを数回トライ
-        //for (size_t trial = 1; trial < MaxFallbackTrials; ++trial) {
-        //    size_t idx = (queueIndex + trial) % MaxFallbackTrials;
-        //    auto res = jobQueues[idx]->pushBottom(job);
-        //    if (res.status == PushStatus::Success) {
-        //        std::lock_guard lk(wakeMutex);
-        //        outstanding.fetch_add(1, std::memory_order_acq_rel);
-        //        wakeCv.notify_one();
-        //        return;
-        //    }
-        //    if (res.status != PushStatus::Success) {
-        //        job = std::move(res.notPushed);
-        //        continue;
-        //    }
-        //}
+        //他ワーカーのローカルキューを数回トライ
+        for (size_t trial = 1; trial < MaxFallbackTrials; ++trial) {
+            size_t idx = (queueIndex + trial) % MaxFallbackTrials;
+            auto res = jobQueues[idx]->pushBottom(job);
+            if (res.status == PushStatus::Success) {
+                outstanding.fetch_add(1, std::memory_order_acq_rel);
+                wakeCv.notify_one();
+                return;
+            }
+            if (res.status != PushStatus::Success) {
+                job = std::move(res.notPushed);
+                continue;
+            }
+        }
 
         //グローバルキューへフォールバック
         {
             std::lock_guard lk(globalQueueMtx);
-            std::lock_guard wakelk(wakeMutex);
             outstanding.fetch_add(1, std::memory_order_acq_rel);
             globalQueue.push_back(std::optional(std::move(job)));
         }
@@ -524,12 +516,10 @@ private:
         {
             std::lock_guard<std::mutex> lk2(logMutex);
             if (didAllFinish) {
-                std::cout << "[All FINISH] queue=" << queueIndex
-                    << " outstanding=" << outstanding.load() << "\n";
+                std::printf("[All FINISH] queue=%zu outstanding=%zu \n", queueIndex, outstanding.load());
             }
             else {
-                std::cout << "[FINISH] queue=" << queueIndex
-                    << " outstanding=" << outstanding.load() << "\n";
+                std::printf("[FINISH] queue=%zu outstanding=%zu \n", queueIndex, outstanding.load());
             }
         }
     }

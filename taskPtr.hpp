@@ -439,9 +439,11 @@ struct ParallelJob {
             auto fp = static_cast<Fn*>(p);
             (*fp)(bb, ll);
         };
+
         destroy_fn = [](void* p) {
             static_cast<Fn*>(p)->~Fn();
         };
+
         begin = b; len = l;
     }
 
@@ -471,7 +473,6 @@ struct ParallelJob {
                 // ”ÍˆÍƒ‹[ƒv‚·‚é‚¾‚¯‚Ìƒ‰ƒ€ƒ_
                 [f = std::forward<F>(func),setterPtr](size_t bb, size_t ll) {
 
-
                     for (size_t i = bb; i < bb + ll; ++i) {
                         f(i);
                     }
@@ -482,7 +483,7 @@ struct ParallelJob {
                     );
         }
 
-        return jobs;
+        return std::make_pair(std::move(jobs),std::move(future));
     }
 };
 

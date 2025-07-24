@@ -49,13 +49,14 @@ namespace ECS::JobSystem {
     class JobDeque {
 
     public:
-        explicit JobDeque(size_t capacity)
+        explicit JobDeque(size_t capacity,size_t index)
             : bottom(0),
             top(0),
             capacity(capacity),
             mask(capacity - 1),
             slotMutex(capacity),
-            slotData(capacity)
+            slotData(capacity),
+            queueIndex(index)
         {
             ASSERT(capacity > 0 && (capacity & (capacity - 1)) == 0 , "capacity must be power of two");
         }
@@ -68,16 +69,13 @@ namespace ECS::JobSystem {
         JobDeque& operator=(JobDeque&&) noexcept = default;
 
         PushResult pushBottom(TaskPtr job) {
-            // 1) カウンタをロード
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
 
-            // 2) 満杯判定：要素数 = b0 - t0
             if (b0 - t0 >= capacity) {
                 return { PushStatus::Full, std::move(job) };
             }
 
-            // 3) インデックス計算
             size_t idx = b0 & mask;
 
             // 4) スロットロック
@@ -86,14 +84,14 @@ namespace ECS::JobSystem {
                 return { PushStatus::WouldBlock, std::move(job) };
             }
 
-            // 5) 二重書き込み禁止判定
             if (slotData[idx].has_value()) {
                 return { PushStatus::Full, std::move(job) };
             }
 
-            // 6) 書き込み & カウンタを単調増加
             slotData[idx] = std::move(job);
             bottom.store(b0 + 1, std::memory_order_seq_cst);
+
+            checkInvariant("PUSH");
 
             return { PushStatus::Success, {} };
         }
@@ -104,7 +102,7 @@ namespace ECS::JobSystem {
             // 1) empty 判定 (要素数==0 のみ)
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
-            if (b0 == t0) {
+            if (b0 <= t0) {
                 return { PopStatus::Empty, std::nullopt };
             }
 
@@ -122,10 +120,6 @@ namespace ECS::JobSystem {
                 return { PopStatus::Empty, std::nullopt };
             }
 
-            // 4) 要素を取り出し
-            TaskPtr result = std::move(*slotData[idx]);
-            slotData[idx].reset();
-
             // 5) 最後の１要素レース対応
             if (b1 == t0) {
                 size_t expected = t0;
@@ -136,12 +130,21 @@ namespace ECS::JobSystem {
                     std::memory_order_seq_cst))
                 {
                     // steal 側が勝利 → bottom はそのまま、Empty 扱い
+                    checkInvariant("POP LAST FAIL");
                     return { PopStatus::Empty, std::nullopt };
                 }
+
+                TaskPtr result = std::move(*slotData[idx]);
+                slotData[idx].reset();               // ← reset は CAS 後
+                bottom.store(t0+1, std::memory_order_seq_cst);
+                checkInvariant("POP LAST OK");
+                return { PopStatus::Success, std::move(result) };
             }
 
-            // 6) pop 側が勝利 or 要素が複数あった → bottom を単調減少
+            TaskPtr result = std::move(*slotData[idx]);
+            slotData[idx].reset();
             bottom.store(b1, std::memory_order_seq_cst);
+            checkInvariant("POP NORMAL OK");
             return { PopStatus::Success, std::move(result) };
         }
 
@@ -162,6 +165,7 @@ namespace ECS::JobSystem {
             if (!tailLk.owns_lock()) {
                 return { StealStatus::WouldBlock, std::nullopt };
             }
+
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
             if (!lk.owns_lock()) {
                 return { StealStatus::WouldBlock, std::nullopt };
@@ -183,9 +187,11 @@ namespace ECS::JobSystem {
                 std::memory_order_seq_cst))
             {
                 // pop 側に負けた → Empty
+                checkInvariant("STEAL FAIL");
                 return { StealStatus::Empty, std::nullopt };
             }
 
+            checkInvariant("STEAL SUCCESS");
             return { StealStatus::Success, std::move(result) };
         }
 
@@ -200,7 +206,43 @@ namespace ECS::JobSystem {
             return bottom - top.load();
         }
 
+        void bugCheck() {
+            std::vector<size_t>validSlots;
+
+            bool isValidJob = false;
+            for (size_t i = 0; i < capacity; i++)
+            {
+                if(slotData[i].has_value()){
+                    isValidJob = true;
+                    validSlots.push_back(i);
+                }
+            }
+
+            if (validSlots.empty()) {
+                return;
+            }
+
+            if(isValidJob){
+                checkInvariant("BUGCHECK InfLoop");
+
+                for (auto &index : validSlots)
+                {
+                    std::printf(
+                        "[BUGCHECK] queue=%zu slotData[%2zu] : still has a pending job\n",
+                        queueIndex, index);
+                }
+            }
+        }
+
     private:
+        void checkInvariant(const char* where) {
+            size_t b = bottom.load(std::memory_order_relaxed);
+            size_t t = top.load(std::memory_order_relaxed);
+
+            std::printf("[%s] queue=%zu : bottom=%zu, top=%zu\n", where,queueIndex, b, t);
+            ASSERT(b >= t,"deque invariant violated");
+        }
+
         //void checkInvariants() {
         //    size_t t = top.load(std::memory_order_acquire);
         //    size_t b = bottom.load(std::memory_order_acquire);
@@ -236,6 +278,8 @@ namespace ECS::JobSystem {
         std::atomic<size_t> bottom;    // オーナーのみ
         const size_t      capacity;
         const size_t      mask;      // capacity は 2^N の前提
+
+        const size_t queueIndex;
     };
 
 }  // namespace ECS::JobSystem
