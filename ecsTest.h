@@ -199,7 +199,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
-TEST_CASE_PRIORITY(test_bigJobSystem) {
+TEST_CASE_ORDER(test_bigJobSystem) {
 	ECS::JobSystem::TimelineRecorder recorder;
 	ECS::JobSystem::JobSystem js{ 8,&recorder };
 
@@ -220,7 +220,7 @@ TEST_CASE_PRIORITY(test_bigJobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	js.schedule_parallelJob(name,std::move(jobs));
+	js.schedule_parallelJob(name,std::move(jobs.first));
 
 	// 4) ‚·‚×‚Ä‚ÌƒWƒ‡ƒuŠ®—¹‚ð‘Ò‹@
 	js.waitForAll();
