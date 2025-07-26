@@ -10,17 +10,18 @@ namespace ECS::JobSystem::Debug {
 
         bool checkStuck() {
             auto now = std::chrono::steady_clock::now();
-            if (!firstEmptyTime) {
-                firstEmptyTime = now;
-            }
             if (now - *firstEmptyTime > MAX_EMPTY_DURATION) {
                 return true;
             }
             return false;
         }
 
-        void resetEmptyTimer() {
+        void clearTimer() {
             firstEmptyTime.reset();
+        }
+
+        void resetTimer() {
+            firstEmptyTime = std::chrono::steady_clock::now();
         }
 
     private:
@@ -38,17 +39,17 @@ namespace ECS::JobSystem::Debug {
         DebugJobQueue(Args&&... args)
             : BaseQueue(std::forward<Args>(args)...),isStuck(false)
         {
-            resetEmptyTimer();
+            clearTimer();
+            resetTimer();
         }
 
         PopResult popBottom() {
             auto res = BaseQueue::popBottom();
 
             if (res.status == PopStatus::Success) {
-                resetEmptyTimer();
+                resetTimer();
             }
             else {
-
                 if(checkStuck()){
                     if(!isStuck) {
                         std::lock_guard<std::mutex>sk(stuckMutex);
@@ -67,11 +68,11 @@ namespace ECS::JobSystem::Debug {
             return res;
         }
 
-        StealResult stealTop() {
-            auto res = BaseQueue::stealTop();
+        StealResult stealTop(size_t index) {
+            auto res = BaseQueue::stealTop(index);
 
             if (res.status == StealStatus::Success) {
-                resetEmptyTimer();
+                resetTimer();
             }
             else {
 

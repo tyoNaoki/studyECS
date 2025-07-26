@@ -89,9 +89,10 @@ namespace ECS::JobSystem {
             }
 
             slotData[idx] = std::move(job);
-            bottom.store(b0 + 1, std::memory_order_seq_cst);
+            bottom.fetch_add(1,std::memory_order_release);
 
-            checkInvariant("PUSH");
+            const std::string log = "PUSH in Queue : " + getQueueIndex();
+            checkInvariant(log.c_str());
 
             return { PushStatus::Success, {} };
         }
@@ -128,26 +129,30 @@ namespace ECS::JobSystem {
                     std::memory_order_seq_cst))
                 {
                     //steal側が勝利 → bottomはそのままEmpty扱い
-                    checkInvariant("POP LAST FAIL");
+                    const std::string log = "POP LAST FAIL in Queue : " + std::to_string(getQueueIndex());
+                    checkInvariant(log.c_str());
                     return { PopStatus::Empty, std::nullopt };
                 }
 
                 TaskPtr result = std::move(*slotData[idx]);
                 slotData[idx].reset();
                 bottom.store(t0+1, std::memory_order_seq_cst);
-                checkInvariant("POP LAST OK");
+                const std::string msg = "POP LAST OK in " + std::to_string(getQueueIndex());
+                checkInvariant(msg.c_str());
                 return { PopStatus::Success, std::move(result) };
             }
 
             TaskPtr result = std::move(*slotData[idx]);
             slotData[idx].reset();
-            bottom.store(b1, std::memory_order_seq_cst);
-            checkInvariant("POP NORMAL OK");
+            //bottom.store(b1, std::memory_order_seq_cst);
+            bottom.fetch_sub(1, std::memory_order_release);
+            const std::string nlog = "POP NORMAL OK in Queue : " + std::to_string(getQueueIndex());
+            checkInvariant(nlog.c_str());
             return { PopStatus::Success, std::move(result) };
         }
 
         //他スレッド専用：Topからsteal
-        StealResult stealTop() {
+        StealResult stealTop(size_t index) {
 
             //empty判定
             size_t t0 = top.load(std::memory_order_seq_cst);
@@ -173,10 +178,6 @@ namespace ECS::JobSystem {
                 return { StealStatus::Empty, std::nullopt };
             }
 
-            TaskPtr result = std::move(*slotData[idx]);
-            //対象のスロットリセット
-            slotData[idx].reset();
-
             //最後の1要素
             size_t expected = t0;
             if (!top.compare_exchange_strong(
@@ -185,11 +186,17 @@ namespace ECS::JobSystem {
                 std::memory_order_seq_cst))
             {
                 //Steal失敗
-                checkInvariant("STEAL FAIL");
+                const std::string log = "STEAL FAIL of Queue : " +  std::to_string(index);
+                checkInvariant(log.c_str());
                 return { StealStatus::Empty, std::nullopt };
             }
 
-            checkInvariant("STEAL SUCCESS");
+            TaskPtr result = std::move(*slotData[idx]);
+            //対象のスロットリセット
+            slotData[idx].reset();
+
+            const std::string slog = "STEAL SUCCESS of Queue : " + std::to_string(index);
+            checkInvariant(slog.c_str());
             return { StealStatus::Success, std::move(result) };
         }
 
@@ -205,7 +212,7 @@ namespace ECS::JobSystem {
         }
 
         //Jobがまだスロット内に残っているかチェックし、ある場合ログとして出力
-        void validCheck() {
+        bool validCheck() {
             std::vector<size_t>validSlots;
 
             for (size_t i = 0; i < capacity; i++)
@@ -216,7 +223,7 @@ namespace ECS::JobSystem {
             }
 
             if (validSlots.empty()) {
-                return;
+                return false;
             }
 
             checkInvariant("JOB VALID CHECK");
@@ -230,6 +237,8 @@ namespace ECS::JobSystem {
                     "[JOB VALID CHECK] queue=%zu slotData[%zu] : still has a pending job\n",
                     getQueueIndex(), index);
             }
+
+            return true;
         }
 
         size_t getQueueIndex(){return queueIndex;}
