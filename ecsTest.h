@@ -75,8 +75,11 @@ void hashMapBenchmarks();
 
 int test()
 {
-	//RUN_TEST("test_create_group",false);
-	RUN_PRIORITY_TESTS(false);
+	RUN_TEST("test_jobSystem",50);
+	RUN_TEST("test_particalJobSystem", 50);
+
+	return 0;
+	//RUN_PRIORITY_TESTS(false);
 }
 
 int generateRandomInt(int minNum, int maxNum) {
@@ -102,7 +105,7 @@ void func(){
 
 TEST_CASE_PRIORITY(test_jobSystem) {
 	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{4,&recorder};
+	ECS::JobSystem::JobManager js{4,&recorder};
 
 	auto globalStart = ECS::JobSystem::now();
 
@@ -126,20 +129,22 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// 4) すべてのジョブ完了を待機
 	js.waitForAll();
 
+	assertTrue(!js.isAbort(),"JobSystem Work Test");
+
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
-	auto globalEnd = ECS::JobSystem::now();
+	/*auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 	std::cout << "Total duration: "
-		<< globalDuration << " ms\n";
+		<< globalDuration << " ms\n";*/
 
 	// 6) ログを取り出してスレッド別タイムラインを出力
 	auto& dataMap = recorder.getDataMap();
-	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
 TEST_CASE_PRIORITY(test_particalJobSystem){
 	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{4,&recorder };
+	ECS::JobSystem::JobManager js{4,&recorder };
 
 	auto globalStart = ECS::JobSystem::now();
 
@@ -187,21 +192,22 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	// 4) すべてのジョブ完了を待機
 	js.waitForAll();
+	assertTrue(!js.isAbort(), "JobSystem Partical Work Test");
 
-	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+	/*
 	std::cout << "Total duration: "
-		<< globalDuration << " ms\n";
+		<< globalDuration << " ms\n";*/
 
-	// 6) ログを取り出してスレッド別タイムラインを出力
 	auto& dataMap = recorder.getDataMap();
-	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+
 }
 
 TEST_CASE_ORDER(test_bigJobSystem) {
 	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobSystem js{ 8,&recorder };
+	ECS::JobSystem::JobManager js{ 8,&recorder };
 
 	std::vector<uint32_t> resultData(10'000'000);
 	//std::vector<uint32_t> resultData(10);
