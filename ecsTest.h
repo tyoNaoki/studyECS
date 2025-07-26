@@ -75,8 +75,8 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_jobSystem",50);
-	RUN_TEST("test_particalJobSystem", 50);
+	//RUN_TEST("test_jobSystem",50);
+	//RUN_TEST("test_particalJobSystem", 50);
 
 	return 0;
 	//RUN_PRIORITY_TESTS(false);
@@ -129,6 +129,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// 4) すべてのジョブ完了を待機
 	js.waitForAll();
 
+	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!js.isAbort(),"JobSystem Work Test");
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算

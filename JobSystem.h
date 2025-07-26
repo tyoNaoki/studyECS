@@ -347,6 +347,16 @@ public:
         return abortFlag.load(std::memory_order_acquire);
     }
 
+    bool checkRanAllJobInJobQueues() {
+        for (auto& queue : jobQueues) {
+            if (queue->validCheck()) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 private:
 
     void pushBottom(TaskPtr task) {
@@ -466,7 +476,7 @@ private:
         StealResult result;
         for (size_t i = 1; i < n; ++i) {
             size_t idx = (stealOwner + i) % n;
-            result  = jobQueues[idx]->stealTop();
+            result  = jobQueues[idx]->stealTop(stealOwner);
 
             if (result.status == StealStatus::Success) {
                 return result;
