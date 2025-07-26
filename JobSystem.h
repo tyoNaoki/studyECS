@@ -13,19 +13,20 @@
 #include <utility>
 #include "taskPtr.hpp"
 #include "JobBarrier.h"
+#include "JobDebugger.h"
 
 namespace ECS::JobSystem{
    
     //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
 
 template<typename Recorder = NullRecorder>
-class JobSystem
+class JobManager
 {
-    using JobQueue = std::unique_ptr<JobDeque>;
+    using JobQueue = Debug::DebugJobQueue<JobDeque>;
 
 public:
 
-    explicit JobSystem(size_t threadCount,
+    explicit JobManager(size_t threadCount,
         Recorder* rec = nullptr,
         size_t capacity = 1024)
         : recorder(rec),
@@ -38,7 +39,7 @@ public:
         jobQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; ++i) {
             jobQueues.emplace_back(
-                std::make_unique<JobDeque>(capacity,i)
+                std::make_unique<JobQueue>(capacity,i)
             );
         }
 
@@ -55,7 +56,7 @@ public:
         //jobBarrier.wait();
     }
 
-    ~JobSystem(){
+    ~JobManager(){
         stopFlag.store(true, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lk(wakeMutex);
@@ -301,7 +302,8 @@ public:
     void waitForAll() {
         std::unique_lock<std::mutex> lk(finishMutex);
         finishCv.wait(lk, [&] {
-            return outstanding.load(std::memory_order_acquire) == 0;
+            return abortFlag.load(std::memory_order_acquire)
+                || outstanding.load(std::memory_order_acquire) == 0;
             });
     }
 
@@ -316,7 +318,11 @@ public:
         const size_t index = queueIndex;
         // 終了フラグと outstanding の組み合わせでループ制御
         while (true) {
-            //停止指示かつ未完了ジョブなしなら抜ける
+            //停止指示または未完了ジョブなしなら抜ける
+            if (abortFlag.load(std::memory_order_acquire)) {
+                break;
+            }
+
             if (stopFlag.load(std::memory_order_acquire) &&
                 outstanding.load(std::memory_order_acquire) == 0)
             {
@@ -325,9 +331,20 @@ public:
 
             //自キューから pop
             run_pending_job(index);
+
+            if(jobQueues[index]->isAbort()){
+                abort();
+                return;
+            }
         }
 
-        run_while_validQueue(index);
+        if(abortFlag.load(std::memory_order_acquire) != false){
+            run_while_validQueue(index);
+        }
+    }
+
+    bool isAbort() {
+        return abortFlag.load(std::memory_order_acquire);
     }
 
 private:
@@ -516,10 +533,10 @@ private:
         {
             std::lock_guard<std::mutex> lk2(logMutex);
             if (didAllFinish) {
-                std::printf("[All FINISH] queue=%zu outstanding=%zu \n", queueIndex, outstanding.load());
+                test::saveLog("[All FINISH] queue=%zu outstanding=%zu", queueIndex, outstanding.load());
             }
             else {
-                std::printf("[FINISH] queue=%zu outstanding=%zu \n", queueIndex, outstanding.load());
+                test::saveLog("[FINISH] queue=%zu outstanding=%zu", queueIndex, outstanding.load());
             }
         }
     }
@@ -563,8 +580,17 @@ private:
     }
 
 private:
+    void abort(){
+        std::lock_guard lk(finishMutex);
+        if(!abortFlag.load()){
+            abortFlag.store(true, std::memory_order_release);
+            finishCv.notify_all();
+        }
+    };
+
+private:
     std::vector<std::thread> workers;
-    std::vector<JobQueue> jobQueues;
+    std::vector<std::unique_ptr<JobQueue>> jobQueues;
 
     std::vector<std::optional<TaskPtr>> globalQueue;
     std::mutex globalQueueMtx;
@@ -586,6 +612,8 @@ private:
     inline static NullRecorder nullrecorder;
 
     JobBarrier jobBarrier;
+
+    std::atomic<bool> abortFlag{ false };
 };
 
 } //namespace ECS::JobSystem

@@ -21,7 +21,7 @@ int duration(time_point start, time_point end) {
 struct JobData { char name; time_point start, end; };
 
 //単一スレッド分のジョブデータからタイムライン文字列を生成
-std::string createTimeline(
+inline std::string createTimeline(
     const std::vector<JobData>& jobs,
     time_point globalStart,
     int globalDuration)
@@ -45,7 +45,7 @@ std::string createTimeline(
 }
 
 //スレッドごとにタイムラインを出力する
-void printTimelines(
+inline void printTimelines(
     const std::unordered_map<std::thread::id, std::vector<JobData>>& jobDataMap,
     time_point globalStart,
     int globalDuration)
@@ -62,6 +62,8 @@ void printTimelines(
 }
 
 struct TimelineRecorder {
+    using queueIndex = size_t;
+    using logs = std::vector<std::string>;
 	std::mutex   mtx;
     std::unordered_map<std::thread::id, std::vector<JobData>> jobData;
     using RecordHandle = size_t;

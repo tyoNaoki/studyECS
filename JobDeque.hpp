@@ -13,32 +13,31 @@ namespace ECS::JobSystem {
 
     // pushBottom の結果
     enum class PushStatus {
-        Success,    // 正常に push できた
+        Success,    // 正常にpushできた
         WouldBlock, // ロック中で進めない
         Full        // バッファがすでに満杯
     };
 
     enum class PopStatus {
-        Success,    // 正常に push できた
+        Success,    // 正常にpopできた
         WouldBlock, // ロック中で進めない
-        Empty        // 空
+        Empty        //空
     };
 
     enum class StealStatus {
-        Success,    // 正常に push できた
+        Success,    // 正常にstealできた
         WouldBlock, // ロック中で進めない
-        Empty        // 空
+        Empty        //空
     };
 
     struct PushResult {
         PushStatus status;
-        // not_pushed を返せるようにムーブ前のタスクを保持
         TaskPtr notPushed;
     };
 
     struct PopResult {
         PopStatus status;
-        std::optional<TaskPtr> value;  // 成功時だけ value.has_value()==true
+        std::optional<TaskPtr> value;
     };
 
     struct StealResult {
@@ -63,11 +62,12 @@ namespace ECS::JobSystem {
 
         ~JobDeque() = default;
 
-        JobDeque(const JobDeque&) = delete;  // コピー禁止
+        JobDeque(const JobDeque&) = delete;  //コピー禁止
         JobDeque& operator=(const JobDeque&) = delete;
-        JobDeque(JobDeque&&) noexcept = default; // ムーブのみ OK
+        JobDeque(JobDeque&&) noexcept = default; //ムーブのみOK
         JobDeque& operator=(JobDeque&&) noexcept = default;
 
+        //オーナースレッド専用：ボトムからPush
         PushResult pushBottom(TaskPtr job) {
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
@@ -78,7 +78,7 @@ namespace ECS::JobSystem {
 
             size_t idx = b0 & mask;
 
-            // 4) スロットロック
+            //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
             if (!lk.owns_lock()) {
                 return { PushStatus::WouldBlock, std::move(job) };
@@ -96,46 +96,44 @@ namespace ECS::JobSystem {
             return { PushStatus::Success, {} };
         }
 
-        //―――――――――――――――――――――――――――――――――――
-        // オーナースレッド専用：ボトムから pop
+        //オーナースレッド専用：ボトムからPOP
         PopResult popBottom() {
-            // 1) empty 判定 (要素数==0 のみ)
+            //empty判定
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
             if (b0 <= t0) {
                 return { PopStatus::Empty, std::nullopt };
             }
 
-            // 2) 取り出し候補位置
+            //取り出し候補位置
             size_t b1 = b0 - 1;
             size_t idx = b1 & mask;
 
-            // 3) スロットロック＋中身チェック
+            //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
             if (!lk.owns_lock()) {
                 return { PopStatus::WouldBlock, std::nullopt };
             }
             if (!slotData[idx].has_value()) {
-                // （ここは実際は起きないはずだが安全策として Empty）
                 return { PopStatus::Empty, std::nullopt };
             }
 
-            // 5) 最後の１要素レース対応
+            //最後の１要素
             if (b1 == t0) {
                 size_t expected = t0;
-                // pop と steal のどちらが最後の 1 要素を取るか CAS で決める
+                //popとsteaのどちらが最後の1要素を取るか
                 if (!top.compare_exchange_strong(
                     expected, t0 + 1,
                     std::memory_order_seq_cst,
                     std::memory_order_seq_cst))
                 {
-                    // steal 側が勝利 → bottom はそのまま、Empty 扱い
+                    //steal側が勝利 → bottomはそのままEmpty扱い
                     checkInvariant("POP LAST FAIL");
                     return { PopStatus::Empty, std::nullopt };
                 }
 
                 TaskPtr result = std::move(*slotData[idx]);
-                slotData[idx].reset();               // ← reset は CAS 後
+                slotData[idx].reset();
                 bottom.store(t0+1, std::memory_order_seq_cst);
                 checkInvariant("POP LAST OK");
                 return { PopStatus::Success, std::move(result) };
@@ -148,10 +146,10 @@ namespace ECS::JobSystem {
             return { PopStatus::Success, std::move(result) };
         }
 
-        //―――――――――――――――――――――――――――――――――――
-        // 他スレッドから stealTop
+        //他スレッド専用：Topからsteal
         StealResult stealTop() {
-            // 1) empty 判定
+
+            //empty判定
             size_t t0 = top.load(std::memory_order_seq_cst);
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             if (t0 >= b0) {
@@ -160,8 +158,9 @@ namespace ECS::JobSystem {
 
             size_t idx = t0 & mask;
 
-            // 2) 内部 tailMutex で一意制御 & スロットロック
-            std::unique_lock tailLk(tailMutex, std::try_to_lock);
+            //ロック、中身チェック
+            //念のため、steal専用のロックも行う
+            std::unique_lock tailLk(stealMutex, std::try_to_lock);
             if (!tailLk.owns_lock()) {
                 return { StealStatus::WouldBlock, std::nullopt };
             }
@@ -170,23 +169,22 @@ namespace ECS::JobSystem {
             if (!lk.owns_lock()) {
                 return { StealStatus::WouldBlock, std::nullopt };
             }
-
             if (!slotData[idx].has_value()) {
                 return { StealStatus::Empty, std::nullopt };
             }
 
-            // 3) 要素を取り出し
             TaskPtr result = std::move(*slotData[idx]);
+            //対象のスロットリセット
             slotData[idx].reset();
 
-            // 4) 最後の 1 要素レース決着
+            //最後の1要素
             size_t expected = t0;
             if (!top.compare_exchange_strong(
                 expected, t0 + 1,
                 std::memory_order_seq_cst,
                 std::memory_order_seq_cst))
             {
-                // pop 側に負けた → Empty
+                //Steal失敗
                 checkInvariant("STEAL FAIL");
                 return { StealStatus::Empty, std::nullopt };
             }
@@ -206,14 +204,13 @@ namespace ECS::JobSystem {
             return bottom - top.load();
         }
 
-        void bugCheck() {
+        //Jobがまだスロット内に残っているかチェックし、ある場合ログとして出力
+        void validCheck() {
             std::vector<size_t>validSlots;
 
-            bool isValidJob = false;
             for (size_t i = 0; i < capacity; i++)
             {
                 if(slotData[i].has_value()){
-                    isValidJob = true;
                     validSlots.push_back(i);
                 }
             }
@@ -222,24 +219,45 @@ namespace ECS::JobSystem {
                 return;
             }
 
-            if(isValidJob){
-                checkInvariant("BUGCHECK InfLoop");
+            checkInvariant("JOB VALID CHECK");
 
-                for (auto &index : validSlots)
-                {
-                    std::printf(
-                        "[BUGCHECK] queue=%zu slotData[%2zu] : still has a pending job\n",
-                        queueIndex, index);
-                }
+            for (auto index : validSlots)
+            {
+                test::saveLog(
+                    "[JOB VALID CHECK] queue=%zu slotData[%zu] : still has a pending job",
+                    getQueueIndex(), index);
+                std::printf(
+                    "[JOB VALID CHECK] queue=%zu slotData[%zu] : still has a pending job\n",
+                    getQueueIndex(), index);
             }
         }
 
+        size_t getQueueIndex(){return queueIndex;}
+
+        //スタックなどの処理不可になった場合の緊急停止処置
+        bool isAbort() const noexcept { return abortFlag;}
+
+        //緊急停止設定時、ログも出力
+        void setAbort(){
+            if(abortFlag) return;
+
+            abortFlag = true;
+            test::saveLog(
+                "[ABORT] queue=%zu",
+                getQueueIndex());
+
+            std::printf("[ABORT] queue=%zu\n",
+                getQueueIndex());
+        }
+
     private:
+
+        //動作をログで保存
         void checkInvariant(const char* where) {
             size_t b = bottom.load(std::memory_order_relaxed);
             size_t t = top.load(std::memory_order_relaxed);
 
-            std::printf("[%s] queue=%zu : bottom=%zu, top=%zu\n", where,queueIndex, b, t);
+            test::saveLog("[%s] queue=%zu : bottom=%zu, top=%zu", where,queueIndex, b, t);
             ASSERT(b >= t,"deque invariant violated");
         }
 
@@ -270,7 +288,7 @@ namespace ECS::JobSystem {
     private:
 
         std::vector<std::mutex>        slotMutex;
-        std::mutex tailMutex;
+        std::mutex stealMutex;
         std::vector<std::optional<TaskPtr>>  slotData;
 
         // インデックス管理
@@ -280,6 +298,8 @@ namespace ECS::JobSystem {
         const size_t      mask;      // capacity は 2^N の前提
 
         const size_t queueIndex;
+
+        bool abortFlag = false;
     };
 
 }  // namespace ECS::JobSystem

@@ -164,6 +164,7 @@
   <ItemGroup>
     <ClInclude Include="EntityEventMixin.hpp" />
     <ClInclude Include="JobBarrier.h" />
+    <ClInclude Include="JobDebugger.h" />
     <ClInclude Include="JobDeque.hpp" />
     <ClInclude Include="JobRecorder.h" />
     <ClInclude Include="JobSystem.h" />

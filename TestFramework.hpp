@@ -5,7 +5,12 @@
 #include <functional>
 #include <algorithm>
 #include <unordered_map>
-
+#include <mutex>
+#include <filesystem>
+#include <sstream>
+#include <cstdarg>
+#include <cstdio>
+#include <fstream>
 
 /// <summary>
 /*
@@ -48,6 +53,60 @@ int main() {
 
 namespace ECS::test{
 
+    static std::mutex         g_runCountMutex;
+    static std::unordered_map<std::string, int> g_runCounts;
+    static constexpr auto LOG_FILE = "logs/runTest.log";
+    static std::vector<std::string> g_logBuffer;
+    static std::mutex  g_logMutex;
+
+    inline std::string currentTimestamp() {
+        auto now = std::chrono::system_clock::now();
+        auto tt = std::chrono::system_clock::to_time_t(now);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &tt);
+#else
+        localtime_r(&tt, &tm);
+#endif
+        std::ostringstream oss;
+        oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        return oss.str();
+    }
+
+    inline void saveLog(const char* fmt, ...) {
+        std::lock_guard<std::mutex> lk(g_logMutex);
+        char tmp[256];  // 必要に応じて拡張
+        va_list ap;
+        va_start(ap, fmt);
+        int n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
+        va_end(ap);
+
+        // 可変長の文字列を std::string にコピー
+        if (n > 0) {
+            g_logBuffer.emplace_back(tmp, (size_t)n);
+        }
+    }
+
+    inline void printLogBufferOnLogFile() {
+
+        // ファイルに追記
+        std::ofstream ofs(LOG_FILE, std::ios::app);
+
+        if (!ofs.is_open()) {
+            // open に失敗したら標準エラーへ出力
+            std::fprintf(stderr, "Failed to open log file: %s\n", LOG_FILE);
+            return;
+        }
+
+        for (auto& line : g_logBuffer) {
+            ofs << currentTimestamp() << " " << line << "\n";
+        }
+    }
+
+    inline void clearLogBuffer() {
+        g_logBuffer.clear();
+    }
+
 enum class Category : int {
     Priority = 0,  //最優先
     OrderPriority = 1,  //実行順序保証
@@ -84,6 +143,8 @@ struct TestRegistrar {
     {
         get_registry().push_back({ name, fn, enabled, cat });
         ++get_category_counts()[cat];
+        std::lock_guard lk(g_runCountMutex);
+        g_runCounts[name] = 0;
     }
 };
 
@@ -121,6 +182,10 @@ struct TestRegistrar {
     };                                                            \
     static void name()
 
+inline int& testPassCount() {
+    static int pass = 0;
+    return pass;
+}
 
 //失敗カウンタ＆アサーション
 inline int& testFailures() {
@@ -128,42 +193,67 @@ inline int& testFailures() {
     return fails;
 }
 
+inline bool& testFailFlag() {
+    static bool fail = false;
+    return fail;
+}
+
 inline void assertTrue(bool cond, const char* msg) {
     if (cond) {
-        std::cout << "[  PASSED ] " << msg << "\n";
+        saveLog("[  PASSED ] %s", msg);
+        std::printf("[  PASSED ] %s\n", msg);
+        ++testPassCount();
     }
     else {
-        std::cout << "[  FAILED ] " << msg << "\n";
+        saveLog("[  FAILED ] %s", msg);
+        std::printf("[FAILED] %s\n", msg);
         ++testFailures();
+        testFailFlag() = true;
     }
 }
 
-inline int run_test(const char* testName,bool isLoop){
-    static bool ran = false;
-
-    if (ran&&!isLoop) {
-        return 1;
+inline int run_test(const char* testName,int maxRuns){
+    {
+        std::lock_guard lk(g_runCountMutex);
+        int& cnt = g_runCounts[testName];
+        ++cnt;
+        if (cnt > maxRuns) {
+            return 1;
+        }
     }
-
-    ran = true;
-
-    int total = 0;
 
     for (auto& t : get_registry()) {
         if (t.name != testName) {
             continue;
         }
-        std::cout << "[ RUN     ] " << t.name << "\n";
+        
+        std::string log = "[ RUN     ] " + t.name;
+        saveLog("%s", log.c_str());
+        std::printf("%s\n",log.c_str());
         t.fn();
-        total++;
     }
 
+    int pass = testPassCount();
     int fails = testFailures();
 
-    std::cout << "\n" << "[ SUMMARY ] "
-        << (total - fails) << " passed, "
-        << fails << " faild " << " in "
-        << total << " total\n";
+    std::string finishLog =  
+        "[ SUMMARY ] " 
+        + std::to_string(pass) 
+        + " passed, " 
+        + std::to_string(fails) 
+        + " faild in "
+        + std::to_string(pass + fails)
+        + " total test";
+
+    std::printf("%s\n", finishLog.c_str());
+    saveLog("%s\n", finishLog.c_str());
+
+    if(testFailFlag()){
+        printLogBufferOnLogFile();
+        testFailFlag() = false;
+    }
+    
+    clearLogBuffer();
 
     return fails == 0 ? 0 : 1;
 }
@@ -171,11 +261,9 @@ inline int run_test(const char* testName,bool isLoop){
 ///CategoryFilterまでを実行してまとめて返す
 inline int run_tests(Category filter = Category::Standard,bool isLoop = false) {
     
-
     static bool ran = false;
 
     if (ran && !isLoop) {
-        //std::cerr << "[ ERROR   ] run_tests() was already called, skipping.\n";
         return 1; 
     }
 
@@ -218,7 +306,7 @@ inline int run_tests(Category filter = Category::Standard,bool isLoop = false) {
 #define RUN_ALL_TESTS(isLoop)           return ECS::test::run_tests(ECS::test::Category::Standard,isLoop)
 #define RUN_PRIORITY_TESTS(isLoop)      return ECS::test::run_tests(ECS::test::Category::Priority,isLoop)
 #define RUN_ORDER_TESTS(isLoop)         return ECS::test::run_tests(ECS::test::Category::OrderPriority,isLoop)
-#define RUN_TEST(name,isLoop) return ECS::test::run_test(name,isLoop)
+#define RUN_TEST(name,maxCount) ECS::test::run_test(name,maxCount)
 }// namespace ECS::test
 
 #ifdef NDEBUG
