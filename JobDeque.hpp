@@ -80,6 +80,7 @@ namespace ECS::JobSystem {
 
             //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
+
             if (!lk.owns_lock()) {
                 return { PushStatus::WouldBlock, std::move(job) };
             }
@@ -121,12 +122,18 @@ namespace ECS::JobSystem {
 
             //最後の１要素
             if (b1 == t0) {
+                size_t curTop = top.load(std::memory_order_acquire);
+                if (curTop != t0) {
+                    bottom.store(curTop, std::memory_order_release);
+                    return { PopStatus::Empty, std::nullopt };
+                }
+
                 size_t expected = t0;
-                //popとsteaのどちらが最後の1要素を取るか
+                //popとstealのどちらが最後の1要素を取るか
                 if (!top.compare_exchange_strong(
                     expected, t0 + 1,
-                    std::memory_order_seq_cst,
-                    std::memory_order_seq_cst))
+                    std::memory_order_acq_rel,
+                    std::memory_order_acquire))
                 {
                     //steal側が勝利 → bottomはそのままEmpty扱い
                     const std::string log = "POP LAST FAIL in Queue : " + std::to_string(getQueueIndex());
@@ -134,9 +141,10 @@ namespace ECS::JobSystem {
                     return { PopStatus::Empty, std::nullopt };
                 }
 
+                //基本この分岐を通る。
                 TaskPtr result = std::move(*slotData[idx]);
                 slotData[idx].reset();
-                bottom.store(t0+1, std::memory_order_seq_cst);
+                bottom.store(t0+1, std::memory_order_release);
                 const std::string msg = "POP LAST OK in " + std::to_string(getQueueIndex());
                 checkInvariant(msg.c_str());
                 return { PopStatus::Success, std::move(result) };
@@ -144,7 +152,6 @@ namespace ECS::JobSystem {
 
             TaskPtr result = std::move(*slotData[idx]);
             slotData[idx].reset();
-            //bottom.store(b1, std::memory_order_seq_cst);
             bottom.fetch_sub(1, std::memory_order_release);
             const std::string nlog = "POP NORMAL OK in Queue : " + std::to_string(getQueueIndex());
             checkInvariant(nlog.c_str());
@@ -182,8 +189,8 @@ namespace ECS::JobSystem {
             size_t expected = t0;
             if (!top.compare_exchange_strong(
                 expected, t0 + 1,
-                std::memory_order_seq_cst,
-                std::memory_order_seq_cst))
+                std::memory_order_acq_rel,
+                std::memory_order_acquire))
             {
                 //Steal失敗
                 const std::string log = "STEAL FAIL of Queue : " +  std::to_string(index);
@@ -191,6 +198,7 @@ namespace ECS::JobSystem {
                 return { StealStatus::Empty, std::nullopt };
             }
 
+            //基本、この分岐を通る。
             TaskPtr result = std::move(*slotData[idx]);
             //対象のスロットリセット
             slotData[idx].reset();
@@ -263,8 +271,8 @@ namespace ECS::JobSystem {
 
         //動作をログで保存
         void checkInvariant(const char* where) {
-            size_t b = bottom.load(std::memory_order_relaxed);
-            size_t t = top.load(std::memory_order_relaxed);
+            size_t b = bottom.load(std::memory_order_seq_cst);
+            size_t t = top.load(std::memory_order_seq_cst);
 
             test::saveLog("[%s] queue=%zu : bottom=%zu, top=%zu", where,queueIndex, b, t);
             ASSERT(b >= t,"deque invariant violated");

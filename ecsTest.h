@@ -75,8 +75,8 @@ void hashMapBenchmarks();
 
 int test()
 {
-	//RUN_TEST("test_jobSystem",50);
-	//RUN_TEST("test_particalJobSystem", 50);
+	RUN_TEST("test_jobSystem",50);
+	RUN_TEST("test_particalJobSystem", 50);
 
 	return 0;
 	//RUN_PRIORITY_TESTS(false);
