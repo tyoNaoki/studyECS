@@ -14,10 +14,47 @@
 #include "taskPtr.hpp"
 #include "JobBarrier.h"
 #include "JobDebugger.h"
+#include <concurrent_queue.h>
 
 namespace ECS::JobSystem{
    
     //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
+
+template<typename T>
+class WaitQueue {
+public:
+    void push(T v) {
+        std::lock_guard<std::mutex> lk(m);
+        q.push(std::move(v));
+        cv.notify_one();
+    }
+
+    bool try_pop(T& value){
+        std::lock_guard<std::mutex> lk(m);
+        if (q.empty()) {
+            return false;
+        }
+
+        value = std::move(q.front());
+        q.pop();
+        return true;
+    }
+
+private:
+    // 消費側は単一スレッドを想定
+    T pop() {
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait(lk, [&] { return !q.empty(); });
+        T v = std::move(q.front());
+        q.pop();
+        return v;
+    }
+
+private:
+    std::queue<T> q;
+    std::mutex m;
+    std::condition_variable cv;
+};
 
 template<typename Recorder = NullRecorder>
 class JobManager
@@ -36,9 +73,14 @@ public:
     {
         ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
 
-        jobQueues.reserve(threadCount);
+        waitQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; ++i) {
-            jobQueues.emplace_back(
+            waitQueues.push_back(std::make_unique<WaitQueue<TaskPtr>>());
+        }
+
+        localQueues.reserve(threadCount);
+        for (size_t i = 0; i < threadCount; ++i) {
+            localQueues.emplace_back(
                 std::make_unique<JobQueue>(capacity,i)
             );
         }
@@ -47,13 +89,13 @@ public:
         for (size_t i = 0; i < threadCount; ++i) {
             workers.emplace_back([this, i]() noexcept {
 
-                //jobBarrier.wait();
+                jobBarrier.wait();
 
                 this->workerThreadFunction(i);
                 });
         }
 
-        //jobBarrier.wait();
+        jobBarrier.wait();
     }
 
     ~JobManager(){
@@ -93,7 +135,7 @@ public:
 
         if (t->inDegree.load() == 0) {
             //std::lock_guard lk(wakeMutex);
-            pushBottom(t);
+            pushWaitQueue(t);
         }
 
         return std::make_pair(
@@ -131,7 +173,8 @@ public:
         }
 
         if (t->inDegree.load() == 0) {
-            pushBottom(t);
+            //pushBottom(t);
+            pushWaitQueue(t);
         }
 
         return std::make_pair(
@@ -159,7 +202,7 @@ public:
                 0
             ) };
 
-            pushBottom(t);
+            pushWaitQueue(t);
         }
     }
 
@@ -186,7 +229,7 @@ public:
                 0
             )};
             
-            pushBottom(t);
+            pushWaitQueue(t);
        }
         
         /*batches.emplace_back(
@@ -308,7 +351,7 @@ public:
     }
 
     void run_one_job(){
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
+        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % localQueues.size();
 
         run_pending_job(idx);
     };
@@ -329,10 +372,13 @@ public:
                 break;
             }
 
+            //ローカルキューにpushしていく。
+            pushLocalQueue(index);
+
             //自キューから pop
             run_pending_job(index);
 
-            if(jobQueues[index]->isAbort()){
+            if(localQueues[index]->isAbort()){
                 abort();
                 return;
             }
@@ -348,7 +394,7 @@ public:
     }
 
     bool checkRanAllJobInJobQueues() {
-        for (auto& queue : jobQueues) {
+        for (auto& queue : localQueues) {
             if (queue->validCheck()) {
                 return false;
             }
@@ -359,13 +405,20 @@ public:
 
 private:
 
-    void pushBottom(TaskPtr task) {
+    void pushWaitQueue(TaskPtr task){
+        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % waitQueues.size();
+
+        waitQueues[idx]->push(task);
+        outstanding.fetch_add(1, std::memory_order_acq_rel);
+        wakeCv.notify_one();
+    }
+
+    bool pushBottom(TaskPtr task,size_t idx) {
         
         auto start = std::chrono::steady_clock::now();
         const auto  timeout = std::chrono::milliseconds(2);
-
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
-        auto& queue = jobQueues[idx];
+        
+        auto& queue = localQueues[idx];
 
         while (true) {
             PushResult res = queue->pushBottom(std::move(task));
@@ -373,16 +426,16 @@ private:
             switch (res.status) {
                 case PushStatus::Success:
                 {
-                    outstanding.fetch_add(1, std::memory_order_acq_rel);
-                    wakeCv.notify_one();
-                    return;
+                    
+                    //wakeCv.notify_one();
+                    return true;
                 }
 
                 case PushStatus::WouldBlock:
                 {
                     if (std::chrono::steady_clock::now() - start >= timeout) {
-                        fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
-                        return;
+                        fallbackWaitQueue(idx,std::move(res.notPushed));
+                        return false;
                     }
 
                     task = std::move(res.notPushed);
@@ -399,8 +452,8 @@ private:
                         //std::this_thread::sleep_for(std::chrono::microseconds(50));
                     }
                     else {
-                        fallbackExecuteOrEnqueue(idx,std::move(res.notPushed));
-                        return;
+                        fallbackWaitQueue(idx,std::move(res.notPushed));
+                        return false;
                     }
 
                     break;
@@ -421,17 +474,25 @@ private:
         }
     }*/
 
+    void pushLocalQueue(size_t queueIndex){
+        TaskPtr task;
+        while (waitQueues[queueIndex]->try_pop(task)
+            && pushBottom(std::move(task), queueIndex))
+        {
+        }
+    }
+
     void run_pending_job(size_t queueIndex){
-        const size_t n = jobQueues.size();
 
         //自キューからPOP
         {
-            auto popRes = jobQueues[queueIndex]->popBottom();
+            auto popRes = localQueues[queueIndex]->popBottom();
 
             if (popRes.status == PopStatus::Success){
                 runJob(queueIndex,std::move(popRes.value));
                 return;
             }else if(popRes.status == PopStatus::WouldBlock){
+                std::this_thread::yield();
                 return;
             }
         }
@@ -447,7 +508,7 @@ private:
             }
         }
 
-        if (!globalQueue.empty()) {
+        /*if (!globalQueue.empty()) {
             
             std::optional<TaskPtr> fallback;
             {
@@ -463,7 +524,7 @@ private:
                 runJob(queueIndex, std::move(*fallback));
                 return;
             }
-        }
+        }*/
 
         //どちらも取れなければ一旦 yield
         std::this_thread::yield();
@@ -471,12 +532,12 @@ private:
 
     //stealTopを使って他ワーカーから奪う
     StealResult stealFromOthers(size_t stealOwner) {
-        size_t n = jobQueues.size();
+        size_t n = localQueues.size();
 
         StealResult result;
         for (size_t i = 1; i < n; ++i) {
             size_t idx = (stealOwner + i) % n;
-            result  = jobQueues[idx]->stealTop(stealOwner);
+            result  = localQueues[idx]->stealTop(stealOwner);
 
             if (result.status == StealStatus::Success) {
                 return result;
@@ -486,30 +547,16 @@ private:
         return { StealStatus::Empty, std::nullopt };
     }
 
-    void fallbackExecuteOrEnqueue(size_t queueIndex,TaskPtr job) {
-        const size_t MaxFallbackTrials = jobQueues.size();
+    void fallbackWaitQueue(size_t queueIndex,TaskPtr job) {
 
-        //他ワーカーのローカルキューを数回トライ
-        for (size_t trial = 1; trial < MaxFallbackTrials; ++trial) {
-            size_t idx = (queueIndex + trial) % MaxFallbackTrials;
-            auto res = jobQueues[idx]->pushBottom(job);
-            if (res.status == PushStatus::Success) {
-                outstanding.fetch_add(1, std::memory_order_acq_rel);
-                wakeCv.notify_one();
-                return;
-            }
-            if (res.status != PushStatus::Success) {
-                job = std::move(res.notPushed);
-                continue;
-            }
-        }
+        waitQueues[queueIndex]->push(std::move(job));
 
-        //グローバルキューへフォールバック
-        {
-            std::lock_guard lk(globalQueueMtx);
-            outstanding.fetch_add(1, std::memory_order_acq_rel);
-            globalQueue.push_back(std::optional(std::move(job)));
-        }
+        ////グローバルキューへフォールバック
+        //{
+        //    std::lock_guard lk(globalQueueMtx);
+        //    outstanding.fetch_add(1, std::memory_order_acq_rel);
+        //    globalQueue.push_back(std::optional(std::move(job)));
+        //}
     }
 
     void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask){
@@ -525,7 +572,8 @@ private:
         //繋がっているchildの依存カウントを減らしていく
         for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
             if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                pushBottom(child);
+                //pushBottom(child);
+                pushWaitQueue(child);
             }
         }
 
@@ -552,8 +600,15 @@ private:
     }
 
     void run_while_validQueue(size_t queueIndex) {
+
+        TaskPtr task;
+        while (waitQueues[queueIndex]->try_pop(task))
+        {
+            runJob(queueIndex,std::move(task));
+        }
+
          while(true){
-             auto popRes = jobQueues[queueIndex]->popBottom();
+             auto popRes = localQueues[queueIndex]->popBottom();
 
              if (popRes.status == PopStatus::Success) {
                  runJob(queueIndex, std::move(popRes.value));
@@ -567,7 +622,7 @@ private:
     }
 
     bool allQueuesEmpty() const {
-        for (auto& dq : jobQueues)
+        for (auto& dq : localQueues)
             if (!dq->empty()) return false;
         return true;
     }
@@ -599,8 +654,10 @@ private:
     };
 
 private:
+    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>> waitQueues;
+
     std::vector<std::thread> workers;
-    std::vector<std::unique_ptr<JobQueue>> jobQueues;
+    std::vector<std::unique_ptr<JobQueue>> localQueues;
 
     std::vector<std::optional<TaskPtr>> globalQueue;
     std::mutex globalQueueMtx;
