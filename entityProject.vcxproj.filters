@@ -110,7 +110,7 @@
     <ClInclude Include="StorageMixin.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="JobSystem.h">
+    <ClInclude Include="JobManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="JobRecorder.h">

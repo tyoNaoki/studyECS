@@ -17,7 +17,7 @@
 #include <random>
 #include "EventQueue.hpp"
 #include "Signal.hpp"
-#include "JobSystem.h"
+#include "JobManager.h"
 
 using namespace ECS::test;
 
@@ -75,11 +75,13 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_jobSystem",50);
-	RUN_TEST("test_particalJobSystem", 50);
+	//RUN_TEST("test_jobSystem",450);
+	//RUN_TEST("test_particalJobSystem", 450);
+
+	RUN_TEST("test_bigJobSystem",1);
+	//RUN_PRIORITY_TESTS(false);
 
 	return 0;
-	//RUN_PRIORITY_TESTS(false);
 }
 
 int generateRandomInt(int minNum, int maxNum) {
@@ -104,8 +106,9 @@ void func(){
 }
 
 TEST_CASE_PRIORITY(test_jobSystem) {
-	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobManager js{4,&recorder};
+	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
+	auto& jm = ECS::JobSystem::JobManager::Instance();
+	jm.Initialize(4,std::move(recorder));
 
 	auto globalStart = ECS::JobSystem::now();
 
@@ -115,7 +118,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		// ジョブ名を 'A'～ に割り当て
 		char name = static_cast<char>('A' + (i % 26));
 
-		auto handle = js.schedule(
+		auto handle = jm.schedule(
 			name,
 			[name]() {
 				func();
@@ -127,10 +130,10 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	}
 
 	// 4) すべてのジョブ完了を待機
-	js.waitForAll();
+	jm.waitForAll();
 
-	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
-	assertTrue(!js.isAbort(),"JobSystem Work Test");
+	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
+	assertTrue(!jm.isAbort(),"JobSystem Work Test");
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	/*auto globalEnd = ECS::JobSystem::now();
@@ -139,13 +142,14 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		<< globalDuration << " ms\n";*/
 
 	// 6) ログを取り出してスレッド別タイムラインを出力
-	auto& dataMap = recorder.getDataMap();
+	auto& dataMap = jm.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
 TEST_CASE_PRIORITY(test_particalJobSystem){
-	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobManager js{4,&recorder };
+	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
+	auto& js = ECS::JobSystem::JobManager::Instance();
+	js.Initialize(4, std::move(recorder));
 
 	auto globalStart = ECS::JobSystem::now();
 
@@ -193,22 +197,26 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	// 4) すべてのジョブ完了を待機
 	js.waitForAll();
-	assertTrue(!js.isAbort(), "JobSystem Partical Work Test");
 
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+
+	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
+	assertTrue(!js.isAbort(), "JobSystem Work Test");
+
 	/*
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";*/
 
-	auto& dataMap = recorder.getDataMap();
+	auto& dataMap = js.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 
 }
 
 TEST_CASE_ORDER(test_bigJobSystem) {
-	ECS::JobSystem::TimelineRecorder recorder;
-	ECS::JobSystem::JobManager js{ 8,&recorder };
+	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
+	auto& js = ECS::JobSystem::JobManager::Instance();
+	js.Initialize(8, std::move(recorder));
 
 	std::vector<uint32_t> resultData(10'000'000);
 	//std::vector<uint32_t> resultData(10);
@@ -238,8 +246,11 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
 
+	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
+	assertTrue(!js.isAbort(), "JobSystem Work Test");
+
 	// 6) ログを取り出してスレッド別タイムラインを出力
-	auto& dataMap = recorder.getDataMap();
+	auto& dataMap = js.getRecorder()->getDataMap();
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 

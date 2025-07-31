@@ -61,14 +61,23 @@ inline void printTimelines(
     }
 }
 
-struct TimelineRecorder {
+struct IRecorder {
     using queueIndex = size_t;
     using logs = std::vector<std::string>;
-	std::mutex   mtx;
-    std::unordered_map<std::thread::id, std::vector<JobData>> jobData;
     using RecordHandle = size_t;
+    using RecordMap = std::unordered_map<std::thread::id, std::vector<JobData>>;
 
-    RecordHandle recordStart(char name){
+    virtual RecordHandle recordStart(char name) = 0;
+    virtual void recordEnd(RecordHandle handle) = 0;
+    virtual void reset() = 0;
+    virtual const RecordMap& getDataMap() const= 0;
+};
+
+struct TimelineRecorder : public IRecorder{
+	std::mutex   mtx;
+    RecordMap jobData;
+
+    RecordHandle recordStart(char name) override{
         auto thisId = std::this_thread::get_id();
         auto t = now();
         
@@ -82,7 +91,7 @@ struct TimelineRecorder {
     }
 
     //最後に追加された要素を更新
-	void recordEnd(RecordHandle handle){
+	void recordEnd(RecordHandle handle)override {
         auto thisId = std::this_thread::get_id();
         auto t = now();
 
@@ -99,37 +108,31 @@ struct TimelineRecorder {
         }
     }
 
-    void reset(){
+    void reset() override{
         std::lock_guard<std::mutex> lk(mtx);
         jobData.clear();
     }
 
-    const auto& getDataMap() const { return jobData; }
+    const RecordMap& getDataMap() const override { return jobData; }
 };
 
-struct NullRecorder {
-	void recordStart(char) noexcept {}
-	void recordEnd(char) noexcept {}
-};
-
-template<typename Recorder>
 struct JobScope {
-    Recorder* recorder;           // 記録先
+    std::unique_ptr<IRecorder> recorder;           // 記録先
     char      name;               // ジョブ識別用
     std::thread::id threadId;     // どのスレッドか
     time_point startTime;         // 開始時刻
 
-    JobScope(Recorder* rec, char n)
-        : recorder(rec), name(n),
+    JobScope(std::unique_ptr<IRecorder>&& rec, char n)
+        : recorder(std::move(rec)), name(n),
         threadId(std::this_thread::get_id()),
         startTime(now())
     {
-        recorder->recordStart(threadId, name, startTime);
+        recorder->recordStart(name);
     }
 
     ~JobScope() {
         auto endTime = now();
-        recorder->recordEnd(threadId, name, endTime);
+        recorder->recordEnd(name);
     }
 
     // コピー／ムーブ禁止

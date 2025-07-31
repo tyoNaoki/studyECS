@@ -387,6 +387,37 @@ public:
     }
 };
 
+//template<typename Derived, size_t BufferSize>
+//struct ParallelJobCRTP {
+//    // 小型バッファ（SBO 用）
+//    alignas(std::max_align_t) char buf[BufferSize];
+//
+//    size_t begin{}, len{};
+//
+//    ParallelJobCRTP() = default;
+//
+//    // Fn はトリビアルコピー・破棄可能と仮定
+//    template<typename F>
+//    ParallelJobCRTP(F&& f, size_t b, size_t l) noexcept {
+//        using Fn = std::decay_t<F>;
+//        static_assert(sizeof(Fn) <= BufferSize, "バッファサイズ不足");
+//        static_assert(std::is_trivially_copyable_v<Fn> &&
+//            std::is_trivially_destructible_v<Fn>,
+//            "Fn はトリビアルである必要があります");
+//
+//        new (buf) Fn(std::forward<F>(f));
+//        // Buf 内の F を Derived と見なして扱います
+//        // （Derived::execute() の中で F のオブジェクトを取り出して呼び出す設計）
+//        begin = b; len = l;
+//    }
+//
+//    // invoke では常に static dispatch
+//    void invoke() noexcept {
+//        // Derived 側で buf の中身（=F）を execute() 内部で呼び出す
+//        static_cast<Derived*>(this)->execute(begin, len);
+//    }
+//};
+
 template<size_t BufferSize = 32>
 struct ParallelJob {
    
@@ -456,8 +487,13 @@ struct ParallelJob {
     }
 
     template<typename F>
-    static auto create(F&&func,size_t total,size_t batchSize)
+    static auto create(F&& func,
+        size_t total,
+        size_t batchSize)
     {
+        static_assert(std::is_invocable_v<F, size_t>,
+            "create()のfuncはsize_tを受け取れるcallableでなければなりません");
+
         size_t numBatches = (total + batchSize - 1) / batchSize;
         std::vector<ParallelJob> jobs;
         jobs.reserve(numBatches);
