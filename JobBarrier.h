@@ -7,10 +7,17 @@ namespace ECS::JobSystem{
 
 class JobBarrier {
 public:
+    JobBarrier() = default;
+
     // total: バリアを抜けるために全員揃うスレッド数
-    explicit JobBarrier(std::size_t total)
+    JobBarrier(std::size_t total)
         : m_total(total), m_count(0), m_generation(0)
     {}
+
+    JobBarrier(const JobBarrier&) = delete;
+    JobBarrier& operator=(const JobBarrier&) = delete;
+    JobBarrier(JobBarrier&&) = delete;
+    JobBarrier& operator=(JobBarrier&&) = delete;
 
     // すべてのスレッドがこの wait() を呼ぶまでブロックし、
     // 最後の一人が呼んだ瞬間に全員を同時リリースする

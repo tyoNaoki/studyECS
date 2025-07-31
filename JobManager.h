@@ -56,22 +56,26 @@ private:
     std::condition_variable cv;
 };
 
-template<typename Recorder = NullRecorder>
 class JobManager
 {
     using JobQueue = Debug::DebugJobQueue<JobDeque>;
 
 public:
+    static JobManager& Instance() {
+        static JobManager manager;
+        return manager;
+    }
 
-    explicit JobManager(size_t threadCount,
-        Recorder* rec = nullptr,
+    void Initialize(size_t threadCount,
+        std::unique_ptr<TimelineRecorder> rec = nullptr,
         size_t capacity = 1024)
-        : recorder(rec),
-        stopFlag(false),
-        nextQueue(0),
-        jobBarrier(threadCount + 1)
     {
         ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
+        initFlag = true;
+
+        recorder = std::move(rec);
+        stopFlag = false;
+        nextQueue = 0;
 
         waitQueues.reserve(threadCount);
         for (size_t i = 0; i < threadCount; ++i) {
@@ -89,16 +93,14 @@ public:
         for (size_t i = 0; i < threadCount; ++i) {
             workers.emplace_back([this, i]() noexcept {
 
-                jobBarrier.wait();
-
                 this->workerThreadFunction(i);
                 });
         }
-
-        jobBarrier.wait();
     }
 
     ~JobManager(){
+        if(!initFlag)return;
+
         stopFlag.store(true, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> lk(wakeMutex);
@@ -193,7 +195,6 @@ public:
 
         for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
 
-
             TaskPtr t{ new Task(
                 Job([jobsPtr,i]() mutable {
                         (*jobsPtr)[i].invoke();
@@ -214,16 +215,15 @@ public:
                std::move(jobs)
                );
 
-       auto rec = recorder;
-
        for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
 
+            auto rawRec = recorder.get();
             //auto job = jobsPtr[i];
             TaskPtr t{ new Task(
-                Job([jobsPtr,i,name,rec]() mutable {
-                        int h = rec ? rec->recordStart(name) : 0;
+                Job([jobsPtr,i,name,rawRec]() mutable {
+                        int h = rawRec ? rawRec->recordStart(name) : 0;
                         (*jobsPtr)[i].invoke();
-                        if (rec) rec->recordEnd(h);
+                        if (rawRec) rawRec->recordEnd(h);
                 }
                 ),
                 0
@@ -403,6 +403,14 @@ public:
         return true;
     }
 
+    IRecorder* getRecorder(){
+        if(recorder){
+            return recorder.get();
+        }
+
+        return nullptr;
+    }
+
 private:
 
     void pushWaitQueue(TaskPtr task){
@@ -426,7 +434,6 @@ private:
             switch (res.status) {
                 case PushStatus::Success:
                 {
-                    
                     //wakeCv.notify_one();
                     return true;
                 }
@@ -634,15 +641,8 @@ private:
         child->inDegree.fetch_add(1);
     }
 
-    bool canInvorkJob(const std::vector<TaskPtr>& deps){
-        for (auto& d : deps) {
-            if (d->job) {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    JobManager(const JobManager&) = delete;
+    JobManager& operator=(const JobManager&) = delete;
 
 private:
     void abort(){
@@ -654,6 +654,13 @@ private:
     };
 
 private:
+    JobManager() = default;
+
+    JobManager(JobManager&&) = delete;
+    JobManager& operator=(JobManager&&) = delete;
+
+    bool initFlag;
+
     std::vector<std::unique_ptr<WaitQueue<TaskPtr>>> waitQueues;
 
     std::vector<std::thread> workers;
@@ -675,10 +682,7 @@ private:
     std::mutex        finishMutex;
     std::condition_variable finishCv;
 
-    Recorder* recorder;
-    inline static NullRecorder nullrecorder;
-
-    JobBarrier jobBarrier;
+    std::unique_ptr<TimelineRecorder> recorder;
 
     std::atomic<bool> abortFlag{ false };
 };

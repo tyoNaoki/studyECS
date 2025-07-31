@@ -167,7 +167,7 @@
     <ClInclude Include="JobDebugger.h" />
     <ClInclude Include="JobDeque.hpp" />
     <ClInclude Include="JobRecorder.h" />
-    <ClInclude Include="JobSystem.h" />
+    <ClInclude Include="JobManager.h" />
     <ClInclude Include="Signal.hpp" />
     <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
