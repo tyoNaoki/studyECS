@@ -18,6 +18,7 @@
 #include "EventQueue.hpp"
 #include "Signal.hpp"
 #include "JobManager.h"
+#include "taskPtr.hpp"
 
 using namespace ECS::test;
 
@@ -213,29 +214,49 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 }
 
+
+struct TestParallelJob
+	: public ECS::JobSystem::IParallelJob<TestParallelJob>
+{
+public:
+	//using Context = int;
+	std::vector<int> resultData;
+
+	// 空の Context を定義
+	/*struct Context {
+		
+	};*/
+
+	void Execute(size_t index) {
+		ASSERT(resultData.size() > index, "globalIndex out of bounds");
+		resultData[index] = index * index;
+	}
+
+	// 実際の処理ロジック
+	//void execute(size_t index) {
+	//	//ASSERT(context().resultData.size() > index, "globalIndex out of bounds");
+	//	//context().resultData[index] = index * index;
+	//}
+};
+
 TEST_CASE_ORDER(test_bigJobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& js = ECS::JobSystem::JobManager::Instance();
 	js.Initialize(8, std::move(recorder));
 
-	std::vector<uint32_t> resultData(10'000'000);
-	//std::vector<uint32_t> resultData(10);
-
-	uint32_t batchSize = 1000;
-
-	auto fn = [&resultData](uint32_t jobIndex) {
-
-		ASSERT(resultData.size() > jobIndex, "globalIndex out of bounds");
-		resultData[jobIndex] = jobIndex * jobIndex;
-	};
+	size_t resultSize = 10'000'000;
+	//size_t batchSize = 1000;
+	size_t batchSize = 100;
 
 	char name = 'A';
 
-	auto jobs = ECS::JobSystem::ParallelJob<32>::create(fn,resultData.size(),batchSize);
+	TestParallelJob parallelJob;
+
+	parallelJob.resultData.resize(resultSize,-1);
 
 	auto globalStart = ECS::JobSystem::now();
 
-	js.schedule_parallelJob(name,std::move(jobs.first));
+	parallelJob.schedule(resultSize,batchSize,8);
 
 	// 4) すべてのジョブ完了を待機
 	js.waitForAll();
