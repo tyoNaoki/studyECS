@@ -1,4 +1,5 @@
 #pragma once
+#include <iostream>
 #include <chrono>
 #include <mutex>
 #include <vector>
@@ -9,11 +10,11 @@ namespace ECS::JobSystem{
 
 using time_point = std::chrono::high_resolution_clock::time_point;
 
-time_point now() {
+inline time_point now() {
 	return std::chrono::high_resolution_clock::now();
 }
 
-int duration(time_point start, time_point end) {
+inline int duration(time_point start, time_point end) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(end - start)
         .count();
 }

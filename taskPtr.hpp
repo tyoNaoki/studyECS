@@ -2,8 +2,11 @@
 
 #include <utility>   // std::swap, std::exchange
 #include <cstddef>   // std::nullptr_t
+#include "JobManager.h"
+#include "TestFramework.hpp"
 
 namespace ECS::JobSystem{
+
 namespace Ptr{
 
 template<typename T>
@@ -381,7 +384,7 @@ public:
     // 結果なしの通知だけ
     void set_value() const {
         std::lock_guard lk(inner->mtx);
-        if(counter->fetch_sub(1) == 1){
+        if(counter->fetch_sub(1, std::memory_order_acq_rel) == 1){
             inner->ready = true;
         }
     }
@@ -418,108 +421,245 @@ public:
 //    }
 //};
 
-template<size_t BufferSize = 32>
-struct ParallelJob {
-   
-    alignas(void*) char buf[BufferSize];
 
-    void (*invoke_fn)(void*, size_t, size_t) = nullptr;
-    void (*destroy_fn)(void*) = nullptr;
+//template<size_t BufferSize = 32>
+//struct ParallelJob {
+//    using Func = std::function<void(size_t)>;
+//    alignas(void*) char buf[BufferSize];
+//
+//    void (*invoke_fn)(void*, size_t) = nullptr;
+//
+//    size_t total;
+//    size_t batchSize;
+//    size_t numBatches;
+//
+//    std::atomic<size_t>  nextBatch{ 0 };
+//
+//    ParallelJob() = default;
+//    ~ParallelJob() {
+//        if (destroy_fn) destroy_fn(buf);
+//    }
+//
+//    ParallelJob(ParallelJob&& o)noexcept{
+//        std::memcpy(buf,o.buf,BufferSize);
+//        invoke_fn = o.invoke_fn;
+//        begin = o.begin;
+//        len = o.len;
+//
+//        o.invoke_fn = nullptr;
+//    }
+//
+//    ParallelJob& operator=(ParallelJob&& o) noexcept{
+//        if(this!= &o){
+//            if(destroy_fn)destroy_fn(buf);
+//            std::memcpy(buf, o.buf, BufferSize);
+//            invoke_fn = o.invoke_fn;
+//            destroy_fn = o.destroy_fn;
+//            begin = o.begin;
+//            len = o.len;
+//
+//            o.invoke_fn = nullptr;
+//        }
+//        return *this;
+//    }
+//
+//    template<typename F>
+//    ParallelJob(F&& f,size_t b,size_t l)noexcept{
+//        using Fn = std::decay_t<F>;
+//        static_assert(sizeof(Fn) <= BufferSize,"ParallelJob function too large");
+//
+//        new (buf) Fn(std::forward<F>(f));
+//
+//        invoke_fn = [](void* p, size_t bb, size_t ll) {
+//            auto fp = static_cast<Fn*>(p);
+//            (*fp)(bb, ll);
+//        };
+//
+//        destroy_fn = [](void* p) {
+//            static_cast<Fn*>(p)->~Fn();
+//        };
+//
+//        begin = b; len = l;
+//    }
+//
+//    void invoke() noexcept {
+//        if (invoke_fn) {
+//            ASSERT(invoke_fn,"invoke is nullptr");
+//            invoke_fn(buf, begin, len);
+//            invoke_fn = nullptr;  // 1 回だけ
+//        }
+//    }
+//
+//    template<typename F>
+//    static ParallelJob create(F&& func,
+//        size_t total,
+//        size_t batchSize)
+//    {
+//        static_assert(std::is_invocable_v<F, size_t>,
+//            "create()のfuncはsize_tを受け取れるcallableでなければなりません");
+//
+//        static_assert(sizeof(Func) <= BufferSize,
+//            "BufferSize が足りません");
+//        
+//        ParallelJob job;
+//        // バッファ上に Func を構築
+//        new (job.buf) Func(std::move(func));
+//        // invoke_fn をセット
+//        job.invoke_fn = [](void* p, size_t idx) {
+//            auto& userFunc = *reinterpret_cast<Func*>(p);
+//            userFunc(idx);
+//        };
+//
+//        new (buf) F(std::move(func));
+//        job.invoke_fn = [](void* p,size_t idx) {
+//            auto fp = static_cast<F*>(p,idx);
+//            (*fp)(idx);
+//        };
+//
+//        job.destroy_fn = [](void* p,size_t idx) {
+//            static_cast<F*>(p,idx)->~F();
+//        };
+//
+//        job.total = total;
+//        job.batchSize = batchSize;
+//        job.numBatches = (total + batchSize - 1) / batchSize;
+//
+//        return job;
+//
+//        for (size_t b = 0; b < numBatches; ++b) {
+//            size_t begin = b * batchSize;
+//            size_t len = min(batchSize, total - begin);
+//
+//            jobs.emplace_back(
+//                // 範囲ループするだけのラムダ
+//                [f = std::forward<F>(func),setterPtr](size_t bb, size_t ll) {
+//
+//                    for (size_t i = bb; i < bb + ll; ++i) {
+//                        f(i);
+//                    }
+//
+//                    setterPtr->set_value();
+//                },
+//                begin, len
+//                    );
+//        }
+//
+//        return job;
+//    }
+//
+//    ParallelJobFuture schedule(size_t total,size_t batchSize,size_t workerCount) {
+//        static_assert(total > 0 && batchSize > 0);
+//
+//        auto [settable, future] = SettableParallelJobFuture::create(batchSize);
+//        auto setterPtr = std::make_shared<SettableParallelJobFuture>(std::move(settable));
+//
+//        for (size_t i = 0; i < workerCount; ++i) {
+//            
+//            TaskPtr t{new Task(
+//                Job([this, setterPtr]() mutable {
+//                while (true) {
+//                    size_t idx = nextBatch.fetch_add(1, std::memory_order_relaxed);
+//                    if (idx >= numBatches) break;
+//
+//                    size_t begin = idx * batchSize;
+//                    size_t len = std::min(batchSize, total - begin);
+//                    func(begin, len);
+//
+//                    setterPtr.set_value();
+//                }
+//            })};
+//
+//            JobManager::Instance().pushWaitQueue(t);
+//        }
+//
+//        for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
+//
+//            TaskPtr t{ new Task(
+//                Job([jobsPtr,i]() mutable {
+//                        (*jobsPtr)[i].invoke();
+//                }
+//                ),
+//                0
+//            ) };
+//
+//            
+//        }
+//
+//        return future;
+//    }
+//};
 
-    size_t begin = 0, len = 0;
+class JobManager;
 
-    ParallelJob() = default;
-    ~ParallelJob() {
-        if (destroy_fn) destroy_fn(buf);
-    }
+template<typename Derived>
+struct IParallelJob{
+    struct Context {
+        Derived* self;
+        size_t   total, batchSize, numBatches;
+        std::atomic<size_t>* nextBatch;
+        std::shared_ptr<SettableParallelJobFuture>setterPtr;
 
-    ParallelJob(ParallelJob&& o)noexcept{
-        std::memcpy(buf,o.buf,BufferSize);
-        invoke_fn = o.invoke_fn;
-        destroy_fn = o.destroy_fn;
-        begin = o.begin;
-        len = o.len;
+        Context(Derived*s,size_t t,size_t b,size_t n, std::atomic<size_t>* next, std::shared_ptr<SettableParallelJobFuture> set):self(s),total(t),batchSize(b),numBatches(n),nextBatch(next),setterPtr(set){}
 
-        o.invoke_fn = nullptr;
-        o.invoke_fn = nullptr;
-    }
+    };
 
-    ParallelJob& operator=(ParallelJob&& o) noexcept{
-        if(this!= &o){
-            if(destroy_fn)destroy_fn(buf);
-            std::memcpy(buf, o.buf, BufferSize);
-            invoke_fn = o.invoke_fn;
-            destroy_fn = o.destroy_fn;
-            begin = o.begin;
-            len = o.len;
+    explicit IParallelJob(){}
 
-            o.invoke_fn = nullptr;
-            o.destroy_fn = nullptr;
-        }
-        return *this;
-    }
+    ParallelJobFuture schedule(size_t total,size_t batchSize,size_t workerCount){
+        ASSERT(total > 0 && batchSize > 0,"parallelJob schedule total or batchSize is zero");
 
-    template<typename F>
-    ParallelJob(F&& f,size_t b,size_t l)noexcept{
-        using Fn = std::decay_t<F>;
-        static_assert(sizeof(Fn) <= BufferSize,"ParallelJob function too large");
-
-        new (buf) Fn(std::forward<F>(f));
-
-        invoke_fn = [](void* p, size_t bb, size_t ll) {
-            auto fp = static_cast<Fn*>(p);
-            (*fp)(bb, ll);
-        };
-
-        destroy_fn = [](void* p) {
-            static_cast<Fn*>(p)->~Fn();
-        };
-
-        begin = b; len = l;
-    }
-
-    void invoke() noexcept {
-        if (invoke_fn) {
-            ASSERT(invoke_fn,"invoke is nullptr");
-            invoke_fn(buf, begin, len);
-            invoke_fn = nullptr;  // 1 回だけ
-        }
-    }
-
-    template<typename F>
-    static auto create(F&& func,
-        size_t total,
-        size_t batchSize)
-    {
-        static_assert(std::is_invocable_v<F, size_t>,
-            "create()のfuncはsize_tを受け取れるcallableでなければなりません");
-
-        size_t numBatches = (total + batchSize - 1) / batchSize;
-        std::vector<ParallelJob> jobs;
-        jobs.reserve(numBatches);
-        
         auto [settable, future] = SettableParallelJobFuture::create(batchSize);
         auto setterPtr = std::make_shared<SettableParallelJobFuture>(std::move(settable));
 
-        for (size_t b = 0; b < numBatches; ++b) {
-            size_t begin = b * batchSize;
-            size_t len = min(batchSize, total - begin);
+        std::shared_ptr<Context> ctx = std::make_shared<Context>(
+            static_cast<Derived*>(this),
+            total,
+            batchSize,
+            (total + batchSize - 1) / batchSize,
+            &nextBatch_,
+            setterPtr
+        );
 
-            jobs.emplace_back(
-                // 範囲ループするだけのラムダ
-                [f = std::forward<F>(func),setterPtr](size_t bb, size_t ll) {
+        //size_t numBatches = (total + batchSize - 1) / batchSize;
 
-                    for (size_t i = bb; i < bb + ll; ++i) {
-                        f(i);
-                    }
+        nextBatch_.store(0, std::memory_order_relaxed);
 
-                    setterPtr->set_value();
-                },
-                begin, len
-                    );
+        // ワーカー数分だけ Task を作成して登録
+        for (size_t w = 0; w < workerCount; ++w) {
+            auto work = [ctx]() { workerEntry(ctx); };
+
+            auto task = new Task(Job(std::move(work)), 0);
+            Ptr::intrusive_ptr taskPtr{std::move(task)};
+
+            JobManager::Instance().pushWaitQueue(std::move(taskPtr));
         }
 
-        return std::make_pair(std::move(jobs),std::move(future));
+        return future;
+    }
+
+    void Execute(size_t index) {
+        // Derived の Execute() を呼び出し
+        static_cast<Derived*>(this)->Execute(index);
+    }
+    
+private:
+    std::atomic<size_t>     nextBatch_{ 0 };
+
+    static void workerEntry(std::shared_ptr<Context> ctx) {
+        while (true) {
+            auto idx = ctx->nextBatch->fetch_add(1, std::memory_order_relaxed);
+            if (idx >= ctx->numBatches){
+                break;
+            }
+            size_t start = idx * ctx->batchSize;
+            size_t len = min(ctx->batchSize, ctx->total - start);
+            for (size_t i = start; i < start + len; ++i)
+                ctx->self->Execute(i);
+
+            ctx->setterPtr->set_value();
+        }
+
+       
     }
 };
 

@@ -11,10 +11,8 @@
 #include "JobRecorder.h"
 #include "JobDeque.hpp"
 #include <utility>
-#include "taskPtr.hpp"
 #include "JobBarrier.h"
 #include "JobDebugger.h"
-#include <concurrent_queue.h>
 
 namespace ECS::JobSystem{
    
@@ -68,51 +66,9 @@ public:
 
     void Initialize(size_t threadCount,
         std::unique_ptr<TimelineRecorder> rec = nullptr,
-        size_t capacity = 1024)
-    {
-        ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
-        initFlag = true;
+        size_t capacity = 1024);
 
-        recorder = std::move(rec);
-        stopFlag = false;
-        nextQueue = 0;
-
-        waitQueues.reserve(threadCount);
-        for (size_t i = 0; i < threadCount; ++i) {
-            waitQueues.push_back(std::make_unique<WaitQueue<TaskPtr>>());
-        }
-
-        localQueues.reserve(threadCount);
-        for (size_t i = 0; i < threadCount; ++i) {
-            localQueues.emplace_back(
-                std::make_unique<JobQueue>(capacity,i)
-            );
-        }
-
-        // workers 初期化
-        for (size_t i = 0; i < threadCount; ++i) {
-            workers.emplace_back([this, i]() noexcept {
-
-                this->workerThreadFunction(i);
-                });
-        }
-    }
-
-    ~JobManager(){
-        if(!initFlag)return;
-
-        stopFlag.store(true, std::memory_order_relaxed);
-        {
-            std::lock_guard<std::mutex> lk(wakeMutex);
-            wakeCv.notify_all();           // ワーカー全員を起こす
-        }
-
-        for (auto& w : workers) {
-            if (w.joinable())
-                w.join();
-        }
-
-    }
+    ~JobManager();
 
     //通常Job追加
     template<typename F>
@@ -157,6 +113,7 @@ public:
         TaskPtr t{ new Task(
             Job([fn = std::forward<F>(func),
             setter = std::move(settable)]() mutable {
+
                 if constexpr (std::is_void_v<R>) {
                     fn();            
                     setter.set_value(); //実行完了フラグを建てる
@@ -185,52 +142,52 @@ public:
         );
     }
 
-    template<size_t BufSize>
-    void schedule_parallelJob(std::vector<ParallelJob<BufSize>>&& jobs) {
+    //template<size_t BufSize>
+    //void schedule_parallelJob(std::vector<ParallelJob<BufSize>>&& jobs) {
 
-        auto jobsPtr
-            = std::make_shared<std::vector<ParallelJob<BufSize>>>(
-                std::move(jobs)
-                );
+    //    auto jobsPtr
+    //        = std::make_shared<std::vector<ParallelJob<BufSize>>>(
+    //            std::move(jobs)
+    //            );
 
-        for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
+    //    for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
 
-            TaskPtr t{ new Task(
-                Job([jobsPtr,i]() mutable {
-                        (*jobsPtr)[i].invoke();
-                }
-                ),
-                0
-            ) };
+    //        TaskPtr t{ new Task(
+    //            Job([jobsPtr,i]() mutable {
+    //                    (*jobsPtr)[i].invoke();
+    //            }
+    //            ),
+    //            0
+    //        ) };
 
-            pushWaitQueue(t);
-        }
-    }
+    //        pushWaitQueue(t);
+    //    }
+    //}
 
-    template<size_t BufSize>
-    void schedule_parallelJob(char name,std::vector<ParallelJob<BufSize>>&&jobs) {
+    //template<size_t BufSize>
+    //void schedule_parallelJob(char name,std::vector<ParallelJob<BufSize>>&&jobs) {
 
-       auto jobsPtr
-           = std::make_shared<std::vector<ParallelJob<BufSize>>>(
-               std::move(jobs)
-               );
+    //   auto jobsPtr
+    //       = std::make_shared<std::vector<ParallelJob<BufSize>>>(
+    //           std::move(jobs)
+    //           );
 
-       for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
+    //   for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
 
-            auto rawRec = recorder.get();
-            //auto job = jobsPtr[i];
-            TaskPtr t{ new Task(
-                Job([jobsPtr,i,name,rawRec]() mutable {
-                        int h = rawRec ? rawRec->recordStart(name) : 0;
-                        (*jobsPtr)[i].invoke();
-                        if (rawRec) rawRec->recordEnd(h);
-                }
-                ),
-                0
-            )};
-            
-            pushWaitQueue(t);
-       }
+    //        auto rawRec = recorder.get();
+    //        //auto job = jobsPtr[i];
+    //        TaskPtr t{ new Task(
+    //            Job([jobsPtr,i,name,rawRec]() mutable {
+    //                    int h = rawRec ? rawRec->recordStart(name) : 0;
+    //                    (*jobsPtr)[i].invoke();
+    //                    if (rawRec) rawRec->recordEnd(h);
+    //            }
+    //            ),
+    //            0
+    //        )};
+    //        
+    //        pushWaitQueue(t);
+    //   }
         
         /*batches.emplace_back(
                 [&](size_t b, size_t l) {
@@ -273,7 +230,7 @@ public:
         }*/
 
         //return future;
-    }
+    //}
 
     //debug付きJob追加
     template<typename F>
@@ -284,7 +241,9 @@ public:
             fn = std::forward<F>(func)]() mutable
         {
             int h = recorder ? recorder->recordStart(name) : 0;
-            fn(); 
+
+            fn();
+
             if (recorder) recorder->recordEnd(h);
         };
 
@@ -308,7 +267,7 @@ public:
     }
 
     //通常、並列Job追加
-    template<typename F>
+    /*template<typename F>
     auto schedule(size_t total,size_t grain,char name,
         F&& func) {
 
@@ -322,7 +281,7 @@ public:
         };
 
         return schedule_parallelJob(total,grain,name,std::move(wrapped));
-    }
+    }*/
 
     //debug付き並列Job追加
    /* std::vector<JobHandle> schedule(uint32_t jobCount,char name,
@@ -342,66 +301,17 @@ public:
         return handles;
     }*/
 
-    void waitForAll() {
-        std::unique_lock<std::mutex> lk(finishMutex);
-        finishCv.wait(lk, [&] {
-            return abortFlag.load(std::memory_order_acquire)
-                || outstanding.load(std::memory_order_acquire) == 0;
-            });
-    }
+    void waitForAll();
 
-    void run_one_job(){
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % localQueues.size();
+    void run_one_job();
 
-        run_pending_job(idx);
-    };
-
-    void workerThreadFunction(size_t queueIndex) {
-
-        const size_t index = queueIndex;
-        // 終了フラグと outstanding の組み合わせでループ制御
-        while (true) {
-            //停止指示または未完了ジョブなしなら抜ける
-            if (abortFlag.load(std::memory_order_acquire)) {
-                break;
-            }
-
-            if (stopFlag.load(std::memory_order_acquire) &&
-                outstanding.load(std::memory_order_acquire) == 0)
-            {
-                break;
-            }
-
-            //ローカルキューにpushしていく。
-            pushLocalQueue(index);
-
-            //自キューから pop
-            run_pending_job(index);
-
-            if(localQueues[index]->isAbort()){
-                abort();
-                return;
-            }
-        }
-
-        if(abortFlag.load(std::memory_order_acquire) != false){
-            run_while_validQueue(index);
-        }
-    }
+    void workerThreadFunction(size_t queueIndex);
 
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
     }
 
-    bool checkRanAllJobInJobQueues() {
-        for (auto& queue : localQueues) {
-            if (queue->validCheck()) {
-                return false;
-            }
-        }
-
-        return true;
-    }
+    bool checkRanAllJobInJobQueues();
 
     IRecorder* getRecorder(){
         if(recorder){
@@ -411,64 +321,11 @@ public:
         return nullptr;
     }
 
+    void pushWaitQueue(TaskPtr task);
+
 private:
 
-    void pushWaitQueue(TaskPtr task){
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % waitQueues.size();
-
-        waitQueues[idx]->push(task);
-        outstanding.fetch_add(1, std::memory_order_acq_rel);
-        wakeCv.notify_one();
-    }
-
-    bool pushBottom(TaskPtr task,size_t idx) {
-        
-        auto start = std::chrono::steady_clock::now();
-        const auto  timeout = std::chrono::milliseconds(2);
-        
-        auto& queue = localQueues[idx];
-
-        while (true) {
-            PushResult res = queue->pushBottom(std::move(task));
-            
-            switch (res.status) {
-                case PushStatus::Success:
-                {
-                    //wakeCv.notify_one();
-                    return true;
-                }
-
-                case PushStatus::WouldBlock:
-                {
-                    if (std::chrono::steady_clock::now() - start >= timeout) {
-                        fallbackWaitQueue(idx,std::move(res.notPushed));
-                        return false;
-                    }
-
-                    task = std::move(res.notPushed);
-                    // 軽めのバックオフ
-                    std::this_thread::yield();
-                    break;
-                }
-                case PushStatus::Full:
-                {
-                    if (std::chrono::steady_clock::now() - start < timeout) {
-                        task = std::move(res.notPushed);
-                        //少し待って再挑戦
-                        std::this_thread::yield();
-                        //std::this_thread::sleep_for(std::chrono::microseconds(50));
-                    }
-                    else {
-                        fallbackWaitQueue(idx,std::move(res.notPushed));
-                        return false;
-                    }
-
-                    break;
-                }
-            }
-
-        }
-    }
+    bool pushBottom(TaskPtr task,size_t idx);
     
     /*void pushBottom(TaskPtr handle){
         size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
@@ -481,158 +338,23 @@ private:
         }
     }*/
 
-    void pushLocalQueue(size_t queueIndex){
-        TaskPtr task;
-        while (waitQueues[queueIndex]->try_pop(task)
-            && pushBottom(std::move(task), queueIndex))
-        {
-        }
-    }
+    void pushLocalQueue(size_t queueIndex);
 
-    void run_pending_job(size_t queueIndex){
-
-        //自キューからPOP
-        {
-            auto popRes = localQueues[queueIndex]->popBottom();
-
-            if (popRes.status == PopStatus::Success){
-                runJob(queueIndex,std::move(popRes.value));
-                return;
-            }else if(popRes.status == PopStatus::WouldBlock){
-                std::this_thread::yield();
-                return;
-            }
-        }
-        
-        //他スレッドからsteal
-        //Block時、steal再挑戦にする
-        {
-            auto stealRes = stealFromOthers(queueIndex);
-            
-            if(stealRes.status == StealStatus::Success){
-                runJob(queueIndex,std::move(stealRes.value));
-                return;
-            }
-        }
-
-        /*if (!globalQueue.empty()) {
-            
-            std::optional<TaskPtr> fallback;
-            {
-                std::lock_guard lk(globalQueueMtx);
-                
-                if (!globalQueue.empty()) {
-                    fallback = globalQueue.back();
-                    globalQueue.pop_back();
-                }
-            }
-
-            if (fallback) {
-                runJob(queueIndex, std::move(*fallback));
-                return;
-            }
-        }*/
-
-        //どちらも取れなければ一旦 yield
-        std::this_thread::yield();
-    }
+    void run_pending_job(size_t queueIndex);
 
     //stealTopを使って他ワーカーから奪う
-    StealResult stealFromOthers(size_t stealOwner) {
-        size_t n = localQueues.size();
-
-        StealResult result;
-        for (size_t i = 1; i < n; ++i) {
-            size_t idx = (stealOwner + i) % n;
-            result  = localQueues[idx]->stealTop(stealOwner);
-
-            if (result.status == StealStatus::Success) {
-                return result;
-            }
-        }
-
-        return { StealStatus::Empty, std::nullopt };
-    }
+    StealResult stealFromOthers(size_t stealOwner);
 
     void fallbackWaitQueue(size_t queueIndex,TaskPtr job) {
 
         waitQueues[queueIndex]->push(std::move(job));
-
-        ////グローバルキューへフォールバック
-        //{
-        //    std::lock_guard lk(globalQueueMtx);
-        //    outstanding.fetch_add(1, std::memory_order_acq_rel);
-        //    globalQueue.push_back(std::optional(std::move(job)));
-        //}
     }
 
-    void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask){
+    void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask);
 
-        ASSERT(optTask, "runJob optTask is nullopt!!");
+    void run_while_validQueue(size_t queueIndex);
 
-        TaskPtr task = std::move(*optTask);
-
-        ASSERT(task&&task->job.valid(), "task is invoked in JobQueue!!");
-
-        task->job.invoke();
-
-        //繋がっているchildの依存カウントを減らしていく
-        for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
-            if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                //pushBottom(child);
-                pushWaitQueue(child);
-            }
-        }
-
-        static std::mutex logMutex;
-
-        // runJob 内
-        auto prev = outstanding.fetch_sub(1, std::memory_order_acq_rel);
-        bool didAllFinish = (prev == 1);
-
-        if (didAllFinish) {
-            std::lock_guard<std::mutex> lk(finishMutex);
-            finishCv.notify_all();
-        }
-
-        {
-            std::lock_guard<std::mutex> lk2(logMutex);
-            if (didAllFinish) {
-                test::saveLog("[All FINISH] queue=%zu outstanding=%zu", queueIndex, outstanding.load());
-            }
-            else {
-                test::saveLog("[FINISH] queue=%zu outstanding=%zu", queueIndex, outstanding.load());
-            }
-        }
-    }
-
-    void run_while_validQueue(size_t queueIndex) {
-
-        TaskPtr task;
-        while (waitQueues[queueIndex]->try_pop(task))
-        {
-            runJob(queueIndex,std::move(task));
-        }
-
-         while(true){
-             auto popRes = localQueues[queueIndex]->popBottom();
-
-             if (popRes.status == PopStatus::Success) {
-                 runJob(queueIndex, std::move(popRes.value));
-                 continue;
-             }
-             
-             if (popRes.status == PopStatus::Empty) {
-                 break;
-             }
-         }
-    }
-
-    bool allQueuesEmpty() const {
-        for (auto& dq : localQueues)
-            if (!dq->empty()) return false;
-        return true;
-    }
+    bool allQueuesEmpty() const;
 
     void addDependent(Task* parent, Task* child) {
         // child を親の先頭に差し込む
@@ -645,13 +367,7 @@ private:
     JobManager& operator=(const JobManager&) = delete;
 
 private:
-    void abort(){
-        std::lock_guard lk(finishMutex);
-        if(!abortFlag.load()){
-            abortFlag.store(true, std::memory_order_release);
-            finishCv.notify_all();
-        }
-    };
+    void abort();
 
 private:
     JobManager() = default;

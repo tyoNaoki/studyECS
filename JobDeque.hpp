@@ -6,6 +6,8 @@
 #include <type_traits>
 #include <optional>
 #include "taskPtr.hpp"
+#include "JobManager.h"
+#include "TestFramework.hpp"
 
 namespace ECS::JobSystem {
 
