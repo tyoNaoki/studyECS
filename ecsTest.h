@@ -214,28 +214,22 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 }
 
+using MyConnector = ECS::JobSystem::JobConnector<std::vector<int>>;
 
 struct TestParallelJob
-	: public ECS::JobSystem::IParallelJob<TestParallelJob>
+	: public ECS::JobSystem::IParallelJob<TestParallelJob,MyConnector>
 {
-public:
-	//using Context = int;
-	std::vector<int> resultData;
-
-	// 空の Context を定義
-	/*struct Context {
-		
-	};*/
-
-	void Execute(size_t index) {
+	std::vector<int>resultData;
+	
+	inline void Execute(size_t index){
 		ASSERT(resultData.size() > index, "globalIndex out of bounds");
 		resultData[index] = index * index;
 	}
 
-	// 実際の処理ロジック
-	//void execute(size_t index) {
-	//	//ASSERT(context().resultData.size() > index, "globalIndex out of bounds");
-	//	//context().resultData[index] = index * index;
+	//void Execute(size_t index,MyConnector& c) {
+	//	//auto value = c.get<0>();
+	//	//ASSERT(value.size() > index, "globalIndex out of bounds");
+	//	//value[index] = index * index;
 	//}
 };
 
@@ -245,14 +239,20 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	js.Initialize(8, std::move(recorder));
 
 	size_t resultSize = 10'000'000;
-	//size_t batchSize = 1000;
-	size_t batchSize = 100;
+
+	size_t batchSize = 1000;
 
 	char name = 'A';
 
+	std::vector<int> resultData(resultSize);
+
+	MyConnector connector(
+		std::move(resultData)
+	);
+
 	TestParallelJob parallelJob;
 
-	parallelJob.resultData.resize(resultSize,-1);
+	parallelJob.resultData.resize(resultSize);
 
 	auto globalStart = ECS::JobSystem::now();
 
