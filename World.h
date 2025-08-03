@@ -73,43 +73,6 @@ public:
     auto entity7 = ECS::world().spawn<A, B>("Banana", B{});
     */
 
-    //tuple から Expected に変換可能な最初の要素を返し、
-    //見つからなければ Expected{} を返す再帰テンプレート
-    template <typename Expected, typename Tuple, std::size_t I = 0>
-    constexpr Expected extract_or_default(const Tuple& tup) {
-        if constexpr (I == std::tuple_size_v<Tuple>) {
-            // 最後まで探しても無ければデフォルト
-            return Expected{};
-        }
-        else if constexpr (
-            std::is_convertible_v<
-            std::tuple_element_t<I, Tuple>, Expected>) {
-            // I 番目の要素が変換可能ならそれを採用
-            return static_cast<Expected>(std::get<I>(tup));
-        }
-        else {
-            // 見つかるまで再帰的に次へ
-            return extract_or_default<Expected, Tuple, I + 1>(tup);
-        }
-    }
-
-     //各コンポーネント値が揃ったタプルを受け取って実際に登録
-    template <typename... Components, typename Tuple>
-    EntityID spawn_impl(const std::string& name, Tuple&& fullTuple) {
-        EntityID id = entityPool.alloc(name);
-        componentPoolManager.setEntityMask(id);
-
-        std::apply(
-            [&](auto&&... comps) {
-                (emplace<std::decay_t<decltype(comps)>>(
-                    id, std::forward<decltype(comps)>(comps)), ...);
-            },
-            std::forward<Tuple>(fullTuple));
-
-        entityPool.notify_construct(id);
-        return id;
-    }
-
     //期待コンポーネント …Components とユーザが渡した Provided…
     //足りない型は {} で補完
     template <typename... Components, typename... ProvidedArgs>
@@ -123,7 +86,7 @@ public:
        //名前省略オーバーロード
     template <typename... Components, typename... ProvidedArgs,
         std::enable_if_t<(sizeof...(ProvidedArgs) <= sizeof...(Components)), int> = 0>
-        EntityID spawn(ProvidedArgs&&... provided) {
+    EntityID spawn(ProvidedArgs&&... provided) {
         return spawn<Components...>("Object", std::forward<ProvidedArgs>(provided)...);
     }
 
@@ -255,6 +218,44 @@ public:
     ISparseSet* getComponentPoolPtr() {
         return componentPoolManager.getComponentPoolPtr<T>();
     };
+
+private:
+    //tuple から Expected に変換可能な最初の要素を返し、
+    //見つからなければ Expected{} を返す再帰テンプレート
+    template <typename Expected, typename Tuple, std::size_t I = 0>
+    constexpr Expected extract_or_default(const Tuple& tup) {
+        if constexpr (I == std::tuple_size_v<Tuple>) {
+            // 最後まで探しても無ければデフォルト
+            return Expected{};
+        }
+        else if constexpr (
+            std::is_convertible_v<
+            std::tuple_element_t<I, Tuple>, Expected>) {
+            // I 番目の要素が変換可能ならそれを採用
+            return static_cast<Expected>(std::get<I>(tup));
+        }
+        else {
+            // 見つかるまで再帰的に次へ
+            return extract_or_default<Expected, Tuple, I + 1>(tup);
+        }
+    }
+
+    //各コンポーネント値が揃ったタプルを受け取って実際に登録
+    template <typename... Components, typename Tuple>
+    EntityID spawn_impl(const std::string& name, Tuple&& fullTuple) {
+        EntityID id = entityPool.alloc(name);
+        componentPoolManager.setEntityMask(id);
+
+        std::apply(
+            [&](auto&&... comps) {
+                (emplace<std::decay_t<decltype(comps)>>(
+                    id, std::forward<decltype(comps)>(comps)), ...);
+            },
+            std::forward<Tuple>(fullTuple));
+
+        entityPool.notify_construct(id);
+        return id;
+    }
 
 private:
     //EntityIDをSparseSetで再利用できるようにしている.
