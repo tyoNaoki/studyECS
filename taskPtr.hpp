@@ -413,14 +413,9 @@ public:
         return counter->fetch_sub(1, std::memory_order_acq_rel);
     }
 
-    void set_value() const {
+    void set_value(T& v) const {
         std::lock_guard lk(inner->mtx);
-        inner->ready = true;
-    }
-
-    void set_value(T&& v) const {
-        std::lock_guard lk(inner->mtx);
-        inner->result = std::move(v);
+        inner->result = v;
         inner->ready = true;
     }
 };
@@ -702,40 +697,49 @@ private:
 
 class JobManager;
 
-template<typename Derived,typename Connector>
+template<typename Derived,typename ParallelJobData>
 struct IParallelJob{
 
-protected:
     IParallelJob() = default;
 
-    struct ParallelInfo {
+    IParallelJob(ParallelJobData&& d): jobResult(std::move(d)){
+        self = static_cast<Derived*>(this);
+    }
+
+    struct Context {
         Derived* self;
-        //Connector connect;
+        ParallelJobData* result;
         size_t   total, batchSize, numBatches;
         std::atomic<size_t>* nextBatch;
-        SettableParallelJobFuture<Connector> setter;
+        SettableParallelJobFuture<ParallelJobData> setter;
 
-        /*ParallelInfo(Derived* s, Connector c, size_t t, size_t b, size_t n, std::atomic<size_t>* next, SettableParallelJobFuture<Connector>&& set)
-            :self(s), connect(c), total(t), batchSize(b), numBatches(n), nextBatch(next), setter(std::move(set)) {}*/
-
-        ParallelInfo(Derived* s,size_t t, size_t b, size_t n, std::atomic<size_t>* next, SettableParallelJobFuture<Connector>&& set)
-            :self(s),total(t), batchSize(b), numBatches(n), nextBatch(next), setter(std::move(set)) {}
+        Context(Derived* s,
+            ParallelJobData* r,
+            size_t t,
+            size_t b,
+            size_t n,
+            std::atomic<size_t>* next,
+            SettableParallelJobFuture<ParallelJobData>&& set)
+            : self(s)
+            , result(r)
+            , total(t)
+            , batchSize(b)
+            , numBatches(n)
+            , nextBatch(next)
+            , setter(std::move(set))
+        {}
 
     };
 
-public:
-
-    inline ParallelJobFuture<Connector> schedule(size_t total,size_t batchSize,size_t workerCount){
+    inline ParallelJobFuture<ParallelJobData> schedule(size_t total,size_t batchSize,size_t workerCount){
         ASSERT(total > 0 && batchSize > 0,"parallelJob schedule total or batchSize is zero");
 
-        auto [settable, future] = SettableParallelJobFuture<Connector>::create(batchSize);
-        //auto setterPtr = new SettableParallelJobFuture>(std::move(settable));
-
-        auto self = static_cast<Derived*>(this);
+        auto [settable, future] = SettableParallelJobFuture<ParallelJobData>::create(batchSize);
 
         size_t numBatches = (total + batchSize - 1) / batchSize;
-        auto ctx = std::make_shared<ParallelInfo>(
+        auto ctx = std::make_shared<Context>(
             self,
+            &jobResult,
             total,
             batchSize,
             numBatches,
@@ -758,70 +762,40 @@ public:
         return future;
     }
 
-    inline ParallelJobFuture<Connector> schedule(Connector connect,size_t total, size_t batchSize, size_t workerCount) {
-        ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
-
-        auto [settable, future] = SettableParallelJobFuture<Connector>::create(batchSize);
-        //auto setterPtr = new SettableParallelJobFuture>(std::move(settable));
-
-        auto self = static_cast<Derived*>(this);
-        size_t numBatches = (total + batchSize - 1) / batchSize;
-        auto ctx = std::make_shared<ParallelInfo>(
-            self,
-            //connect,
-            total,
-            batchSize,
-            numBatches,
-            &nextBatch_,
-            std::move(settable)
-            );
-
-        nextBatch_.store(0, std::memory_order_relaxed);
-
-        // ÉèÅ[ÉJÅ[êîï™ÇæÇØ Task ÇçÏê¨ÇµÇƒìoò^
-        for (size_t w = 0; w < workerCount; ++w) {
-            auto work = [ctx]() { workerEntry(ctx); };
-
-            auto task = new Task(Job(std::move(work)), 0);
-            Ptr::intrusive_ptr taskPtr{ std::move(task) };
-
-            JobManager::Instance().pushWaitQueue(std::move(taskPtr));
-        }
-
-        return future;
-    }
-
-    inline void Execute(size_t index, Connector& conn) {
+    inline void Execute(size_t index) {
         // Derived ÇÃ Execute() ÇåƒÇ—èoÇµ
         //static_cast<Derived*>(this)->Execute(index);
         ASSERT(false, "Derived class not found Execute(size_t) member function!!");
     }
 
+protected:
+    ParallelJobData jobResult;
+   
 private:
-    std::atomic<size_t>     nextBatch_{ 0 };
-
-    static void workerEntry(std::shared_ptr<ParallelInfo> ctx) {
+    static void workerEntry(std::shared_ptr<Context> ctx) {
         while (true) {
             auto idx = ctx->nextBatch->fetch_add(1, std::memory_order_relaxed);
-            if (idx >= ctx->numBatches){
+            if (idx >= ctx->numBatches) {
                 break;
             }
 
             size_t start = idx * ctx->batchSize;
             size_t len = min(ctx->batchSize, ctx->total - start);
 
-            for (size_t i = start; i < start + len; ++i){
-                //ctx->self->Execute(i, ctx->connect);
+            for (size_t i = start; i < start + len; ++i) {
                 ctx->self->Execute(i);
             }
 
-            if(ctx->setter.sub_counter() == 1){
-                //ctx->setter.set_value(std::move(ctx->connect));
-                ctx->setter.set_value();
+            if (ctx->setter.sub_counter() == 1) {
+                ctx->setter.set_value(*ctx->result);
                 break;
             }
         }
     }
+
+private:
+    std::atomic<size_t>     nextBatch_{ 0 };
+    Derived* self;
 };
 
 }//namespace ECS::JobSystem
