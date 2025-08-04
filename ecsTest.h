@@ -148,6 +148,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 }
 
 TEST_CASE_PRIORITY(test_particalJobSystem){
+
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& js = ECS::JobSystem::JobManager::Instance();
 	js.Initialize(4, std::move(recorder));
@@ -211,26 +212,30 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	auto& dataMap = js.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
-
 }
 
 using MyConnector = ECS::JobSystem::JobConnector<std::vector<int>>;
 
-struct TestParallelJob
-	: public ECS::JobSystem::IParallelJob<TestParallelJob,MyConnector>
+struct TestConnector
 {
-	std::vector<int>resultData;
-	
-	inline void Execute(size_t index){
-		ASSERT(resultData.size() > index, "globalIndex out of bounds");
-		resultData[index] = index * index;
-	}
+	std::vector<int> resultData;
 
-	//void Execute(size_t index,MyConnector& c) {
-	//	//auto value = c.get<0>();
-	//	//ASSERT(value.size() > index, "globalIndex out of bounds");
-	//	//value[index] = index * index;
-	//}
+	TestConnector() = default;
+
+	// 他に get()/set() ラッパーを用意するのも OK
+	inline int& operator[](size_t i) { return resultData[i]; }
+	inline int  operator[](size_t i) const { return resultData[i]; }
+};
+
+struct TestParallelJob
+	: public ECS::JobSystem::IParallelJob<TestParallelJob, TestConnector>
+{
+	using Base = IParallelJob<TestParallelJob, TestConnector>;
+	using Base::Base;   // 上記 ctor を継承
+
+	inline void Execute(size_t index) {
+		this->jobResult.resultData[index] = index * index;
+	}
 };
 
 TEST_CASE_ORDER(test_bigJobSystem) {
@@ -246,20 +251,24 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	std::vector<int> resultData(resultSize);
 
-	MyConnector connector(
-		std::move(resultData)
-	);
+	TestConnector c;
 
-	TestParallelJob parallelJob;
+	c.resultData.resize(resultSize);
 
-	parallelJob.resultData.resize(resultSize);
+	//connector.get<0>().resize(resultSize);
+
+	TestParallelJob parallelJob(std::move(c));
+
+	//parallelJob.resultData.resize(resultSize);
 
 	auto globalStart = ECS::JobSystem::now();
 
-	parallelJob.schedule(resultSize,batchSize,8);
+	auto future = parallelJob.schedule(resultSize,batchSize,8);
 
 	// 4) すべてのジョブ完了を待機
-	js.waitForAll();
+	//js.waitForAll();
+
+	auto result = future.wait_and_get();
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	auto globalEnd = ECS::JobSystem::now();
