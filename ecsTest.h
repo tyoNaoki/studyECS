@@ -212,7 +212,6 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	auto& dataMap = js.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
-
 }
 
 using MyConnector = ECS::JobSystem::JobConnector<std::vector<int>>;
