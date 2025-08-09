@@ -186,6 +186,7 @@ public:
 	}
 
 	void disableNotifications() { ++disableCount; }
+
 	void enableNotifications() {
 		if (disableCount > 0) { --disableCount; }
 		if (doCanProcess()) { cv_.notify_one(); }

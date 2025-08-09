@@ -3,9 +3,14 @@
 #include <utility>   // std::swap, std::exchange
 #include <cstddef>   // std::nullptr_t
 #include "JobManager.h"
+#include <memory>
 #include "TestFramework.hpp"
 
 namespace ECS::JobSystem{
+
+#define REFLECT_FIELDS(Type, ...)                                  \
+  static constexpr auto field_ptrs()                                \
+  { return std::make_tuple(__VA_ARGS__); }
 
 namespace Ptr{
 
@@ -214,7 +219,7 @@ template<typename T>
 struct FutureInner {
     std::mutex       mtx;
     std::atomic<bool> ready{ false };
-    std::optional<T>  result;
+    std::shared_ptr<T> result{ nullptr };
 };
 
 // void 専用 specialization：result を持たない
@@ -239,13 +244,19 @@ struct JobFuture : public IFuture {
     T wait_and_get() {
         while (true) {
             // まず mutex を獲得して ready フラグをチェック
-            {
+            if (inner->ready) {
+                static_assert(!std::is_void_v<T>, "JobFuture<T> is void");
                 std::lock_guard lk(inner->mtx);
-                if (inner->ready) {
-                    static_assert(!std::is_void_v<T>, "JobFuture<T> is void");
 
-                    return std::move(*inner->result);
-                }
+                ASSERT(inner->result, "inner->result is nullptr!!");
+
+                T value = std::move(*inner->result);
+
+                // オリジナルのポインタをリセット
+                *inner->result.reset();
+                inner->ready.store(false, std::memory_order_relaxed);
+
+                return value;
             }
 
             // まだ ready でなければ他ジョブをひとつ消化
@@ -315,6 +326,7 @@ struct ParallelJobFuture : public IFuture {
         return;
     }
 
+    //非void
     T wait_and_get() {
         while (true) {
             // まず mutex を獲得して ready フラグをチェック
@@ -322,7 +334,28 @@ struct ParallelJobFuture : public IFuture {
                 if (isReady()) {
                     static_assert(!std::is_void_v<T>, "JobFuture<T> is void");
 
-                    return std::move(*inner->result);
+                    T copy = std::move(*inner->result);
+                    inner->result.reset();         // 二度取り出し防止
+                    return copy;
+                    //return std::move(*inner->result);
+                }
+            }
+
+            // まだ ready でなければ他ジョブをひとつ消化
+            //jobSystem.();
+        }
+    }
+
+    //void
+    template<typename U = T>
+    std::enable_if_t< std::is_void_v<U>, void> 
+    wait_and_get() {
+        while (true) {
+            {
+                if (isReady()) {
+
+                    return;
+                    //return std::move(*inner->result);
                 }
             }
 
@@ -383,13 +416,11 @@ public:
 
     // 結果なしの通知だけ
     void set_value() {
+
         std::lock_guard lk(inner->mtx);
         inner->ready = true;
     }
 };
-
-
-
 
 template<typename T>
 class SettableParallelJobFuture {
@@ -397,7 +428,7 @@ class SettableParallelJobFuture {
     std::shared_ptr<std::atomic<size_t>> counter;
 public:
     explicit SettableParallelJobFuture(std::shared_ptr<FutureInner<T>> i, std::shared_ptr<std::atomic<size_t>> count)
-        : inner(std::move(i)),counter(count) {}
+        : inner(std::move(i)),counter(count){}
 
     static auto create(size_t batchCount) {
         auto ptr = std::make_shared<FutureInner<T>>();
@@ -413,7 +444,7 @@ public:
         return counter->fetch_sub(1, std::memory_order_acq_rel);
     }
 
-    void set_value(T& v) const {
+    void set_value(std::shared_ptr<T> v) const {
         std::lock_guard lk(inner->mtx);
         inner->result = v;
         inner->ready = true;
@@ -649,85 +680,101 @@ public:
 //    }
 //};
 
-template<typename... Containers>
+template<typename S>
 struct JobConnector {
+    using Ptrs = decltype(S::field_ptrs());
+    static constexpr size_t N = std::tuple_size_v<Ptrs>;
 
-    using StorageTuple = std::tuple<std::decay_t<Containers>...>;
+    Ptrs ptrs_{ S::field_ptrs() };
 
-    // コンストラクタ：各コンテナを参照渡し
-    JobConnector(Containers&&... conts)
-        : storage_(std::forward<Containers>(conts)...)
-        , length_{ sizeof...(Containers) }
-    {
-        static_assert(sizeof...(Containers) > 0,
-            "At least one container is required");
+    // I番目のメンバポインタを取り出し
+    template<size_t I>
+    constexpr auto get() const noexcept {
+        return std::get<I>(ptrs_);
+    }
+};
+
+template<typename T>
+struct ICommand {
+    virtual ~ICommand() = default;
+    virtual void apply(std::shared_ptr<T>& obj) = 0;
+};
+
+//template<typename Struct, std::size_t I>
+//struct AssignFieldCmd : ICommand<Struct> {
+//    using FieldT = std::tuple_element_t<I, Struct>;
+//    FieldT value_;
+//
+//    AssignFieldCmd(FieldT v) : value_(std::move(v)) {}
+//
+//    void apply(Struct& s) override {
+//        boost::pfr::get<I>(s) = value_;
+//    }
+//};
+
+template<typename T>
+struct FuncCmd : ICommand<T> {
+    std::function<void(std::shared_ptr<T>&)> fn_;
+
+    FuncCmd(std::function<void(std::shared_ptr<T>&)>&& f) : fn_(std::move(f)) {}
+
+    void apply(std::shared_ptr<T>& obj) override {
+        fn_(obj);
+    }
+};
+
+// コマンドバッファ：ICommand<T> を蓄積して flush 時にすべて apply
+template<typename T>
+class CommandBuffer {
+    std::vector<std::unique_ptr<ICommand<T>>> cmds_;
+
+    using ICommandPtr = std::unique_ptr<ICommand<T>>;
+public:
+    void push(ICommandPtr&& c) {
+        cmds_.push_back(std::move(c));
     }
 
-    // 要素数取得
-    std::size_t length() const noexcept { return length_; }
-
-    // I番目の生ポインタ取得
-    template<std::size_t I>
-    auto* pointer() noexcept {
-        return std::get<I>(storage_);
-
+    void flush(std::shared_ptr<T>& obj) {
+        for (auto& cmd : cmds_) {
+            cmd->apply(obj);
+        }
+        cmds_.clear();
     }
-
-    template<std::size_t I>
-    const auto* pointer() const noexcept {
-        return std::get<I>(storage_);
-    }
-
-    // I番目コンテナの idx要素を参照で取得
-    template<std::size_t I>
-    auto& get() {
-        return std::get<I>(storage_);
-    }
-
-    template<std::size_t I>
-    const auto& get() const {
-        //assert(I < length_);
-        return std::get<I>(storage_);
-    }
-
-private:
-    StorageTuple storage_;
-    std::size_t length_;
 };
 
 class JobManager;
 
+//parallelJobの基底クラス
+//Derived : 派生クラス
+//ParallelJoData : Job実行時に書き込むデータ
 template<typename Derived,typename ParallelJobData>
-struct IParallelJob{
+struct IParallelJob : std::enable_shared_from_this<Derived> {
 
-    IParallelJob() = default;
+    IParallelJob() : jobResult(nullptr){}
 
-    IParallelJob(ParallelJobData&& d): jobResult(std::move(d)){
-        self = static_cast<Derived*>(this);
-    }
+    // 完全転送コンストラクタ
+    template<typename T,
+        typename = std::enable_if_t<
+        std::is_constructible_v<ParallelJobData, T&&>
+        >
+    >
+         IParallelJob(T&& d)
+        : jobResult(std::make_shared<ParallelJobData>(std::forward<T>(d)))
+    {}
 
     struct Context {
-        Derived* self;
-        ParallelJobData* result;
+        std::shared_ptr<Derived> self;
+        std::shared_ptr<ParallelJobData> result;
         size_t   total, batchSize, numBatches;
         std::atomic<size_t>* nextBatch;
         SettableParallelJobFuture<ParallelJobData> setter;
 
-        Context(Derived* s,
-            ParallelJobData* r,
-            size_t t,
-            size_t b,
-            size_t n,
+         Context(std::shared_ptr<Derived> s,
+             std::shared_ptr<ParallelJobData> r,
+            size_t t, size_t b, size_t n,
             std::atomic<size_t>* next,
             SettableParallelJobFuture<ParallelJobData>&& set)
-            : self(s)
-            , result(r)
-            , total(t)
-            , batchSize(b)
-            , numBatches(n)
-            , nextBatch(next)
-            , setter(std::move(set))
-        {}
+      : self(s),result(r),total(t),batchSize(b),numBatches(n),nextBatch(next),setter(std::move(set)){}
 
     };
 
@@ -736,22 +783,25 @@ struct IParallelJob{
 
         auto [settable, future] = SettableParallelJobFuture<ParallelJobData>::create(batchSize);
 
-        size_t numBatches = (total + batchSize - 1) / batchSize;
-        auto ctx = std::make_shared<Context>(
-            self,
-            &jobResult,
-            total,
-            batchSize,
-            numBatches,
-            &nextBatch_,
-            std::move(settable)
-        );
+        //実行前にJob実行の参照データに変更適用
+        buffer.flush(jobResult);
 
         nextBatch_.store(0, std::memory_order_relaxed);
 
+        //ctxの使いまわしに戻す
+        std::shared_ptr<Context>ctx_ = std::make_shared<Context>(
+            shared_this()
+            ,jobResult
+            ,total
+            ,batchSize
+            , (total + batchSize - 1) / batchSize
+            , &nextBatch_
+            , std::move(settable)
+        );
+
         // ワーカー数分だけ Task を作成して登録
         for (size_t w = 0; w < workerCount; ++w) {
-            auto work = [ctx]() { workerEntry(ctx); };
+            auto work = [ctx_]() { workerEntry(ctx_); };
 
             auto task = new Task(Job(std::move(work)), 0);
             Ptr::intrusive_ptr taskPtr{std::move(task)};
@@ -762,6 +812,35 @@ struct IParallelJob{
         return future;
     }
 
+    using ICommandPtr = std::unique_ptr<ICommand<ParallelJobData>>;
+
+    inline void AddRequeset(ICommandPtr&& command){
+        buffer.push(std::move(command));
+    }
+   
+private:
+    static void workerEntry(std::shared_ptr<Context> ctx) {
+        while (true) {
+            auto idx = ctx->nextBatch->fetch_add(1, std::memory_order_relaxed);
+
+            if (idx >= ctx->numBatches) {
+                return;
+            }
+
+            size_t start = idx * ctx->batchSize;
+            size_t len = min(ctx->batchSize, ctx->total - start);
+            for (size_t i = start; i < start + len; ++i) {
+                ctx->self->Execute(i);
+            }
+
+            if (ctx->setter.sub_counter() == 1) {
+
+                ctx->setter.set_value(ctx->result);
+                return;
+            }
+        }
+    }
+
     inline void Execute(size_t index) {
         // Derived の Execute() を呼び出し
         //static_cast<Derived*>(this)->Execute(index);
@@ -769,33 +848,17 @@ struct IParallelJob{
     }
 
 protected:
-    ParallelJobData jobResult;
-   
-private:
-    static void workerEntry(std::shared_ptr<Context> ctx) {
-        while (true) {
-            auto idx = ctx->nextBatch->fetch_add(1, std::memory_order_relaxed);
-            if (idx >= ctx->numBatches) {
-                break;
-            }
-
-            size_t start = idx * ctx->batchSize;
-            size_t len = min(ctx->batchSize, ctx->total - start);
-
-            for (size_t i = start; i < start + len; ++i) {
-                ctx->self->Execute(i);
-            }
-
-            if (ctx->setter.sub_counter() == 1) {
-                ctx->setter.set_value(*ctx->result);
-                break;
-            }
-        }
+    std::shared_ptr<Derived> shared_this()
+    {
+        return std::enable_shared_from_this<Derived>::shared_from_this();
     }
 
+    std::shared_ptr<ParallelJobData> jobResult;
+
 private:
-    std::atomic<size_t>     nextBatch_{ 0 };
-    Derived* self;
+    std::atomic<size_t> nextBatch_{ 0 };
+
+    CommandBuffer<ParallelJobData>buffer;
 };
 
 }//namespace ECS::JobSystem

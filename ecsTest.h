@@ -221,20 +221,13 @@ struct TestConnector
 	std::vector<int> resultData;
 
 	TestConnector() = default;
-
-	// 他に get()/set() ラッパーを用意するのも OK
-	inline int& operator[](size_t i) { return resultData[i]; }
-	inline int  operator[](size_t i) const { return resultData[i]; }
 };
 
 struct TestParallelJob
 	: public ECS::JobSystem::IParallelJob<TestParallelJob, TestConnector>
 {
-	using Base = IParallelJob<TestParallelJob, TestConnector>;
-	using Base::Base;   // 上記 ctor を継承
-
 	inline void Execute(size_t index) {
-		this->jobResult.resultData[index] = index * index;
+		this->jobResult->resultData[index] = index* index;
 	}
 };
 
@@ -249,21 +242,24 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	char name = 'A';
 
-	std::vector<int> resultData(resultSize);
-
-	TestConnector c;
-
-	c.resultData.resize(resultSize);
-
-	//connector.get<0>().resize(resultSize);
-
-	TestParallelJob parallelJob(std::move(c));
+	auto parallelJob = std::make_shared<TestParallelJob>();
 
 	//parallelJob.resultData.resize(resultSize);
 
+	TestConnector c;
+	c.resultData.resize(resultSize);
+
 	auto globalStart = ECS::JobSystem::now();
 
-	auto future = parallelJob.schedule(resultSize,batchSize,8);
+	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([&c](std::shared_ptr<TestConnector>& t) {
+		t.reset(c);
+		}));
+
+	auto future = parallelJob->schedule(resultSize,batchSize,8);
+
+	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([](TestConnector& t) {
+		t.resultData[0] = 12;
+		}));
 
 	// 4) すべてのジョブ完了を待機
 	//js.waitForAll();
@@ -279,9 +275,14 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!js.isAbort(), "JobSystem Work Test");
 
+	result.resultData[0] = 10;
+
 	// 6) ログを取り出してスレッド別タイムラインを出力
 	auto& dataMap = js.getRecorder()->getDataMap();
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
+
+	future = parallelJob->schedule(resultSize, batchSize, 8);
+	//result = future.wait_and_get();
 }
 
 TEST_CASE(test_sort_empty) {
