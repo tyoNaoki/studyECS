@@ -226,7 +226,10 @@ struct TestConnector
 struct TestParallelJob
 	: public ECS::JobSystem::IParallelJob<TestParallelJob, TestConnector>
 {
-	inline void Execute(size_t index) {
+	using Base = IParallelJob<TestParallelJob,TestConnector>;
+	using Base::Base;
+
+	void Execute(size_t index) {
 		this->jobResult->resultData[index] = index* index;
 	}
 };
@@ -242,18 +245,20 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	char name = 'A';
 
-	auto parallelJob = std::make_shared<TestParallelJob>();
-
-	//parallelJob.resultData.resize(resultSize);
-
 	TestConnector c;
 	c.resultData.resize(resultSize);
 
+	auto parallelJob = std::make_shared<TestParallelJob>(std::move(c));
+
+	//parallelJob.resultData.resize(resultSize);
+
 	auto globalStart = ECS::JobSystem::now();
 
-	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([&c](std::shared_ptr<TestConnector>& t) {
-		t.reset(c);
-		}));
+	/*parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([&resultSize](TestConnector& t) {
+		TestConnector c;
+		c.resultData.resize(resultSize);
+		t = c;
+		}));*/
 
 	auto future = parallelJob->schedule(resultSize,batchSize,8);
 
@@ -275,13 +280,13 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!js.isAbort(), "JobSystem Work Test");
 
-	result.resultData[0] = 10;
+	//result.resultData[0] = 10;
 
 	// 6) ログを取り出してスレッド別タイムラインを出力
 	auto& dataMap = js.getRecorder()->getDataMap();
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 
-	future = parallelJob->schedule(resultSize, batchSize, 8);
+	//future = parallelJob->schedule(resultSize, batchSize, 8);
 	//result = future.wait_and_get();
 }
 
