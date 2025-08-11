@@ -130,6 +130,7 @@ public:
 
     Job(Job&& o) noexcept {
         invoke_fn = o.invoke_fn;
+        destroy_fn = o.destroy_fn;
         memcpy(buf, o.buf, BufferSize);
         o.invoke_fn = nullptr;
         o.destroy_fn = nullptr;
@@ -150,10 +151,18 @@ public:
             static_cast<F*>(p)->~F();
         };
 
+        if(destroy_fn){
+            int a = 0;
+        }
     }
 
-    //
-    
+    //デストラクター
+    ~Job() {
+        if (destroy_fn) {
+            destroy_fn(buf);
+        }
+    }
+
     //ここで必要になるのがムーブ代入演算子
     Job& operator=(Job&& o) noexcept {
         if (this != &o) {
@@ -176,6 +185,10 @@ public:
     void invoke() noexcept {
         if (invoke_fn) {
             invoke_fn(buf);
+            if (destroy_fn) {
+                destroy_fn(buf);
+                destroy_fn = nullptr;
+            }
             invoke_fn = nullptr;
         }
     }
@@ -219,7 +232,7 @@ template<typename T>
 struct FutureInner {
     std::mutex       mtx;
     std::atomic<bool> ready{ false };
-    std::shared_ptr<T> result;
+    std::optional<T> result;
 };
 
 // void 専用 specialization：result を持たない
@@ -334,10 +347,7 @@ struct ParallelJobFuture : public IFuture {
                 if (isReady()) {
                     static_assert(!std::is_void_v<T>, "JobFuture<T> is void");
 
-                    T copy = *inner->result.get();
-                    inner->result.reset();         // 二度取り出し防止
-                    return copy;
-                    //return std::move(*inner->result);
+                    return std::move(*inner->result);
                 }
             }
 
@@ -444,9 +454,9 @@ public:
         return counter->fetch_sub(1, std::memory_order_acq_rel);
     }
 
-    void set_value(std::shared_ptr<T> v) const {
+    void set_value(T v) const {
         std::lock_guard lk(inner->mtx);
-        inner->result = v;
+        inner->result = std::move(v);
         inner->ready = true;
     }
 };
@@ -751,25 +761,22 @@ class JobManager;
 template<typename Derived,typename ParallelJobData>
 struct IParallelJob : std::enable_shared_from_this<Derived> {
 
-    static constexpr size_t kChunkSize = 8; // 一度に取るバッチ数
+    static constexpr size_t kChunkSize = 4; // 一度に取るバッチ数
 
     IParallelJob() : ctx_(std::make_shared<Context>(&nextBatch_)){
     }
 
     // 完全転送コンストラクタ
-         IParallelJob(ParallelJobData&& d)
-        : jobResult(std::make_shared<ParallelJobData>(std::move(d))), ctx_(std::make_shared<Context>(&nextBatch_)) {
-            
-            ctx_->result = jobResult;
-        }
-
-        ~IParallelJob(){
-            printf("~IParallelJob()");
-        }
+    IParallelJob(ParallelJobData&& d)
+    : jobResult(std::move(d)), ctx_(std::make_shared<Context>(&nextBatch_)) {
+    }
+    
+    ~IParallelJob(){
+       printf("~IParallelJob()");
+    }
 
     struct Context {
         std::weak_ptr<Derived> self;
-        std::weak_ptr<ParallelJobData> result;
         size_t total, batchSize, numBatches;
         std::atomic<size_t>* nextBatch;
         SettableParallelJobFuture<ParallelJobData> setter;
@@ -778,12 +785,14 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
             : total(0), batchSize(0), numBatches(0), nextBatch(next), setter(nullptr,0) {}
 
          Context(std::shared_ptr<Derived> s,
-             std::shared_ptr<ParallelJobData> r,
             size_t t, size_t b, size_t n,
             std::atomic<size_t>* next,
             SettableParallelJobFuture<ParallelJobData>&& set)
-      : self(s),result(r),total(t),batchSize(b),numBatches(n),nextBatch(next),setter(std::move(set)){}
+      : self(s),total(t),batchSize(b),numBatches(n),nextBatch(next),setter(std::move(set)){}
 
+        ~Context(){
+            printf("~Context()");
+        }
     };
 
     inline ParallelJobFuture<ParallelJobData> schedule(size_t total,size_t batchSize,size_t workerCount){
@@ -793,7 +802,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
         auto [settable, future] = SettableParallelJobFuture<ParallelJobData>::create(numBatches);
 
         //実行前にJob実行の参照データに変更適用
-        buffer.flush(*jobResult.get());
+        buffer.flush(jobResult);
 
         nextBatch_.store(0, std::memory_order_relaxed);
 
@@ -805,7 +814,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
 
         // ワーカー数分だけ Task を作成して登録
         for (size_t w = 0; w < workerCount; ++w) {
-            auto work = [this]() { workerEntry(ctx_); };
+            auto work = [ctx=ctx_]() { workerEntry(ctx); };
 
             auto task = new Task(Job(std::move(work)), 0);
             Ptr::intrusive_ptr taskPtr{std::move(task)};
@@ -823,45 +832,38 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
     }
    
 private:
-    static void workerEntry(std::weak_ptr<Context> c) {
-        auto ctx = c.lock();
-        if(!ctx) return;
-
+    static void workerEntry(std::shared_ptr<Context> ctx) {
         auto self = ctx->self.lock();
-
-        size_t batchSize = ctx->batchSize;
-        size_t numBatches = ctx->numBatches;
-        size_t total = ctx->total;
+        if(!self){
+            std::printf("self is nullptr");
+        }
+        const size_t batchSize = ctx->batchSize;
+        const size_t numBatches = ctx->numBatches;
+        const size_t total = ctx->total;
 
         while (true) {
             //回数見直し、バッチ回数に合わせる。応じて変える
             //numBatchesも
-            auto idx = ctx->nextBatch->fetch_add(kChunkSize, std::memory_order_relaxed);
+            const size_t idx = ctx->nextBatch->fetch_add(kChunkSize, std::memory_order_relaxed);
 
             if(idx >= numBatches) return;
 
-            size_t taken = min(kChunkSize, numBatches - idx);
+            const size_t taken = min(kChunkSize, numBatches - idx);
 
             for (size_t b = 0; b < taken; ++b) {
-                size_t start = (idx + b) * batchSize;
-                size_t len = min(batchSize, total - start);
+                const size_t start = (idx + b) * batchSize;
+
+                ASSERT(start < total,"IParallelJob workerEntry : start >= total");
+
+                const size_t len = min(batchSize, total - start);
 
                 self->ExecuteBatch(start,len,self.get());
 
                 if (ctx->setter.sub_counter() == 1) {
-                    ctx->setter.set_value(ctx->result.lock());
+                    ctx->setter.set_value(self->jobResult);
                     return;
                 }
             }
-
-            /*for (size_t i = start; i < start + len; ++i) {
-                self->Execute(i);
-            }
-
-            if (ctx->setter.sub_counter() == 1) {
-                ctx->setter.set_value(ctx->result.lock());
-                return;
-            }*/
         }
     }
 
@@ -872,7 +874,7 @@ private:
     }
 
 protected:
-    inline void ExecuteBatch(size_t start, size_t len,Derived*self) {
+    inline void ExecuteBatch(const size_t start,const size_t len,Derived*self) {
         for (size_t i = start; i < start + len; ++i) {
             self->Execute(i);
         }
@@ -885,7 +887,7 @@ protected:
 
     std::shared_ptr<Context>ctx_;
 
-    std::shared_ptr<ParallelJobData> jobResult;
+    ParallelJobData jobResult;
 
 private:
     std::atomic<size_t> nextBatch_{ 0 };
