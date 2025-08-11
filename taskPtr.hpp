@@ -763,20 +763,18 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
 
     static constexpr size_t kChunkSize = 4; // 一度に取るバッチ数
 
-    IParallelJob() : ctx_(std::make_shared<Context>(&nextBatch_)){
-    }
+    IParallelJob() = default;
 
     // 完全転送コンストラクタ
     IParallelJob(ParallelJobData&& d)
-    : jobResult(std::move(d)), ctx_(std::make_shared<Context>(&nextBatch_)) {
-    }
+    : jobResult(std::move(d)){}
     
     ~IParallelJob(){
        printf("~IParallelJob()");
     }
 
     struct Context {
-        std::weak_ptr<Derived> self;
+        std::shared_ptr<Derived> self;
         size_t total, batchSize, numBatches;
         std::atomic<size_t>* nextBatch;
         SettableParallelJobFuture<ParallelJobData> setter;
@@ -806,21 +804,17 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
 
         nextBatch_.store(0, std::memory_order_relaxed);
 
-        ctx_->self = shared_this();
-        ctx_->total = total;
-        ctx_->batchSize = batchSize;
-        ctx_->numBatches = numBatches;
-        ctx_->setter = std::move(settable);
+        auto ctx = std::make_shared<Context>(shared_this(),total,batchSize,numBatches,&nextBatch_,std::move(settable));
 
         // ワーカー数分だけ Task を作成して登録
         for (size_t w = 0; w < workerCount; ++w) {
-            auto work = [ctx=ctx_]() { workerEntry(ctx); };
+            auto work = [ctx]() { workerEntry(ctx); };
 
             auto task = new Task(Job(std::move(work)), 0);
             Ptr::intrusive_ptr taskPtr{std::move(task)};
 
             JobManager::Instance().pushWaitQueue(std::move(taskPtr));
-        }
+        } 
 
         return future;
     }
@@ -833,9 +827,10 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
    
 private:
     static void workerEntry(std::shared_ptr<Context> ctx) {
-        auto self = ctx->self.lock();
+        auto self = ctx->self;
         if(!self){
             std::printf("self is nullptr");
+            return;
         }
         const size_t batchSize = ctx->batchSize;
         const size_t numBatches = ctx->numBatches;
@@ -884,8 +879,6 @@ protected:
     {
         return std::enable_shared_from_this<Derived>::shared_from_this();
     }
-
-    std::shared_ptr<Context>ctx_;
 
     ParallelJobData jobResult;
 
