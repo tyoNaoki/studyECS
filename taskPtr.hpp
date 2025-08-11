@@ -3,6 +3,7 @@
 #include <utility>   // std::swap, std::exchange
 #include <cstddef>   // std::nullptr_t
 #include "JobManager.h"
+#include <variant>
 #include <memory>
 #include "TestFramework.hpp"
 
@@ -484,10 +485,8 @@ public:
     }
 
     void set_value() const {
-        if (counter->fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            std::lock_guard lk(inner->mtx);
-            inner->ready = true;
-        }
+        std::lock_guard lk(inner->mtx);
+        inner->ready = true;
     }
 };
 
@@ -710,6 +709,9 @@ struct ICommand {
     virtual void apply(T& obj) = 0;
 };
 
+template<>
+struct ICommand<void> {};
+
 //template<typename Struct, std::size_t I>
 //struct AssignFieldCmd : ICommand<Struct> {
 //    using FieldT = std::tuple_element_t<I, Struct>;
@@ -753,31 +755,55 @@ public:
 
 };
 
+struct DummyBuffer {};
+
 class JobManager;
 
 //parallelJobの基底クラス
 //Derived : 派生クラス
 //ParallelJoData : Job実行時に書き込むデータ
-template<typename Derived,typename ParallelJobData>
+template<typename Derived,typename ParallelJobData  = std::monostate>
 struct IParallelJob : std::enable_shared_from_this<Derived> {
 
     static constexpr size_t kChunkSize = 4; // 一度に取るバッチ数
 
+    using Data_t = ParallelJobData;
+
+    using HasData = std::bool_constant<!std::is_same_v<Data_t, std::monostate>>;
+
+    using Future_t = std::conditional_t<
+        HasData::value,
+        ParallelJobFuture<Data_t>,
+        ParallelJobFuture<void>
+        >;
+
+    using Setter_t = std::conditional_t<
+        HasData::value,
+        SettableParallelJobFuture<Data_t>,
+        SettableParallelJobFuture<void>
+        >;
+
+    using Buffer_t = std::conditional_t<
+        HasData::value,
+        CommandBuffer<Data_t>,
+        DummyBuffer
+        > ;
+
     IParallelJob() = default;
 
-    // 完全転送コンストラクタ
-    IParallelJob(ParallelJobData&& d)
-    : jobResult(std::move(d)){}
+    template <typename T = Data_t,
+        typename = std::enable_if_t<!std::is_same_v<T, void>>>
+        IParallelJob(T&& d)
+        : jobResult(std::forward<T>(d)) {}
+
     
-    ~IParallelJob(){
-       printf("~IParallelJob()");
-    }
+    ~IParallelJob(){};
 
     struct Context {
         std::shared_ptr<Derived> self;
         size_t total, batchSize, numBatches;
         std::atomic<size_t>* nextBatch;
-        SettableParallelJobFuture<ParallelJobData> setter;
+        Setter_t setter;
 
         Context(std::atomic<size_t>* next)
             : total(0), batchSize(0), numBatches(0), nextBatch(next), setter(nullptr,0) {}
@@ -785,26 +811,33 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
          Context(std::shared_ptr<Derived> s,
             size_t t, size_t b, size_t n,
             std::atomic<size_t>* next,
-            SettableParallelJobFuture<ParallelJobData>&& set)
+             Setter_t&& set)
       : self(s),total(t),batchSize(b),numBatches(n),nextBatch(next),setter(std::move(set)){}
 
-        ~Context(){
-            printf("~Context()");
-        }
+        ~Context(){};
     };
 
-    inline ParallelJobFuture<ParallelJobData> schedule(size_t total,size_t batchSize,size_t workerCount){
+    inline Future_t schedule(size_t total,size_t batchSize,size_t workerCount){
         ASSERT(total > 0 && batchSize > 0,"parallelJob schedule total or batchSize is zero");
 
         size_t numBatches = (total + batchSize - 1) / batchSize;
-        auto [settable, future] = SettableParallelJobFuture<ParallelJobData>::create(numBatches);
+        auto [settable, future] = Setter_t::create(numBatches);
 
         //実行前にJob実行の参照データに変更適用
-        buffer.flush(jobResult);
-
+        if constexpr (HasData::value){
+            buffer.flush(jobResult);
+        }
+        
         nextBatch_.store(0, std::memory_order_relaxed);
 
-        auto ctx = std::make_shared<Context>(shared_this(),total,batchSize,numBatches,&nextBatch_,std::move(settable));
+        auto ctx = std::make_shared<Context>(
+            shared_this()
+            ,total
+            ,batchSize
+            ,numBatches
+            ,&nextBatch_
+            ,std::move(settable)
+            );
 
         // ワーカー数分だけ Task を作成して登録
         for (size_t w = 0; w < workerCount; ++w) {
@@ -822,7 +855,9 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
     using ICommandPtr = std::unique_ptr<ICommand<ParallelJobData>>;
 
     inline void AddRequeset(ICommandPtr&& command){
-        buffer.push(std::move(command));
+        if constexpr (HasData::value){
+            buffer.push(std::move(command));
+        }
     }
    
 private:
@@ -855,7 +890,12 @@ private:
                 self->ExecuteBatch(start,len,self.get());
 
                 if (ctx->setter.sub_counter() == 1) {
-                    ctx->setter.set_value(self->jobResult);
+                    if constexpr (HasData::value){
+                        ctx->setter.set_value(self->jobResult);
+                    }else{
+                        ctx->setter.set_value();
+                    }
+                    
                     return;
                 }
             }
@@ -880,12 +920,12 @@ protected:
         return std::enable_shared_from_this<Derived>::shared_from_this();
     }
 
-    ParallelJobData jobResult;
+    [[no_unique_address]] Data_t jobResult;
 
 private:
     std::atomic<size_t> nextBatch_{ 0 };
 
-    CommandBuffer<ParallelJobData>buffer;
+    Buffer_t buffer;
 };
 
 }//namespace ECS::JobSystem
