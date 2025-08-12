@@ -76,11 +76,11 @@ void hashMapBenchmarks();
 
 int test()
 {
-	//RUN_TEST("test_jobSystem",450);
+	RUN_TEST("test_particalJobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
-	RUN_TEST("test_bigVoidJobSystem",1);
+	//RUN_TEST("test_bigVoidJobSystem",1);
 	//RUN_PRIORITY_TESTS(false);
 
 	return 0;
@@ -101,31 +101,41 @@ void busyWait(std::chrono::nanoseconds duration) {
 	}
 }
 
-void func(){
-	// ここでは処理時間だけシミュレート
-	int sleepTime = generateRandomInt(5, 10);
-	busyWait(std::chrono::milliseconds(sleepTime));
-}
+struct TestNormalJobConnector
+{
+	int value;
+
+	TestNormalJobConnector() = default;
+};
+
+struct TestJob
+	: public ECS::JobSystem::IJob<TestJob,int,TestNormalJobConnector>
+{
+	using Base = IJob<TestJob,int,TestNormalJobConnector>;
+	using Base::Base;
+
+	inline int Execute() {
+		int sleepTime = generateRandomInt(5, 10);
+		busyWait(std::chrono::milliseconds(sleepTime));
+
+		auto value = this->jobResult.value;
+		return value * value;
+	}
+};
 
 TEST_CASE_PRIORITY(test_jobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.Initialize(4,std::move(recorder));
 
+	auto job = std::make_shared<TestJob>();
+
 	auto globalStart = ECS::JobSystem::now();
 
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 20; ++i) {
 
-		// ジョブ名を 'A'～ に割り当て
-		char name = static_cast<char>('A' + (i % 26));
-
-		auto handle = jm.schedule(
-			name,
-			[name]() {
-				func();
-			}
-			);
+		job->schedule();
 
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
@@ -138,13 +148,13 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
-	/*auto globalEnd = ECS::JobSystem::now();
+	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 	std::cout << "Total duration: "
-		<< globalDuration << " ms\n";*/
+		<< globalDuration << " ms\n";
 
 	// 6) ログを取り出してスレッド別タイムラインを出力
-	auto& dataMap = jm.getRecorder()->getDataMap();
+	//auto& dataMap = jm.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
@@ -158,14 +168,14 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	std::vector<ECS::JobSystem::TaskPtr> jobAHandles;
 
+	auto job = std::make_shared<TestJob>();
+
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 4; ++i) {
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'A';
 
-		auto handle = js.schedule(name, []() {
-				func();
-			});
+		auto handle = job->schedule();
 
 		jobAHandles.push_back(handle.first);
 
@@ -178,9 +188,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'B';
 
-		js.schedule(name, []() {
-			func();
-			},jobAHandles);
+		job->schedule(jobAHandles);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -190,9 +198,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'C';
 
-		auto handle = js.schedule(name, []() {
-			func();
-			});
+		auto handle = job->schedule();
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -207,15 +213,13 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!js.isAbort(), "JobSystem Work Test");
 
-	/*
+	
 	std::cout << "Total duration: "
-		<< globalDuration << " ms\n";*/
+		<< globalDuration << " ms\n";
 
 	auto& dataMap = js.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
-
-using MyConnector = ECS::JobSystem::JobConnector<std::vector<int>>;
 
 struct TestConnector
 {
@@ -249,6 +253,9 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	TestConnector c;
 	c.resultData.resize(resultSize);
 
+	//TestConnectorをコンストラクタで渡すこともできる
+	//auto parallelJob = std::make_shared<TestParallelJob>(std::move(c));
+
 	auto parallelJob = std::make_shared<TestParallelJob>();
 
 	//parallelJob.resultData.resize(resultSize);
@@ -261,16 +268,13 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 		t = c;
 		}));
 
-	auto future = parallelJob->schedule(resultSize,batchSize,8);
+	auto handle = parallelJob->schedule(resultSize,batchSize,8);
 
 	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([](TestConnector& t) {
 		t.resultData[0] = 12; 
 		}));
 
-	// 4) すべてのジョブ完了を待機
-	//js.waitForAll();
-
-	auto result = future.wait_and_get();
+	auto result = handle.second.wait_and_get();
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	auto globalEnd = ECS::JobSystem::now();
@@ -283,11 +287,11 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	result.resultData[10] = 10;
 
-	// 6) ログを取り出してスレッド別タイムラインを出力
 	auto& dataMap = js.getRecorder()->getDataMap();
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 
-	future = parallelJob->schedule(resultSize, batchSize, 8);
+	//スコープ外で削除されてもParallelJobは実行されるようになっています
+	//future = parallelJob->schedule(resultSize, batchSize, 8);
 }
 
 struct TestVoidParallelJob
@@ -317,9 +321,9 @@ TEST_CASE_ORDER(test_bigVoidJobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	auto future = parallelJob->schedule(resultSize, batchSize, 8);
+	auto handle = parallelJob->schedule(resultSize, batchSize, 8);
 
-	future.wait();
+	handle.second.wait();
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	auto globalEnd = ECS::JobSystem::now();
@@ -336,7 +340,7 @@ TEST_CASE_ORDER(test_bigVoidJobSystem) {
 	auto& dataMap = js.getRecorder()->getDataMap();
 	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 
-	future = parallelJob->schedule(resultSize, batchSize, 8);
+	//future = parallelJob->schedule(resultSize, batchSize, 8);
 }
 
 TEST_CASE(test_sort_empty) {
