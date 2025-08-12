@@ -12,6 +12,7 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     recorder = std::move(rec);
     stopFlag = false;
     nextQueue = 0;
+    threadSize = threadCount;
 
     waitQueues.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {

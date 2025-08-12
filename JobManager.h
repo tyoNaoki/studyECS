@@ -132,7 +132,6 @@ public:
         }
 
         if (t->inDegree.load() == 0) {
-            //pushBottom(t);
             pushWaitQueue(t);
         }
 
@@ -141,96 +140,6 @@ public:
             future
         );
     }
-
-    //template<size_t BufSize>
-    //void schedule_parallelJob(std::vector<ParallelJob<BufSize>>&& jobs) {
-
-    //    auto jobsPtr
-    //        = std::make_shared<std::vector<ParallelJob<BufSize>>>(
-    //            std::move(jobs)
-    //            );
-
-    //    for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
-
-    //        TaskPtr t{ new Task(
-    //            Job([jobsPtr,i]() mutable {
-    //                    (*jobsPtr)[i].invoke();
-    //            }
-    //            ),
-    //            0
-    //        ) };
-
-    //        pushWaitQueue(t);
-    //    }
-    //}
-
-    //template<size_t BufSize>
-    //void schedule_parallelJob(char name,std::vector<ParallelJob<BufSize>>&&jobs) {
-
-    //   auto jobsPtr
-    //       = std::make_shared<std::vector<ParallelJob<BufSize>>>(
-    //           std::move(jobs)
-    //           );
-
-    //   for (uint32_t i = 0; i < jobsPtr->size(); ++i) {
-
-    //        auto rawRec = recorder.get();
-    //        //auto job = jobsPtr[i];
-    //        TaskPtr t{ new Task(
-    //            Job([jobsPtr,i,name,rawRec]() mutable {
-    //                    int h = rawRec ? rawRec->recordStart(name) : 0;
-    //                    (*jobsPtr)[i].invoke();
-    //                    if (rawRec) rawRec->recordEnd(h);
-    //            }
-    //            ),
-    //            0
-    //        )};
-    //        
-    //        pushWaitQueue(t);
-    //   }
-        
-        /*batches.emplace_back(
-                [&](size_t b, size_t l) {
-
-                    int h = recorder ? recorder->recordStart(name) : 0;
-                    for (size_t i = b; i < b + l; ++i) fn(i);
-                    if (recorder) recorder->recordEnd(h);
-
-                    if(counter->fetch_sub(1) == 1){
-                        settable.set_value();
-                    }
-                },
-                begin, len
-                    );*/
-
-        /*for()
-        TaskPtr t{ new Task(
-            Job{ [=]() {
-        size_t count = (total + grain - 1) / grain;
-        for (size_t chunk = 0; chunk < count; ++chunk) {
-            size_t begin = chunk * grain;
-            size_t end = min(begin + grain, total);
-            for (size_t i = begin; i < end; ++i) {
-                f(i);
-            }
-        }
-        } };*/
-
-        
-
-        /*for (auto& d : deps) {
-            std::lock_guard<std::mutex> lk(d->taskMutex);
-            if (d && d->job.valid()) {
-                addDependent(d.get(), t.get());
-            }
-        }
-
-        if (t->inDegree.load() == 0) {
-            pushBottom(t);
-        }*/
-
-        //return future;
-    //}
 
     //debugïtÇ´Jobí«â¡
     template<typename F>
@@ -266,41 +175,6 @@ public:
         return schedule_job(std::move(wrapped), deps);
     }
 
-    //í èÌÅAï¿óÒJobí«â¡
-    /*template<typename F>
-    auto schedule(size_t total,size_t grain,char name,
-        F&& func) {
-
-        auto wrapped = [this,
-            name,
-            fn = std::forward<F>(func)]() mutable
-        {
-            int h = recorder ? recorder->recordStart(name) : 0;
-            fn();
-            if (recorder) recorder->recordEnd(h);
-        };
-
-        return schedule_parallelJob(total,grain,name,std::move(wrapped));
-    }*/
-
-    //debugïtÇ´ï¿óÒJobí«â¡
-   /* std::vector<JobHandle> schedule(uint32_t jobCount,char name,
-        const std::function<void(uint32_t)>& job, const std::vector<JobHandle>& deps = {}) {
-        std::vector<JobHandle> handles(jobCount);
-        for (uint32_t jobIndex = 0; jobIndex < jobCount; jobIndex++) {
-            auto wrapper = [this,name,job, jobIndex]() {
-                auto h = recorder ? recorder->recordStart(name) : 0;
-                job(jobIndex);
-
-                if (recorder) recorder->recordEnd(h);
-            };
-
-            handles[jobIndex] = schedule(wrapper,deps);
-        }
-
-        return handles;
-    }*/
-
     void waitForAll();
 
     void run_one_job();
@@ -322,6 +196,10 @@ public:
     }
 
     void pushWaitQueue(TaskPtr task);
+
+    const size_t getThreadSize() const{
+        return threadSize;
+    }
 
 private:
 
@@ -375,6 +253,7 @@ private:
     JobManager(JobManager&&) = delete;
     JobManager& operator=(JobManager&&) = delete;
 
+    size_t threadSize;
     bool initFlag;
 
     std::vector<std::unique_ptr<WaitQueue<TaskPtr>>> waitQueues;
