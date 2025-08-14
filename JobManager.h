@@ -58,6 +58,12 @@ class JobManager
 {
     using JobQueue = Debug::DebugJobQueue<JobDeque>;
 
+    //仮として60FPS
+    static constexpr float FixedFPS = 60.0f;
+
+    //1フレームあたりの時間
+    static constexpr float FrameTimeMs = 1000.0f / FixedFPS;
+
 public:
     static JobManager& Instance() {
         static JobManager manager;
@@ -92,7 +98,6 @@ public:
         ) };
 
         if (t->inDegree.load() == 0) {
-            //std::lock_guard lk(wakeMutex);
             pushWaitQueue(t);
         }
 
@@ -197,26 +202,28 @@ public:
 
     void pushWaitQueue(TaskPtr task);
 
-    const size_t getThreadSize() const{
-        return threadSize;
-    }
+    //BGJobをglobalBGQueueにセット
+    void pushBackGroudGlobalQueue(TaskPtr&& task);
+    void pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks);
+
+    //フレーム始めに計算した処理数のBGを各ワーカーごとのBGQueueに割り振る。
+    //計算は以下パラメータを使用する。
+    //パラメータ(目標FPSms時間、ワンフレームでどのくらいBGを処理するかの比率、1ジョブの平均実行ms時間)
+    void popBackGroundGlobalQueue();
+
+    const size_t getThreadSize() const{ return threadSize;}
 
 private:
 
     bool pushBottom(TaskPtr task,size_t idx);
-    
-    /*void pushBottom(TaskPtr handle){
-        size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % jobQueues.size();
-        if(jobQueues[idx]->pushBottom(handle)){
-            std::cout << "[START] queue=" << idx
-                << " outstanding=" << outstanding.load()
-                << std::endl;
-
-            wakeCv.notify_one();
-        }
-    }*/
 
     void pushLocalQueue(size_t queueIndex);
+
+    //GlobalBGQueueが空ならNull
+    std::optional<TaskPtr>try_popBG();
+
+    //各ワーカーに振られたBGQueueからBGJobを取り出す
+    bool try_popBackGroudQueue(size_t queueIndex);
 
     void run_pending_job(size_t queueIndex);
 
@@ -247,22 +254,34 @@ private:
 private:
     void abort();
 
+    size_t getNextQueueIndex();
+
+    double calculateBGJobs(double target_ms, double bgRatio, double avgJobTime);
+
 private:
     JobManager() = default;
 
     JobManager(JobManager&&) = delete;
     JobManager& operator=(JobManager&&) = delete;
 
+    double bgRatio = 0.20f;
+    double avg_JobTimeMs = 1.0f;
+
     size_t threadSize;
     bool initFlag;
 
+    std::vector<TaskPtr>globalBackGroudQueue;
+    std::mutex backGroundMutex;
+
+    //バックグラウンドで少しづつ処理される
+    //全ての待機キューを処理時に個数を決めて取り出す。
+    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>>backGroudTimeQueues;
+
+    //待機キュー
     std::vector<std::unique_ptr<WaitQueue<TaskPtr>>> waitQueues;
 
     std::vector<std::thread> workers;
     std::vector<std::unique_ptr<JobQueue>> localQueues;
-
-    std::vector<std::optional<TaskPtr>> globalQueue;
-    std::mutex globalQueueMtx;
 
     std::atomic<bool> stopFlag;
     std::atomic<size_t> outstanding{ 0 };
@@ -272,7 +291,7 @@ private:
     std::mutex            wakeMutex;
     std::condition_variable wakeCv;
 
-    std::atomic<size_t>      nextQueue{ 0 };    
+    std::atomic<size_t>      nextQueue{ 0 };
     std::condition_variable condition;
     std::mutex        finishMutex;
     std::condition_variable finishCv;

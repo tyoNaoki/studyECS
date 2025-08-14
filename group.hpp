@@ -13,6 +13,7 @@
 #include "typeList.hpp"
 #include "World.h"
 #include "SparseSet.h"
+#include <execution>
 
 namespace ECS {
 
@@ -63,7 +64,8 @@ namespace ECS {
         struct std_sort {
             template<typename It, typename Compare = std::less<>, typename... Args>
             void operator()(It first, It last, Compare compare = Compare{}, Args &&...args) const {
-                std::sort(std::forward<Args>(args)..., std::move(first), std::move(last), std::move(compare));
+                std::sort(std::execution::par,std::forward<Args>(args)..., std::move(first), std::move(last), std::move(compare));
+                //std::sort(std::forward<Args>(args)..., std::move(first), std::move(last), std::move(compare));
             }
         };
     }// namespace algorithm

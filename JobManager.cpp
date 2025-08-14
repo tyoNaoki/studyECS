@@ -15,18 +15,20 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     threadSize = threadCount;
 
     waitQueues.reserve(threadCount);
+    backGroudTimeQueues.reserve(threadCount);
+    localQueues.reserve(threadCount);
+
+    //初期化
     for (size_t i = 0; i < threadCount; ++i) {
         waitQueues.push_back(std::make_unique<WaitQueue<TaskPtr>>());
-    }
-
-    localQueues.reserve(threadCount);
-    for (size_t i = 0; i < threadCount; ++i) {
+        backGroudTimeQueues.push_back(std::make_unique<WaitQueue<TaskPtr>>());
         localQueues.emplace_back(
             std::make_unique<JobQueue>(capacity, i)
         );
     }
 
     // workers 初期化
+    workers.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
         workers.emplace_back([this, i]() noexcept {
 
@@ -59,7 +61,7 @@ void JobManager::waitForAll()
 }
 void JobManager::run_one_job()
 {
-    size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % localQueues.size();
+    size_t idx = getNextQueueIndex();
 
     run_pending_job(idx);
 }
@@ -97,24 +99,48 @@ void JobManager::workerThreadFunction(size_t queueIndex)
     }
 }
 
-    bool JobManager::checkRanAllJobInJobQueues()
-    {
-        for (auto& queue : localQueues) {
-            if (queue->validCheck()) {
-                return false;
-            }
+bool JobManager::checkRanAllJobInJobQueues()
+{
+    for (auto& queue : localQueues) {
+        if (queue->validCheck()) {
+            return false;
         }
-
-        return true;
     }
+
+    return true;
+}
 
 void JobManager::pushWaitQueue(TaskPtr task)
 {
-    size_t idx = nextQueue.fetch_add(1, std::memory_order_relaxed) % waitQueues.size();
+    size_t idx = getNextQueueIndex();
 
     waitQueues[idx]->push(task);
     outstanding.fetch_add(1, std::memory_order_acq_rel);
     wakeCv.notify_one();
+}
+
+void JobManager::pushBackGroudGlobalQueue(TaskPtr&& task)
+{
+    if (globalBackGroudQueue.capacity() < globalBackGroudQueue.size() + 1) {
+        globalBackGroudQueue.reserve(globalBackGroudQueue.size() + 16); 
+    }
+
+    globalBackGroudQueue.push_back(std::move(task));
+}
+
+void JobManager::pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks)
+{
+    const size_t size = tasks.size();
+
+    globalBackGroudQueue.reserve(globalBackGroudQueue.size() + size);
+
+    // move で一括挿入
+    globalBackGroudQueue.insert(globalBackGroudQueue.end(),
+        std::make_move_iterator(tasks.begin()),
+        std::make_move_iterator(tasks.end()));
+
+    // タスク数を加算
+    outstanding.fetch_add(size, std::memory_order_acq_rel);
 }
 
 bool JobManager::pushBottom(TaskPtr task, size_t idx)
@@ -130,7 +156,6 @@ bool JobManager::pushBottom(TaskPtr task, size_t idx)
         switch (res.status) {
             case PushStatus::Success:
             {
-                //wakeCv.notify_one();
                 return true;
             }
 
@@ -152,7 +177,6 @@ bool JobManager::pushBottom(TaskPtr task, size_t idx)
                     task = std::move(res.notPushed);
                     //少し待って再挑戦
                     std::this_thread::yield();
-                    //std::this_thread::sleep_for(std::chrono::microseconds(50));
                 }
                 else {
                     fallbackWaitQueue(idx, std::move(res.notPushed));
@@ -173,8 +197,56 @@ void JobManager::pushLocalQueue(size_t queueIndex)
         && pushBottom(std::move(task), queueIndex)){}
 }
 
+std::optional<TaskPtr> JobManager::try_popBG()
+{
+    if (globalBackGroudQueue.empty()) return std::nullopt;
+
+    auto t = std::move(globalBackGroudQueue.back());
+    globalBackGroudQueue.pop_back();
+    return t;
+}
+
+void JobManager::popBackGroundGlobalQueue()
+{
+    constexpr double avg_jobTime = 1.0;
+    const double max_BGJobs = calculateBGJobs(FrameTimeMs, bgRatio, avg_jobTime);
+
+    std::lock_guard<std::mutex> lock(backGroundMutex);
+
+    if (globalBackGroudQueue.empty()) return;
+
+    const size_t max_pop = static_cast<size_t>(std::max(0.0, std::floor(max_BGJobs)));
+    const size_t n = std::min({ globalBackGroudQueue.size(), backGroudTimeQueues.size(), max_pop == 0 ? SIZE_MAX : max_pop });
+
+    size_t queueIndex = 0;
+    for (size_t i = 0; i < max_pop; ++i) {
+        if(auto task = try_popBG()){
+            // 現在のキューにタスクを追加
+            backGroudTimeQueues[queueIndex]->push(std::move(*task));
+        }else{
+            break;
+        }
+
+        // インデックスを更新（次のキューに移動）
+        queueIndex = (queueIndex + 1) % backGroudTimeQueues.size();
+    }
+}
+
+bool JobManager::try_popBackGroudQueue(size_t queueIndex)
+{
+    if (backGroudTimeQueues.empty())return false;
+    TaskPtr task;
+
+    while (backGroudTimeQueues[queueIndex]->try_pop(task)
+        && pushBottom(std::move(task), queueIndex)) {
+    }
+
+    return true;
+}
+
 void JobManager::run_pending_job(size_t queueIndex)
 {
+    //リアルタイムJobを処理
     //自キューからPOP
     {
         auto popRes = localQueues[queueIndex]->popBottom();
@@ -189,6 +261,9 @@ void JobManager::run_pending_job(size_t queueIndex)
         }
     }
 
+    //BGJob処理
+    if (try_popBackGroudQueue(queueIndex))return;
+
     //他スレッドからsteal
     //Block時、steal再挑戦にする
     {
@@ -199,24 +274,6 @@ void JobManager::run_pending_job(size_t queueIndex)
             return;
         }
     }
-
-    /*if (!globalQueue.empty()) {
-
-        std::optional<TaskPtr> fallback;
-        {
-            std::lock_guard lk(globalQueueMtx);
-
-            if (!globalQueue.empty()) {
-                fallback = globalQueue.back();
-                globalQueue.pop_back();
-            }
-        }
-
-        if (fallback) {
-            runJob(queueIndex, std::move(*fallback));
-            return;
-        }
-    }*/
 
     //どちらも取れなければ一旦 yield
     std::this_thread::yield();
@@ -315,6 +372,17 @@ void JobManager::abort()
         abortFlag.store(true, std::memory_order_release);
         finishCv.notify_all();
     }
+}
+
+size_t JobManager::getNextQueueIndex()
+{
+    return nextQueue.fetch_add(1, std::memory_order_relaxed) % waitQueues.size();
+}
+
+double JobManager::calculateBGJobs(double target_ms, double bgRatio, double avgJobTime)
+{
+    double bg_budget_ms = target_ms * bgRatio;  // BG用の時間
+    return bg_budget_ms / avgJobTime;            // 処理可能なジョブ数
 }
 
 }//namespace ECS::JobSystem
