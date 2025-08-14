@@ -1,6 +1,8 @@
 #pragma once
+#undef min
 
-#include <utility>   // std::swap, std::exchange
+#include <utility> 
+#include <algorithm>
 #include <cstddef>   // std::nullptr_t
 #include "JobManager.h"
 #include <variant>
@@ -781,9 +783,8 @@ private:
 //Derived : 派生クラス
 //ParallelJoData : Job実行時に書き込むデータ
 template<typename Derived,typename ParallelJobData  = std::monostate>
-struct IParallelJob : std::enable_shared_from_this<Derived> {
+struct IParallelJob : std::enable_shared_from_this<Derived>{
     using TaskPtr = Ptr::intrusive_ptr<Task>;
-    static constexpr size_t kChunkSize = 4; // 一度に取るバッチ数
 
     using Data_t = ParallelJobData;
 
@@ -813,24 +814,24 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
         typename = std::enable_if_t<!std::is_same_v<T, void>>>
         IParallelJob(T&& d)
         : jobResult(std::forward<T>(d)) {}
-
     
     ~IParallelJob(){};
 
     struct Context {
         std::shared_ptr<Derived> self;
-        size_t total, batchSize, numBatches;
+        size_t total, batchSize, numBatches,chunckBatches;
         std::atomic<size_t>* nextBatch;
         Setter_t setter;
 
         Context(std::atomic<size_t>* next)
-            : total(0), batchSize(0), numBatches(0), nextBatch(next), setter(nullptr,0) {}
+            : total(0), batchSize(0), numBatches(0),chunckBatches(0),nextBatch(next), setter(nullptr,0) {}
 
          Context(std::shared_ptr<Derived> s,
             size_t t, size_t b, size_t n,
+            size_t c,
             std::atomic<size_t>* next,
             Setter_t&& set)
-      : self(s),total(t),batchSize(b),numBatches(n),nextBatch(next),setter(std::move(set)){}
+      : self(s),total(t),batchSize(b),numBatches(n),chunckBatches(c),nextBatch(next),setter(std::move(set)){}
 
         ~Context(){};
     };
@@ -841,7 +842,9 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
         const size_t numBatches = (total + batchSize - 1) / batchSize;
 
         const size_t threadSize = JobManager::Instance().getThreadSize();
-        const size_t workerNum = min({ threadSize, workerCount, numBatches });
+        const size_t workerNum = std::min({threadSize,workerCount,numBatches});
+
+        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
 
         auto [settable, future] = Setter_t::create(numBatches);
 
@@ -857,6 +860,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
             , total
             , batchSize
             , numBatches
+            , chunkBatches
             , &nextBatch_
             , std::move(settable)
             );
@@ -880,9 +884,14 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
     }
 
     inline std::pair<std::vector<TaskPtr>,Future_t> schedule(size_t total,size_t batchSize,size_t workerCount,const std::vector<TaskPtr>&deps){
-        ASSERT(total > 0 && batchSize > 0,"parallelJob schedule total or batchSize is zero");
+        ASSERT(total > 0 && batchSize > 0&& workerCount > 0,"parallelJob schedule total or batchSize is zero");
 
-        size_t numBatches = (total + batchSize - 1) / batchSize;
+        const size_t numBatches = (total + batchSize - 1) / batchSize;
+        const size_t threadSize = JobManager::Instance().getThreadSize();
+        const size_t workerNum = std::min({ threadSize,workerCount,numBatches });
+
+        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
+
         auto [settable, future] = Setter_t::create(numBatches);
 
         //実行前にJob実行の参照データに変更適用
@@ -897,12 +906,13 @@ struct IParallelJob : std::enable_shared_from_this<Derived> {
             ,total
             ,batchSize
             ,numBatches
+            ,chunkBatches
             ,&nextBatch_
             ,std::move(settable)
             );
 
         std::vector<TaskPtr>tasks;
-        tasks.reserve(workerCount);
+        tasks.reserve(workerNum);
 
         // ワーカー数分だけ Task を作成して登録
         for (size_t w = 0; w < workerCount; ++w) {
@@ -946,22 +956,23 @@ private:
         const size_t batchSize = ctx->batchSize;
         const size_t numBatches = ctx->numBatches;
         const size_t total = ctx->total;
+        const size_t chunkBatches = ctx->chunkBatches;
 
         while (true) {
             //回数見直し、バッチ回数に合わせる。応じて変える
             //numBatchesも
-            const size_t idx = ctx->nextBatch->fetch_add(kChunkSize, std::memory_order_relaxed);
+            const size_t idx = ctx->nextBatch->fetch_add(chunkBatches, std::memory_order_relaxed);
 
             if(idx >= numBatches) return;
 
-            const size_t taken = min(kChunkSize, numBatches - idx);
+            const size_t taken = std::min(chunkBatches, numBatches - idx);
 
             for (size_t b = 0; b < taken; ++b) {
                 const size_t start = (idx + b) * batchSize;
 
                 ASSERT(start < total,"IParallelJob workerEntry : start >= total");
 
-                const size_t len = min(batchSize, total - start);
+                const size_t len = std::min(batchSize, total - start);
 
                 self->ExecuteBatch(start,len,self.get());
 

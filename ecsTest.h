@@ -212,7 +212,6 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!js.isAbort(), "JobSystem Work Test");
-
 	
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
