@@ -16,6 +16,7 @@
 
 namespace ECS::JobSystem{
    
+    
     //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
 
 template<typename T>
@@ -56,6 +57,7 @@ private:
 
 class JobManager
 {
+
     using JobQueue = Debug::DebugJobQueue<JobDeque>;
 
     //仮として60FPS
@@ -63,6 +65,13 @@ class JobManager
 
     //1フレームあたりの時間
     static constexpr float FrameTimeMs = 1000.0f / FixedFPS;
+
+    JobManager() = default;
+
+    JobManager(JobManager&&) = delete;
+    JobManager& operator=(JobManager&&) = delete;
+    JobManager(const JobManager&) = delete;
+    JobManager& operator=(const JobManager&) = delete;
 
 public:
     static JobManager& Instance() {
@@ -98,7 +107,7 @@ public:
         ) };
 
         if (t->inDegree.load() == 0) {
-            pushWaitQueue(t);
+            pushRealTimeJobWaitQueue(t);
         }
 
         return std::make_pair(
@@ -137,7 +146,7 @@ public:
         }
 
         if (t->inDegree.load() == 0) {
-            pushWaitQueue(t);
+            pushRealTimeJobWaitQueue(t);
         }
 
         return std::make_pair(
@@ -182,7 +191,7 @@ public:
 
     void waitForAll();
 
-    void run_one_job();
+    void waitForRealTimeJobAll();
 
     void workerThreadFunction(size_t queueIndex);
 
@@ -200,7 +209,7 @@ public:
         return nullptr;
     }
 
-    void pushWaitQueue(TaskPtr task);
+    void pushRealTimeJobWaitQueue(TaskPtr task);
 
     //BGJobをglobalBGQueueにセット
     void pushBackGroudGlobalQueue(TaskPtr&& task);
@@ -214,25 +223,23 @@ public:
     const size_t getThreadSize() const{ return threadSize;}
 
 private:
+    bool pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitQueue<TaskPtr>>& waitQueue);
 
-    bool pushBottom(TaskPtr task,size_t idx);
-
-    void pushLocalQueue(size_t queueIndex);
+    void pushLocalQueue(std::unique_ptr<JobQueue>&localQueue,std::unique_ptr<WaitQueue<TaskPtr>>&waitQueue);
 
     //GlobalBGQueueが空ならNull
-    std::optional<TaskPtr>try_popBG();
+    std::optional<TaskPtr>try_popBackGroundGlobalQueue();
 
-    //各ワーカーに振られたBGQueueからBGJobを取り出す
-    bool try_popBackGroudQueue(size_t queueIndex);
+    void run_realTimeQueue(size_t queueIndex);
 
-    void run_pending_job(size_t queueIndex);
+    void run_backGroundQueue(size_t queueIndex);
 
-    //stealTopを使って他ワーカーから奪う
-    StealResult stealFromOthers(size_t stealOwner);
+    bool pop_and_steal_Queue(size_t queueIndex,std::vector<std::unique_ptr<JobQueue>>&stealQueues,std::function<void()>sub_counterFunc);
 
-    void fallbackWaitQueue(size_t queueIndex,TaskPtr job) {
+    StealResult stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues);
 
-        waitQueues[queueIndex]->push(std::move(job));
+    void fallbackWaitQueue(std::unique_ptr<WaitQueue<TaskPtr>>& waitQueue,TaskPtr job) {
+       waitQueue->push(std::move(job));
     }
 
     void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask);
@@ -248,21 +255,17 @@ private:
         child->inDegree.fetch_add(1);
     }
 
-    JobManager(const JobManager&) = delete;
-    JobManager& operator=(const JobManager&) = delete;
-
-private:
     void abort();
 
     size_t getNextQueueIndex();
 
     double calculateBGJobs(double target_ms, double bgRatio, double avgJobTime);
 
-private:
-    JobManager() = default;
+    void sub_realTimeJob_counter();
 
-    JobManager(JobManager&&) = delete;
-    JobManager& operator=(JobManager&&) = delete;
+    void sub_backGroundJob_counter();
+
+private:
 
     double bgRatio = 0.20f;
     double avg_JobTimeMs = 1.0f;
@@ -275,21 +278,33 @@ private:
 
     //バックグラウンドで少しづつ処理される
     //全ての待機キューを処理時に個数を決めて取り出す。
-    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>>backGroudTimeQueues;
+    //処理フレームを問わない。
+    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>>backGroudWaitQueues;
+    std::vector<std::unique_ptr<JobQueue>> backGroundLocalQueue;
 
-    //待機キュー
-    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>> waitQueues;
+    //リアルタイムキュー
+    //優先的に処理される
+    //1フレーム以内に処理を保証
+    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>> realTimeWaitQueues;
+    std::vector<std::unique_ptr<JobQueue>> realTimeLocalQueue;
 
     std::vector<std::thread> workers;
-    std::vector<std::unique_ptr<JobQueue>> localQueues;
 
     std::atomic<bool> stopFlag;
+    
+    //現ジョブの総数
     std::atomic<size_t> outstanding{ 0 };
+
+    std::atomic<size_t> realTimeJobCounter;
+    std::atomic<size_t> backGroundCounter;
 
     std::mutex stealMutex;
 
     std::mutex            wakeMutex;
     std::condition_variable wakeCv;
+
+    std::mutex            realTimeJob_Mutex;
+    std::condition_variable realTimeJob_WaitCv;
 
     std::atomic<size_t>      nextQueue{ 0 };
     std::condition_variable condition;
