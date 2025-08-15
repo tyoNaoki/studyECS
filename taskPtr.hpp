@@ -682,7 +682,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         auto task = new Task(Job(std::move(work)), 0);
         TaskPtr taskPtr{ std::move(task) };
 
-        JobManager::Instance().pushWaitQueue(taskPtr);
+        JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
 
         return std::make_pair(taskPtr, future);
     }
@@ -714,7 +714,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         }
 
         if (taskPtr->inDegree.load() == 0) {
-            JobManager::Instance().pushWaitQueue(taskPtr);
+            JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
         }
 
         return std::make_pair(taskPtr,future);
@@ -819,19 +819,19 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
 
     struct Context {
         std::shared_ptr<Derived> self;
-        size_t total, batchSize, numBatches,chunckBatches;
+        size_t total, batchSize, numBatches, chunkBatches;
         std::atomic<size_t>* nextBatch;
         Setter_t setter;
 
         Context(std::atomic<size_t>* next)
-            : total(0), batchSize(0), numBatches(0),chunckBatches(0),nextBatch(next), setter(nullptr,0) {}
+            : total(0), batchSize(0), numBatches(0), chunkBatches(0),nextBatch(next), setter(nullptr,0) {}
 
          Context(std::shared_ptr<Derived> s,
             size_t t, size_t b, size_t n,
             size_t c,
             std::atomic<size_t>* next,
             Setter_t&& set)
-      : self(s),total(t),batchSize(b),numBatches(n),chunckBatches(c),nextBatch(next),setter(std::move(set)){}
+      : self(s),total(t),batchSize(b),numBatches(n), chunkBatches(c),nextBatch(next),setter(std::move(set)){}
 
         ~Context(){};
     };
@@ -875,7 +875,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
             auto task = new Task(Job(std::move(work)), 0);
             TaskPtr taskPtr{ std::move(task) };
 
-            JobManager::Instance().pushWaitQueue(taskPtr);
+            JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
 
             tasks.push_back(taskPtr);
         }
@@ -929,7 +929,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
             }
 
             if (taskPtr->inDegree.load() == 0) {
-                JobManager::Instance().pushWaitQueue(taskPtr);
+                JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
             }
 
             tasks.push_back(taskPtr);

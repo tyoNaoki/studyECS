@@ -205,7 +205,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	}
 
 	// 4) ‚·‚×‚Ä‚ÌƒWƒ‡ƒuŠ®—¹‚ð‘Ò‹@
-	js.waitForAll();
+	js.waitForRealTimeJobAll();
 
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
