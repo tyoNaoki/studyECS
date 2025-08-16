@@ -208,11 +208,10 @@ public:
 
         return nullptr;
     }
-
-    void pushRealTimeJobWaitQueue(TaskPtr task);
-
-    //BGJobをglobalBGQueueにセット
-    void pushBackGroudGlobalQueue(TaskPtr&& task);
+    //Taskが持つcategoryに応じて対応のwaitQueueにpushする
+    void pushJobWaitQueue(TaskPtr task);
+    
+    //まとめてBackGroundJobをpushする用
     void pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks);
 
     //フレーム始めに計算した処理数のBGを各ワーカーごとのBGQueueに割り振る。
@@ -223,6 +222,11 @@ public:
     const size_t getThreadSize() const{ return threadSize;}
 
 private:
+    void pushRealTimeJobWaitQueue(TaskPtr task);
+
+    //BGJobをglobalBGQueueにセット
+    void pushBackGroudGlobalQueue(TaskPtr task);
+
     bool pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitQueue<TaskPtr>>& waitQueue);
 
     void pushLocalQueue(std::unique_ptr<JobQueue>&localQueue,std::unique_ptr<WaitQueue<TaskPtr>>&waitQueue);
@@ -279,7 +283,7 @@ private:
     //バックグラウンドで少しづつ処理される
     //全ての待機キューを処理時に個数を決めて取り出す。
     //処理フレームを問わない。
-    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>>backGroudWaitQueues;
+    std::vector<std::unique_ptr<WaitQueue<TaskPtr>>>backGroundWaitQueues;
     std::vector<std::unique_ptr<JobQueue>> backGroundLocalQueue;
 
     //リアルタイムキュー
