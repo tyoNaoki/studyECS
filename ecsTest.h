@@ -76,7 +76,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_particalJobSystem",1);
+	RUN_TEST("test_bigJobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -135,7 +135,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 20; ++i) {
 
-		job->schedule();
+		job->schedule(ECS::JobSystem::JobCategory::RealTime);
 
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
@@ -175,7 +175,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'A';
 
-		auto handle = job->schedule();
+		auto handle = job->schedule(ECS::JobSystem::JobCategory::RealTime);
 
 		jobAHandles.push_back(handle.first);
 
@@ -188,7 +188,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'B';
 
-		job->schedule(jobAHandles);
+		job->schedule(ECS::JobSystem::JobCategory::RealTime,jobAHandles);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -198,7 +198,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'C';
 
-		auto handle = job->schedule();
+		auto handle = job->schedule(ECS::JobSystem::JobCategory::RealTime);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -257,8 +257,6 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	auto parallelJob = std::make_shared<TestParallelJob>();
 
-	//parallelJob.resultData.resize(resultSize);
-
 	auto globalStart = ECS::JobSystem::now();
 
 	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([&resultSize](TestConnector& t) {
@@ -267,7 +265,7 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 		t = c;
 		}));
 
-	auto handle = parallelJob->schedule(resultSize,batchSize,8);
+	auto handle = parallelJob->schedule(ECS::JobSystem::JobCategory::RealTime,resultSize,batchSize,8);
 
 	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([](TestConnector& t) {
 		t.resultData[0] = 12; 
@@ -320,7 +318,7 @@ TEST_CASE_ORDER(test_bigVoidJobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	auto handle = parallelJob->schedule(resultSize, batchSize, 8);
+	auto handle = parallelJob->schedule(ECS::JobSystem::JobCategory::RealTime,resultSize, batchSize, 8);
 
 	handle.second.wait();
 

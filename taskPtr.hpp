@@ -84,6 +84,7 @@ public:
 
 private:
     T* ptr_;
+   
 };
 
 // non-member swap
@@ -109,9 +110,11 @@ template<typename T>
 bool operator!=(intrusive_ptr<T> const& a, std::nullptr_t) noexcept {
     return static_cast<bool>(a);
 }
+
+inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
+inline void intrusive_ptr_release(Task* p) { p->release(); }
+
 } //namespace Ptr
-
-
 
 struct Job {
 
@@ -204,18 +207,25 @@ public:
     explicit operator bool() const noexcept = delete;
 };
 
+enum class JobCategory : uint8_t {
+    RealTime,
+    BackGround
+};
+
 struct Task {
-    std::atomic<uint32_t> refCount{ 0 };
     Job job;
     std::atomic<int>   inDegree{ 0 };
     Ptr::intrusive_ptr<Task> nextDependent;
     std::mutex taskMutex;
+    JobCategory category;
+    std::atomic<uint32_t> refCount;
 
-    Task(Job jb, int degree)
+    Task(Job jb, int degree,JobCategory category)
         : refCount(0)
         , job(std::move(jb))
         , inDegree(degree)
         , nextDependent(nullptr)
+        ,category(category)
     {}
 
     void add_ref() { refCount.fetch_add(1, std::memory_order_relaxed); }
@@ -234,8 +244,7 @@ struct Task {
     }
 };
 
-inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
-inline void intrusive_ptr_release(Task* p) { p->release(); }
+
 
 // 未 specialization：結果を持てる型用
 template<typename T>
@@ -663,7 +672,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         ~Context() {};
     };
 
-    inline std::pair<TaskPtr, Future_t> schedule() {
+    inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
@@ -679,7 +688,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         // ワーカー数分だけ Task を作成して登録
         auto work = [ctx]() { workerEntry(ctx); };
 
-        auto task = new Task(Job(std::move(work)), 0);
+        auto task = new Task(Job(std::move(work)), 0,cat);
         TaskPtr taskPtr{ std::move(task) };
 
         JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
@@ -687,7 +696,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         return std::make_pair(taskPtr, future);
     }
 
-    inline std::pair<TaskPtr,Future_t> schedule(const std::vector<TaskPtr>& deps) {
+    inline std::pair<TaskPtr,Future_t> schedule(JobCategory cat,const std::vector<TaskPtr>& deps) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
@@ -703,7 +712,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         // ワーカー数分だけ Task を作成して登録
         auto work = [ctx]() { workerEntry(ctx); };
 
-        auto task = new Task(Job(std::move(work)), 0);
+        auto task = new Task(Job(std::move(work)), 0,cat);
         TaskPtr taskPtr{ std::move(task) };
 
         for (auto& d : deps) {
@@ -714,7 +723,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         }
 
         if (taskPtr->inDegree.load() == 0) {
-            JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
+            (taskPtr);
         }
 
         return std::make_pair(taskPtr,future);
@@ -836,7 +845,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         ~Context(){};
     };
 
-    inline std::pair<std::vector<TaskPtr>, Future_t> schedule(const size_t total,const size_t batchSize,const size_t workerCount) {
+    inline std::pair<std::vector<TaskPtr>, Future_t> schedule(JobCategory cat, const size_t total,const size_t batchSize,const size_t workerCount) {
         ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
 
         const size_t numBatches = (total + batchSize - 1) / batchSize;
@@ -872,10 +881,10 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         for (size_t w = 0; w < workerNum; ++w) {
             auto work = [ctx]() { workerEntry(ctx); };
 
-            auto task = new Task(Job(std::move(work)), 0);
+            auto task = new Task(Job(std::move(work)), 0,cat);
             TaskPtr taskPtr{ std::move(task) };
 
-            JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
+            JobManager::Instance().pushJobWaitQueue(taskPtr);
 
             tasks.push_back(taskPtr);
         }
@@ -883,7 +892,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         return std::make_pair(tasks, future);
     }
 
-    inline std::pair<std::vector<TaskPtr>,Future_t> schedule(size_t total,size_t batchSize,size_t workerCount,const std::vector<TaskPtr>&deps){
+    inline std::pair<std::vector<TaskPtr>,Future_t> schedule(JobCategory cat,size_t total,size_t batchSize,size_t workerCount,const std::vector<TaskPtr>&deps){
         ASSERT(total > 0 && batchSize > 0&& workerCount > 0,"parallelJob schedule total or batchSize is zero");
 
         const size_t numBatches = (total + batchSize - 1) / batchSize;
@@ -918,7 +927,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         for (size_t w = 0; w < workerCount; ++w) {
             auto work = [ctx]() { workerEntry(ctx); };
 
-            auto task = new Task(Job(std::move(work)), 0);
+            auto task = new Task(Job(std::move(work)), 0,cat);
             TaskPtr taskPtr{std::move(task)};
 
             for (auto& d : deps) {
@@ -929,7 +938,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
             }
 
             if (taskPtr->inDegree.load() == 0) {
-                JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
+                JobManager::Instance().pushJobWaitQueue(taskPtr);
             }
 
             tasks.push_back(taskPtr);
