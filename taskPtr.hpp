@@ -30,13 +30,15 @@ public:
     // raw ポインタから参照カウントを +1 して保持
     explicit intrusive_ptr(T* p) noexcept
         : ptr_(p) {
-        if (ptr_) intrusive_ptr_add_ref(ptr_);
+        //if (ptr_) intrusive_ptr_add_ref(ptr_);
+        if (ptr_) ptr_->add_ref();
     }
 
     // コピー：参照カウンタ +1
     intrusive_ptr(intrusive_ptr const& o) noexcept
         : ptr_(o.ptr_) {
-        if (ptr_) intrusive_ptr_add_ref(ptr_);
+        //if (ptr_) intrusive_ptr_add_ref(ptr_);
+        if (ptr_) ptr_->add_ref();
     }
 
     // ムーブ：コピー先だけ ptr を奪う（参照カウントは変えない）
@@ -47,7 +49,8 @@ public:
 
     // デストラクタ：参照カウント -1、0 なら delete
     ~intrusive_ptr() noexcept {
-        if (ptr_) intrusive_ptr_release(ptr_);
+        //if (ptr_) intrusive_ptr_release(ptr_);
+        if (ptr_) ptr_->release();
     }
 
     // -- assignment operators --
@@ -111,8 +114,8 @@ bool operator!=(intrusive_ptr<T> const& a, std::nullptr_t) noexcept {
     return static_cast<bool>(a);
 }
 
-inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
-inline void intrusive_ptr_release(Task* p) { p->release(); }
+//inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
+//inline void intrusive_ptr_release(Task* p) { p->release(); }
 
 } //namespace Ptr
 
@@ -672,7 +675,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         ~Context() {};
     };
 
-    inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat) {
+    inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
@@ -691,12 +694,12 @@ struct IJob : std::enable_shared_from_this<Derived> {
         auto task = new Task(Job(std::move(work)), 0,cat);
         TaskPtr taskPtr{ std::move(task) };
 
-        JobManager::Instance().pushRealTimeJobWaitQueue(taskPtr);
+        JobManager::Instance().pushJobWaitQueue(taskPtr);
 
         return std::make_pair(taskPtr, future);
     }
 
-    inline std::pair<TaskPtr,Future_t> schedule(JobCategory cat,const std::vector<TaskPtr>& deps) {
+    inline std::pair<TaskPtr,Future_t> schedule(const std::vector<TaskPtr>& deps, JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用

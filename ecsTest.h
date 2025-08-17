@@ -76,7 +76,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_bigJobSystem",1);
+	RUN_TEST("test_jobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -127,19 +127,28 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.Initialize(4,std::move(recorder));
+	jm.setFrameTime(std::chrono::steady_clock::now());
 
 	auto job = std::make_shared<TestJob>();
 
 	auto globalStart = ECS::JobSystem::now();
 
+	for(int i = 0;i < 20;i++){
+		job->schedule(ECS::JobSystem::JobCategory::BackGround);
+	}
+
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i < 20; ++i) {
 
-		job->schedule(ECS::JobSystem::JobCategory::RealTime);
+		job->schedule();
 
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}
+
+	jm.waitForAllRealTimeJob();
+	std::printf("realTime job finished!! \n");
+	jm.popGlobalBackGroundQueue();
 
 	// 4) すべてのジョブ完了を待機
 	jm.waitForAll();
@@ -175,7 +184,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'A';
 
-		auto handle = job->schedule(ECS::JobSystem::JobCategory::RealTime);
+		auto handle = job->schedule();
 
 		jobAHandles.push_back(handle.first);
 
@@ -188,7 +197,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'B';
 
-		job->schedule(ECS::JobSystem::JobCategory::RealTime,jobAHandles);
+		job->schedule(jobAHandles);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -198,14 +207,14 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'C';
 
-		auto handle = job->schedule(ECS::JobSystem::JobCategory::RealTime);
+		auto handle = job->schedule();
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}
 
 	// 4) すべてのジョブ完了を待機
-	js.waitForRealTimeJobAll();
+	js.waitForAllRealTimeJob();
 
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);

@@ -191,7 +191,7 @@ public:
 
     void waitForAll();
 
-    void waitForRealTimeJobAll();
+    void waitForAllRealTimeJob();
 
     void workerThreadFunction(size_t queueIndex);
 
@@ -208,6 +208,7 @@ public:
 
         return nullptr;
     }
+
     //Taskが持つcategoryに応じて対応のwaitQueueにpushする
     void pushJobWaitQueue(TaskPtr task);
     
@@ -217,9 +218,13 @@ public:
     //フレーム始めに計算した処理数のBGを各ワーカーごとのBGQueueに割り振る。
     //計算は以下パラメータを使用する。
     //パラメータ(目標FPSms時間、ワンフレームでどのくらいBGを処理するかの比率、1ジョブの平均実行ms時間)
-    void popBackGroundGlobalQueue();
+    void popGlobalBackGroundQueue();
 
     const size_t getThreadSize() const{ return threadSize;}
+
+    std::chrono::steady_clock::time_point setFrameTime(std::chrono::steady_clock::time_point time);
+
+    std::chrono::steady_clock::time_point getFrameTime() const;
 
 private:
     void pushRealTimeJobWaitQueue(TaskPtr task);
@@ -232,7 +237,7 @@ private:
     void pushLocalQueue(std::unique_ptr<JobQueue>&localQueue,std::unique_ptr<WaitQueue<TaskPtr>>&waitQueue);
 
     //GlobalBGQueueが空ならNull
-    std::optional<TaskPtr>try_popBackGroundGlobalQueue();
+    std::optional<TaskPtr>try_popGlobalBackGroundQueue();
 
     void run_realTimeQueue(size_t queueIndex);
 
@@ -263,7 +268,7 @@ private:
 
     size_t getNextQueueIndex();
 
-    double calculateBGJobs(double target_ms, double bgRatio, double avgJobTime);
+    double calculateBGJobs(double target_ms, double elapsed_ms, double bgRatio, double avgJobTime);
 
     void sub_realTimeJob_counter();
 
@@ -273,6 +278,9 @@ private:
 
     double bgRatio = 0.20f;
     double avg_JobTimeMs = 1.0f;
+    double avg_ExecuteJobTime = 1.0f;
+
+    std::chrono::steady_clock::time_point elapsedTime;
 
     size_t threadSize;
     bool initFlag;

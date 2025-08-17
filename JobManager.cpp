@@ -67,7 +67,7 @@ void JobManager::waitForAll()
         });
 }
 
-void JobManager::waitForRealTimeJobAll()
+void JobManager::waitForAllRealTimeJob()
 {
     std::unique_lock<std::mutex> lk(realTimeJob_Mutex);
 
@@ -130,6 +130,17 @@ void JobManager::pushJobWaitQueue(TaskPtr task)
     default:
         break;
     }
+}
+
+std::chrono::steady_clock::time_point JobManager::setFrameTime(std::chrono::steady_clock::time_point time)
+{
+    elapsedTime = time;
+    return elapsedTime; // メンバ変数に時間を記録
+}
+
+std::chrono::steady_clock::time_point JobManager::getFrameTime() const
+{
+    return elapsedTime;
 }
 
 void JobManager::pushRealTimeJobWaitQueue(TaskPtr task)
@@ -233,8 +244,10 @@ void JobManager::pushLocalQueue(std::unique_ptr<JobQueue>& localQueue, std::uniq
     }
 }
 
-std::optional<TaskPtr> JobManager::try_popBackGroundGlobalQueue()
+std::optional<TaskPtr> JobManager::try_popGlobalBackGroundQueue()
 {
+    std::lock_guard<std::mutex>lock(backGroundMutex);
+
     if (globalBackGroudQueue.empty()) return std::nullopt;
 
     auto t = std::move(globalBackGroudQueue.back());
@@ -242,37 +255,43 @@ std::optional<TaskPtr> JobManager::try_popBackGroundGlobalQueue()
     return t;
 }
 
-void JobManager::popBackGroundGlobalQueue()
-{
-    constexpr double avg_jobTime = 1.0;
-    const double max_BGJobs = calculateBGJobs(FrameTimeMs, bgRatio, avg_jobTime);
+void JobManager::popGlobalBackGroundQueue() {
+    if (globalBackGroudQueue.empty()) return; // グローバルキューが空の場合、即終了
 
-    std::lock_guard<std::mutex> lock(backGroundMutex);
+    auto startTime = getFrameTime();
+    auto elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - startTime).count();
 
-    if (globalBackGroudQueue.empty()) return;
+    // BackGround処理の比率動的調整
+    double bgRatio = outstanding.load() > 0 ? backGroundCounter.load() / outstanding.load() : 0.1;
+    bgRatio = std::clamp(bgRatio, 0.1, 0.5);  // Clampで範囲制限
+    const double max_BGJobs = std::floor(calculateBGJobs(FrameTimeMs, elapsed_ms, bgRatio, avg_ExecuteJobTime));
 
-    const size_t max_pop = static_cast<size_t>(std::max(0.0, std::floor(max_BGJobs)));
-    const size_t n = std::min({ globalBackGroudQueue.size(), backGroundWaitQueues.size(), max_pop == 0 ? SIZE_MAX : max_pop });
+    const size_t max_pop = static_cast<size_t>(std::max(0.0, max_BGJobs));
+    const size_t n = std::min({ globalBackGroudQueue.size(), max_pop});
 
     size_t queueIndex = 0;
-    for (size_t i = 0; i < max_pop; ++i) {
-        if(auto task = try_popBackGroundGlobalQueue()){
-            // 現在のキューにタスクを追加
+
+    for (size_t i = 0; i < n; ++i) {
+        if (auto task = try_popGlobalBackGroundQueue()) {
+            // 現在のワーカー待機キューにタスクを割り振り
             backGroundWaitQueues[queueIndex]->push(std::move(*task));
-        }else{
-            break;
+        }
+        else {
+            break;  // グローバルキューが空になった場合終了
         }
 
-        // インデックスを更新（次のキューに移動）
+        // 次のキューに割り振り
         queueIndex = (queueIndex + 1) % backGroundWaitQueues.size();
     }
 }
+
 
 void JobManager::run_realTimeQueue(size_t queueIndex)
 {
     pushLocalQueue(realTimeLocalQueue[queueIndex], realTimeWaitQueues[queueIndex]);
 
-    if(!pop_and_steal_Queue(
+    if(realTimeJobCounter == 0||
+        !pop_and_steal_Queue(
         queueIndex
         ,realTimeLocalQueue
         , [&]() { sub_realTimeJob_counter();}) 
@@ -462,8 +481,15 @@ size_t JobManager::getNextQueueIndex()
     return nextQueue.fetch_add(1, std::memory_order_relaxed) % realTimeWaitQueues.size();
 }
 
-double JobManager::calculateBGJobs(double target_ms, double bgRatio, double avgJobTime)
+double JobManager::calculateBGJobs(double target_ms, double elapsed_ms,double bgRatio, double avgJobTime)
 {
+    ASSERT(avgJobTime > 0.0,"calculateBGJobs abgJobTime <= 0.0");
+
+    constexpr double min_safe_time = 2.0;  // 最低限必要な時間（バッファ）
+
+    double remaining_ms = target_ms - elapsed_ms;
+    if (remaining_ms <= min_safe_time) return 0.0;  // バッファを超えない場合は処理しない
+
     double bg_budget_ms = target_ms * bgRatio;  // BG用の時間
     return bg_budget_ms / avgJobTime;            // 処理可能なジョブ数
 }
