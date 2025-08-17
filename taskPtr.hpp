@@ -675,7 +675,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         ~Context() {};
     };
 
-    inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat) {
+    inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
@@ -699,7 +699,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         return std::make_pair(taskPtr, future);
     }
 
-    inline std::pair<TaskPtr,Future_t> schedule(JobCategory cat,const std::vector<TaskPtr>& deps) {
+    inline std::pair<TaskPtr,Future_t> schedule(const std::vector<TaskPtr>& deps, JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
