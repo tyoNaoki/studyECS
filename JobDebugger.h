@@ -46,7 +46,7 @@ namespace ECS::JobSystem::Debug {
         PopResult popBottom() {
             auto res = BaseQueue::popBottom();
 
-            if (res.status == PopStatus::Success) {
+            /*if (res.status == PopStatus::Success) {
                 resetTimer();
             }
             else {
@@ -64,14 +64,14 @@ namespace ECS::JobSystem::Debug {
                     }
                     
                 }
-            }
+            }*/
             return res;
         }
 
         StealResult stealTop(size_t index) {
             auto res = BaseQueue::stealTop(index);
 
-            if (res.status == StealStatus::Success) {
+            /*if (res.status == StealStatus::Success) {
                 resetTimer();
             }
             else {
@@ -88,7 +88,7 @@ namespace ECS::JobSystem::Debug {
                         return res;
                     }
                 }
-            }
+            }*/
 
             return res;
         }
