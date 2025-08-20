@@ -115,8 +115,8 @@ struct TestJob
 	using Base::Base;
 
 	inline int Execute() {
-		int sleepTime = generateRandomInt(5, 10);
-		busyWait(std::chrono::milliseconds(sleepTime));
+		//int sleepTime = generateRandomInt(5, 10);
+		//busyWait(std::chrono::milliseconds(sleepTime));
 
 		auto value = this->jobResult.value;
 		return value * value;
@@ -126,8 +126,8 @@ struct TestJob
 TEST_CASE_PRIORITY(test_jobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
-	jm.Initialize(4,std::move(recorder));
-	jm.setFrameTime(std::chrono::steady_clock::now());
+	jm.Initialize(7,std::move(recorder));
+	jm.setStartFrameTime();
 
 	auto job = std::make_shared<TestJob>();
 
@@ -138,7 +138,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	}
 
 	// 3) 20 個のジョブをスケジュール
-	for (int i = 0; i < 20; ++i) {
+	for (int i = 0; i < 90'000; ++i) {
 
 		job->schedule();
 
