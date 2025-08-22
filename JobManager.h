@@ -20,97 +20,183 @@ namespace ECS::JobSystem{
     
     //using JobHandle = std::pair<TaskPtr,std::unique_ptr<IFuture>>;
 
-    template <typename T, size_t Capacity>
-    class WaitJobBuffer {
-    public:
-        void push(const T& value) {
-            std::unique_lock<std::mutex> lock(mutex_);
+//参考URL
+// https://qiita.com/taqu/items/45ab4fb57e4079c3be94
+// Qiita記事[Chunk allocator]
+// 
+//Capactityは255まで指定可能
+template <typename T, size_t Capacity, size_t PageSize, size_t Align = 16>
+class ChunkAllocator {
+    using u8 = std::uint8_t;
 
-            not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
+    static_assert(Capacity <= std::numeric_limits<u8>::max(),
+        "Capacity must fit in u8 (<= 255)");
 
-            buffer_[tail_] = value;
-            tail_ = (tail_ + 1) % Capacity;
-            size_.fetch_add(1, std::memory_order_release);
-
-            lock.unlock();
-            not_empty_.notify_one();
-        }
-
-        // ロックなし pop（単一スレッド専用）
-        bool try_pop(T& value) {
-            if (size_.load(std::memory_order_acquire) == 0) {
-                return false;
-            }
-
-            value = std::move(buffer_[head_]);
-            head_ = (head_ + 1) % Capacity;
-            size_.fetch_sub(1, std::memory_order_release);
-
-            // 空きができたら Producer に通知
-            not_full_.notify_one();
-            return true;
-        }
-
-        bool wait_and_pop(T& value) {
-            std::unique_lock<std::mutex> lock(mutex_);
-
-            not_empty_.wait(lock, [this] { return size_.load(std::memory_order_acquire) > 0; });
-
-            value = std::move(buffer_[head_]);
-            head_ = (head_ + 1) % Capacity;
-            size_.fetch_sub(1, std::memory_order_release);
-
-            lock.unlock();
-            not_full_.notify_one();
-            return true;
-        }
-
-    private:
-        std::array<T, Capacity> buffer_{};
-        size_t head_ = 0;
-        size_t tail_ = 0;
-        std::atomic<size_t> size_{ 0 };
-
-        std::mutex mutex_; // Producer 同士の競合用
-        std::condition_variable not_empty_;
-        std::condition_variable not_full_;
+public:
+    struct TaskChunk {
+        u8 next_;
+        u8 count;             
+        T tasks[Capacity];    
+        bool full() const { return count == Capacity; }
     };
 
-template<typename T>
-class WaitQueue {
-public:
-    void push(T v) {
-        std::lock_guard<std::mutex> lk(m);
-        q.push(std::move(v));
-        cv.notify_one();
+    static constexpr size_t ChunkSize =
+        ((sizeof(TaskChunk) + (Align - 1)) & ~(Align - 1));
+
+    static_assert(ChunkSize% Align == 0);
+
+    static constexpr size_t ChunksPerPage = PageSize / ChunkSize;
+
+    static constexpr u8 Invalid = 0xFFU;
+
+    ChunkAllocator()
+        : heap_(nullptr)
+        , freeList_(Invalid)
+    {
+        static_assert(ChunksPerPage <= 255, "Index overflow");
+        heap_ = static_cast<TaskChunk*>(std::malloc(PageSize));
+        assert(heap_);
+
+        // 初期化：単純にインデックスをつないでフリーリスト作成
+        for (u8 i = 0; i < ChunksPerPage; ++i) {
+            getChunk(i)->next_ = (i + 1 < ChunksPerPage) ? (i + 1) : Invalid;
+        }
+        freeList_ = 0;
     }
 
-    bool try_pop(T& value){
-        std::lock_guard<std::mutex> lk(m);
-        if (q.empty()) {
+    ~ChunkAllocator() {
+        std::free(heap_);
+    }
+
+    TaskChunk* allocate() {
+        if (freeList_ == Invalid) {
+            return nullptr; // 空きなし
+        }
+        u8 index = freeList_;
+        TaskChunk* chunk = getChunk(index);
+        freeList_ = chunk->next_;
+        chunk->count = 0;
+        return chunk;
+    }
+
+    void deallocate(TaskChunk* chunk) {
+        if (!chunk) return;
+        u8 index = getIndex(chunk);
+        chunk->next_ = freeList_;
+        freeList_ = index;
+    }
+
+private:
+    TaskChunk* getChunk(u8 index) {
+        return reinterpret_cast<TaskChunk*>(
+            reinterpret_cast<u8*>(heap_) + index * ChunkSize);
+    }
+
+    u8 getIndex(TaskChunk* chunk) {
+        return static_cast<u8>(
+            (reinterpret_cast<u8*>(chunk) - reinterpret_cast<u8*>(heap_)) / ChunkSize
+            );
+    }
+
+private:
+    TaskChunk* heap_;
+    u8 freeList_;
+};
+
+
+template <typename T, size_t Capacity>
+class WaitJobBuffer {
+public:
+    void push(const T& value) {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
+
+        buffer_[tail_] = value;
+
+        tail_ = (tail_ + 1) % Capacity;
+        size_.fetch_add(1, std::memory_order_release);
+
+        lock.unlock();
+        not_empty_.notify_one();
+
+    }
+
+    // ロックなし pop（単一スレッド専用）
+    bool try_pop(T& value) {
+        if (size_.load(std::memory_order_acquire) == 0) {
             return false;
         }
 
-        value = std::move(q.front());
-        q.pop();
+        value = std::move(buffer_[head_]);
+        head_ = (head_ + 1) % Capacity;
+        size_.fetch_sub(1, std::memory_order_release);
+
+        // 空きができたら Producer に通知
+        not_full_.notify_one();
+        return true;
+    }
+
+    bool wait_and_pop(T& value) {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        not_empty_.wait(lock, [this] { return size_.load(std::memory_order_acquire) > 0; });
+
+        value = std::move(buffer_[head_]);
+        head_ = (head_ + 1) % Capacity;
+        size_.fetch_sub(1, std::memory_order_release);
+
+        lock.unlock();
+        not_full_.notify_one();
         return true;
     }
 
 private:
-    // 消費側は単一スレッドを想定
-    T pop() {
-        std::unique_lock<std::mutex> lk(m);
-        cv.wait(lk, [&] { return !q.empty(); });
-        T v = std::move(q.front());
-        q.pop();
-        return v;
-    }
+    std::array<T, Capacity> buffer_{};
+    size_t head_ = 0;
+    size_t tail_ = 0;
+    std::atomic<size_t> size_{ 0 };
 
-private:
-    std::queue<T> q;
-    std::mutex m;
-    std::condition_variable cv;
+    std::mutex mutex_; // Producer 同士の競合用
+    std::condition_variable not_empty_;
+    std::condition_variable not_full_;
 };
+
+//template<typename T>
+//class WaitQueue {
+//public:
+//    void push(T v) {
+//        std::lock_guard<std::mutex> lk(m);
+//        q.push(std::move(v));
+//        cv.notify_one();
+//    }
+//
+//    bool try_pop(T& value){
+//        std::lock_guard<std::mutex> lk(m);
+//        if (q.empty()) {
+//            return false;
+//        }
+//
+//        value = std::move(q.front());
+//        q.pop();
+//        return true;
+//    }
+//
+//private:
+//    // 消費側は単一スレッドを想定
+//    T pop() {
+//        std::unique_lock<std::mutex> lk(m);
+//        cv.wait(lk, [&] { return !q.empty(); });
+//        T v = std::move(q.front());
+//        q.pop();
+//        return v;
+//    }
+//
+//private:
+//    std::queue<T> q;
+//    std::mutex m;
+//    std::condition_variable cv;
+//};
 
 class JobManager
 {
