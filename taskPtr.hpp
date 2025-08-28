@@ -7,6 +7,7 @@
 #include "JobManager.h"
 #include <variant>
 #include <memory>
+#include "intrusive_ptr.h"
 #include "TestFramework.hpp"
 
 namespace ECS::JobSystem{
@@ -14,110 +15,6 @@ namespace ECS::JobSystem{
 #define REFLECT_FIELDS(Type, ...)                                  \
   static constexpr auto field_ptrs()                                \
   { return std::make_tuple(__VA_ARGS__); }
-
-namespace Ptr{
-
-template<typename T>
-class intrusive_ptr {
-public:
-    // -- constructors/destructor --
-    intrusive_ptr() noexcept
-        : ptr_(nullptr) {}
-
-    intrusive_ptr(std::nullptr_t) noexcept
-        : ptr_(nullptr) {}
-
-    // raw ポインタから参照カウントを +1 して保持
-    explicit intrusive_ptr(T* p) noexcept
-        : ptr_(p) {
-        //if (ptr_) intrusive_ptr_add_ref(ptr_);
-        if (ptr_) ptr_->add_ref();
-    }
-
-    // コピー：参照カウンタ +1
-    intrusive_ptr(intrusive_ptr const& o) noexcept
-        : ptr_(o.ptr_) {
-        //if (ptr_) intrusive_ptr_add_ref(ptr_);
-        if (ptr_) ptr_->add_ref();
-    }
-
-    // ムーブ：コピー先だけ ptr を奪う（参照カウントは変えない）
-    intrusive_ptr(intrusive_ptr&& o) noexcept
-        : ptr_(o.ptr_) {
-        o.ptr_ = nullptr;
-    }
-
-    // デストラクタ：参照カウント -1、0 なら delete
-    ~intrusive_ptr() noexcept {
-        //if (ptr_) intrusive_ptr_release(ptr_);
-        if (ptr_) ptr_->release();
-    }
-
-    // -- assignment operators --
-    intrusive_ptr& operator=(intrusive_ptr const& o) noexcept {
-        intrusive_ptr tmp(o);
-        swap(tmp);
-        return *this;
-    }
-
-    intrusive_ptr& operator=(intrusive_ptr&& o) noexcept {
-        intrusive_ptr tmp(std::move(o));
-        swap(tmp);
-        return *this;
-    }
-
-    intrusive_ptr& operator=(T* p) noexcept {
-        intrusive_ptr tmp(p);
-        swap(tmp);
-        return *this;
-    }
-
-    // -- modifiers & observers --
-    void swap(intrusive_ptr& o) noexcept {
-        std::swap(ptr_, o.ptr_);
-    }
-
-    T* get() const noexcept { return ptr_; }
-
-    explicit operator bool() const noexcept { return ptr_ != nullptr; }
-
-    // -- dereference --
-    T& operator* () const noexcept { return *ptr_; }
-    T* operator->() const noexcept { return ptr_; }
-
-private:
-    T* ptr_;
-   
-};
-
-// non-member swap
-template<typename T>
-inline void swap(intrusive_ptr<T>& a, intrusive_ptr<T>& b) noexcept {
-    a.swap(b);
-}
-
-// 比較演算子
-template<typename T, typename U>
-bool operator==(intrusive_ptr<T> const& a, intrusive_ptr<U> const& b) noexcept {
-    return a.get() == b.get();
-}
-template<typename T, typename U>
-bool operator!=(intrusive_ptr<T> const& a, intrusive_ptr<U> const& b) noexcept {
-    return a.get() != b.get();
-}
-template<typename T>
-bool operator==(intrusive_ptr<T> const& a, std::nullptr_t) noexcept {
-    return !a;
-}
-template<typename T>
-bool operator!=(intrusive_ptr<T> const& a, std::nullptr_t) noexcept {
-    return static_cast<bool>(a);
-}
-
-//inline void intrusive_ptr_add_ref(Task* p) { p->add_ref(); }
-//inline void intrusive_ptr_release(Task* p) { p->release(); }
-
-} //namespace Ptr
 
 struct Job {
 
@@ -218,7 +115,7 @@ enum class JobCategory : uint8_t {
 struct Task {
     Job job;
     std::atomic<int>   inDegree{ 0 };
-    Ptr::intrusive_ptr<Task> nextDependent;
+    intrusive_ptr<Task> nextDependent;
     std::mutex taskMutex;
     JobCategory category;
     std::atomic<uint32_t> refCount;
@@ -247,9 +144,7 @@ struct Task {
     }
 };
 
-
-
-// 未 specialization：結果を持てる型用
+// 結果を持てる型用
 template<typename T>
 struct FutureInner {
     std::mutex       mtx;
@@ -551,20 +446,20 @@ public:
         inner->ready = true;
     }
 };
-
-template<typename S>
-struct JobConnector {
-    using Ptrs = decltype(S::field_ptrs());
-    static constexpr size_t N = std::tuple_size_v<Ptrs>;
-
-    Ptrs ptrs_{ S::field_ptrs() };
-
-    // I番目のメンバポインタを取り出し
-    template<size_t I>
-    constexpr auto get() const noexcept {
-        return std::get<I>(ptrs_);
-    }
-};
+//
+//template<typename S>
+//struct JobConnector {
+//    using Ptrs = decltype(S::field_ptrs());
+//    static constexpr size_t N = std::tuple_size_v<Ptrs>;
+//
+//    Ptrs ptrs_{ S::field_ptrs() };
+//
+//    // I番目のメンバポインタを取り出し
+//    template<size_t I>
+//    constexpr auto get() const noexcept {
+//        return std::get<I>(ptrs_);
+//    }
+//};
 
 template<typename T>
 struct ICommand {
@@ -624,7 +519,7 @@ class JobManager;
 
 template<typename Derived,typename ReturnType,typename JobData = std::monostate>
 struct IJob : std::enable_shared_from_this<Derived> {
-    using TaskPtr = Ptr::intrusive_ptr<Task>;
+    using TaskPtr = intrusive_ptr<Task>;
     using Data_t = JobData;
     
     using HasData = std::bool_constant<!std::is_same_v<Data_t,std::monostate>>;
@@ -796,7 +691,7 @@ private:
 //ParallelJoData : Job実行時に書き込むデータ
 template<typename Derived,typename ParallelJobData  = std::monostate>
 struct IParallelJob : std::enable_shared_from_this<Derived>{
-    using TaskPtr = Ptr::intrusive_ptr<Task>;
+    using TaskPtr = intrusive_ptr<Task>;
 
     using Data_t = ParallelJobData;
 
@@ -848,7 +743,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         ~Context(){};
     };
 
-    inline std::pair<std::vector<TaskPtr>, Future_t> schedule(JobCategory cat, const size_t total,const size_t batchSize,const size_t workerCount) {
+    inline std::pair<std::vector<TaskPtr>, Future_t> schedule(const size_t total,const size_t batchSize,const size_t workerCount, JobCategory cat = JobCategory::RealTime) {
         ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
 
         const size_t numBatches = (total + batchSize - 1) / batchSize;

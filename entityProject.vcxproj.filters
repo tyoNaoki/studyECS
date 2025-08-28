@@ -131,5 +131,8 @@
     <ClInclude Include="JobDebugger.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="intrusive_ptr.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
