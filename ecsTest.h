@@ -133,12 +133,13 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	for(int i = 0;i < 20;i++){
+	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSystem::JobCategory::BackGround);
-	}
+	}*/
 
+	int check = 90'000;
 	// 3) 20 個のジョブをスケジュール
-	for (int i = 0; i < 90'000; ++i) {
+	for (int i = 0; i < 100; ++i) {
 
 		job->schedule();
 

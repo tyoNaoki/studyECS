@@ -34,6 +34,11 @@ namespace ECS::JobSystem::Debug {
         , private ECS::JobSystem::Debug::JobDebugMixin
     {
     public:
+        using Base = BaseQueue;
+        using PushResult = typename Base::PushResult;
+        using PopResult = typename Base::PopResult;
+        using StealResult = typename Base::StealResult;
+
         // BaseQueue のコンストラクタをそのまま使えるように
         template <typename... Args>
         DebugJobQueue(Args&&... args)

@@ -18,14 +18,16 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     realTimeJobCounter = 0;
     backGroundCounter = 0;
 
+    allocator = std::make_unique<ChunkAllocator>();
+
     realTimeWaitQueues.reserve(threadCount);
     backGroundWaitQueues.reserve(threadCount);
     realTimeLocalQueue.reserve(threadCount);
 
     //初期化
     for (size_t i = 0; i < threadCount; ++i) {
-        realTimeWaitQueues.push_back(std::make_unique<WaitBuf>());
-        backGroundWaitQueues.push_back(std::make_unique<WaitBuf>());
+        realTimeWaitQueues.push_back(std::make_unique<WaitBuf>(allocator.get()));
+        backGroundWaitQueues.push_back(std::make_unique<WaitBuf>(allocator.get()));
         realTimeLocalQueue.emplace_back(
             std::make_unique<JobQueue>(capacity, i)
         );
@@ -196,7 +198,7 @@ void JobManager::pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks)
         std::make_move_iterator(tasks.end()));
 }
 
-bool JobManager::pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue)
+bool JobManager::pushBottom(ChunkPtr&& chunkPtr, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue)
 {
     auto start = std::chrono::steady_clock::now();
     const auto  timeout = std::chrono::milliseconds(2);
@@ -205,9 +207,9 @@ bool JobManager::pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue,
     auto& waitQ = waitQueue;
 
     while (true) {
-        PushResult res = queue->pushBottom(std::move(task));
+        PushResult res = queue->pushBottom(std::move(chunkPtr));
 
-        switch (res.status) {
+        switch (res.first) {
             case PushStatus::Success:
             {
                 return true;
@@ -216,11 +218,11 @@ bool JobManager::pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue,
             case PushStatus::WouldBlock:
             {
                 if (std::chrono::steady_clock::now() - start >= timeout) {
-                    fallbackWaitQueue(waitQ, std::move(res.notPushed));
+                    fallbackWaitQueue(waitQ, std::move(res.second));
                     return false;
                 }
 
-                task = std::move(res.notPushed);
+                chunkPtr = std::move(res.second);
                 // 軽めのバックオフ
                 std::this_thread::yield();
                 break;
@@ -228,12 +230,12 @@ bool JobManager::pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue,
             case PushStatus::Full:
             {
                 if (std::chrono::steady_clock::now() - start < timeout) {
-                    task = std::move(res.notPushed);
+                    chunkPtr = std::move(res.second);
                     //少し待って再挑戦
                     std::this_thread::yield();
                 }
                 else {
-                    fallbackWaitQueue(waitQ, std::move(res.notPushed));
+                    fallbackWaitQueue(waitQ, std::move(res.second));
                     return false;
                 }
 
@@ -246,9 +248,10 @@ bool JobManager::pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue,
 
 void JobManager::pushLocalQueue(std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue)
 {
-    TaskPtr task;
-    while (waitQueue->try_pop(task)
-        && pushBottom(std::move(task),localQueue,waitQueue)) {
+
+    WaitBuf::ChunkPtr chunkPtr;
+    while (waitQueue->try_pop(chunkPtr)
+        && pushBottom(std::move(chunkPtr),localQueue,waitQueue)) {
     }
 }
 
@@ -357,21 +360,22 @@ bool JobManager::pop_and_steal_Queue(size_t queueIndex, std::vector<std::unique_
     {
         auto popRes = queues[queueIndex]->popBottom();
 
-        if (popRes.status == PopStatus::Success) {
-            runJob(queueIndex, std::move(popRes.value));
+        if (popRes.first == PopStatus::Success) {
+            runChunk(queueIndex, std::move(popRes.second));
             sub_counterFunc();
             return true;
         }
-        else if (popRes.status == PopStatus::WouldBlock) {
+        else if (popRes.first == PopStatus::WouldBlock) {
             std::this_thread::yield();
             return true;
         }
     }
 
+    //他キューからSteal
     {
         auto stealRes = stealQueues(queueIndex, queues);
 
-        if(stealRes.status == StealStatus::Success){
+        if (stealRes == StealStatus::Success) {
             sub_counterFunc();
             return true;
         }
@@ -381,30 +385,24 @@ bool JobManager::pop_and_steal_Queue(size_t queueIndex, std::vector<std::unique_
     return false;
 }
 
-StealResult JobManager::stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues)
+void JobManager::runChunk(size_t queueIndex, ChunkPtr&& chunkPtr)
 {
-    size_t n = stealQueues.size();
+    ASSERT(chunkPtr, "chunkPtr is nullptr!!");
 
-    StealResult result;
-    for (size_t i = 1; i < n; ++i) {
-        size_t idx = (queueIndex + i) % n;
-        result = stealQueues[idx]->stealTop(queueIndex);
+    while (true) {
+        auto idx = chunkPtr->start.fetch_add(1, std::memory_order_acq_rel);
+        auto end = chunkPtr->count.load(std::memory_order_acquire); 
 
-        if (result.status == StealStatus::Success) {
-            runJob(queueIndex, std::move(result.value));
-            return StealResult{StealStatus::Success,std::nullopt};
-        }
+        if (idx >= end)
+            break; // 全部終わった
+
+        auto& task = chunkPtr->tasks[idx];
+        runJob(queueIndex, std::move(task));
     }
-
-    return StealResult{StealStatus::Empty,std::nullopt};
 }
 
-void JobManager::runJob(size_t queueIndex, std::optional<TaskPtr>&& optTask)
+void JobManager::runJob(size_t queueIndex, TaskPtr&& task)
 {
-    ASSERT(optTask, "runJob optTask is nullopt!!");
-
-    TaskPtr task = std::move(*optTask);
-
     ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
 
     task->job.invoke();
@@ -442,27 +440,27 @@ void JobManager::runJob(size_t queueIndex, std::optional<TaskPtr>&& optTask)
 
 void JobManager::run_while_validQueue(size_t queueIndex)
 {
-    TaskPtr task;
+    ChunkPtr chunk;
     //待機キュー内のJob処理
-    while (realTimeWaitQueues[queueIndex]->try_pop(task))
+    while (realTimeWaitQueues[queueIndex]->try_pop(chunk))
     {
-        runJob(queueIndex, std::move(task));
+        runChunk(queueIndex, std::move(chunk));
     }
 
-    while (backGroundWaitQueues[queueIndex]->try_pop(task))
+    while (backGroundWaitQueues[queueIndex]->try_pop(chunk))
     {
-        runJob(queueIndex, std::move(task));
+        runChunk(queueIndex, std::move(chunk));
     }
 
     while (true) {
         auto popRes = realTimeLocalQueue[queueIndex]->popBottom();
 
-        if (popRes.status == PopStatus::Success) {
-            runJob(queueIndex, std::move(popRes.value));
+        if (popRes.first == PopStatus::Success) {
+            runChunk(queueIndex, std::move(popRes.second));
             continue;
         }
 
-        if (popRes.status == PopStatus::Empty) {
+        if (popRes.first == PopStatus::Empty) {
             break;
         }
     }
@@ -470,12 +468,12 @@ void JobManager::run_while_validQueue(size_t queueIndex)
     while (true) {
         auto popRes = backGroundLocalQueue[queueIndex]->popBottom();
 
-        if (popRes.status == PopStatus::Success) {
-            runJob(queueIndex, std::move(popRes.value));
+        if (popRes.first == PopStatus::Success) {
+            runChunk(queueIndex, std::move(popRes.second));
             continue;
         }
 
-        if (popRes.status == PopStatus::Empty) {
+        if (popRes.first == PopStatus::Empty) {
             break;
         }
     }

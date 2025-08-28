@@ -164,6 +164,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="EntityEventMixin.hpp" />
+    <ClInclude Include="intrusive_ptr.h" />
     <ClInclude Include="JobBarrier.h" />
     <ClInclude Include="JobDebugger.h" />
     <ClInclude Include="JobDeque.hpp" />

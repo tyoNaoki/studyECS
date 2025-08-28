@@ -24,125 +24,226 @@ namespace ECS::JobSystem{
 // https://qiita.com/taqu/items/45ab4fb57e4079c3be94
 // Qiita記事[Chunk allocator]
 // 
-//Capactityは255まで指定可能
-template <typename T, size_t Capacity, size_t PageSize, size_t Align = 16>
+//Capactityは512まで指定可能
+template <typename T, size_t Capacity,size_t ChunkCount, size_t Align = 16>
 class ChunkAllocator {
-    using u8 = std::uint8_t;
-
-    static_assert(Capacity <= std::numeric_limits<u8>::max(),
-        "Capacity must fit in u8 (<= 255)");
+    using u16 = std::uint16_t;
 
 public:
-    struct TaskChunk {
-        u8 next_;
-        u8 count;             
-        T tasks[Capacity];    
-        bool full() const { return count == Capacity; }
+    struct Chunk {
+        u16 next_{};
+        std::atomic<u16> start{0};
+        std::atomic<u16> count{0};
+        std::array<T,Capacity> tasks{};
+        bool full() const { return count.load(std::memory_order_acquire) == Capacity; }
+        bool empty() const { return count.load(std::memory_order_acquire) == 0; }
     };
+    
+    static constexpr size_t EffectiveAlign = (Align > alignof(Chunk)) ? Align : alignof(Chunk);
 
     static constexpr size_t ChunkSize =
-        ((sizeof(TaskChunk) + (Align - 1)) & ~(Align - 1));
+        (sizeof(Chunk) + EffectiveAlign - 1) & ~(EffectiveAlign - 1);
 
-    static_assert(ChunkSize% Align == 0);
+    static_assert(ChunkSize >= sizeof(Chunk), "ChunkSize must cover Chunk");
+    static_assert((ChunkSize% EffectiveAlign) == 0, "ChunkSize must be multiple of EffectiveAlign");
+
+    static constexpr size_t PageSize = ChunkCount * ChunkSize;
+    static_assert(PageSize >= ChunkSize, "PageSize too small");
 
     static constexpr size_t ChunksPerPage = PageSize / ChunkSize;
+    static_assert(ChunksPerPage > 0, "PageSize yields zero chunks");
 
-    static constexpr u8 Invalid = 0xFFU;
+    static constexpr u16 Invalid = std::numeric_limits<u16>::max();
 
     ChunkAllocator()
         : heap_(nullptr)
         , freeList_(Invalid)
     {
-        static_assert(ChunksPerPage <= 255, "Index overflow");
-        heap_ = static_cast<TaskChunk*>(std::malloc(PageSize));
+        static_assert(ChunksPerPage <= std::numeric_limits<u16>::max(), "Index overflow");
+
+        heap_ = static_cast<std::byte*>(
+            ::operator new(PageSize, std::align_val_t{ EffectiveAlign }));
+
         assert(heap_);
 
-        // 初期化：単純にインデックスをつないでフリーリスト作成
-        for (u8 i = 0; i < ChunksPerPage; ++i) {
-            getChunk(i)->next_ = (i + 1 < ChunksPerPage) ? (i + 1) : Invalid;
+        for (u16 i = 0; i < ChunksPerPage; ++i) {
+            void* p = heap_ + i * ChunkSize;
+            ::new (p) Chunk();
+            getChunk(i)->next_ = (i + 1 < ChunksPerPage) ? static_cast<u16>(i + 1) : Invalid;
         }
         freeList_ = 0;
     }
 
     ~ChunkAllocator() {
-        std::free(heap_);
+        for (size_t i = 0; i < ChunksPerPage; ++i) {
+            getChunk(static_cast<u16>(i))->~Chunk();
+        }
+
+        ::operator delete(heap_, PageSize, std::align_val_t{ EffectiveAlign });
     }
 
-    TaskChunk* allocate() {
+    Chunk* allocate() {
         if (freeList_ == Invalid) {
             return nullptr; // 空きなし
         }
-        u8 index = freeList_;
-        TaskChunk* chunk = getChunk(index);
+        const u16 index = freeList_;
+        Chunk* chunk = getChunk(index);
         freeList_ = chunk->next_;
-        chunk->count = 0;
+
+        chunk->start.store(0, std::memory_order_relaxed);
+        chunk->count.store(0, std::memory_order_relaxed);
+
         return chunk;
     }
 
-    void deallocate(TaskChunk* chunk) {
+    void deallocate(Chunk* chunk) {
         if (!chunk) return;
-        u8 index = getIndex(chunk);
+        
         chunk->next_ = freeList_;
+        chunk->start.store(0, std::memory_order_relaxed);
+        chunk->count.store(0, std::memory_order_relaxed);
+
+        const u16 index = getIndex(chunk);
         freeList_ = index;
     }
 
 private:
-    TaskChunk* getChunk(u8 index) {
-        return reinterpret_cast<TaskChunk*>(
-            reinterpret_cast<u8*>(heap_) + index * ChunkSize);
+    Chunk* getChunk(u16 idx) noexcept {
+        return reinterpret_cast<Chunk*>(heap_ + idx * ChunkSize);
     }
 
-    u8 getIndex(TaskChunk* chunk) {
-        return static_cast<u8>(
-            (reinterpret_cast<u8*>(chunk) - reinterpret_cast<u8*>(heap_)) / ChunkSize
-            );
+    u16 getIndex(Chunk* chunk) {
+        auto byteOffset = reinterpret_cast<std::byte*>(chunk) - reinterpret_cast<std::byte*>(heap_);
+        return static_cast<u16>(byteOffset / ChunkSize);
     }
 
 private:
-    TaskChunk* heap_;
-    u8 freeList_;
+    //Chunk* heap_;
+    std::byte* heap_;
+    u16 freeList_;
 };
 
-
-template <typename T, size_t Capacity>
+//T : 内部で保持する型
+//Capacity : WaitJobBufferがためることができるChunkの最大数
+//ChunkAllocator : Chunkを生成するクラス。
+template <typename T, size_t Capacity,typename ChunkAllocator>
 class WaitJobBuffer {
+    using Chunk = typename ChunkAllocator::Chunk;
+
+    struct ChunkDeleter {
+        ChunkAllocator* alloc{};
+        void operator()(Chunk* ptr) const noexcept {
+            if (ptr && alloc) {
+                alloc->deallocate(ptr);
+            }
+        }
+    };
+
 public:
+    using ChunkPtr = std::unique_ptr<Chunk, ChunkDeleter>;
+
+    WaitJobBuffer(ChunkAllocator* alloc): allocator(alloc){}
+
+    // マルチスレッド
     void push(const T& value) {
         std::unique_lock<std::mutex> lock(mutex_);
 
         not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
 
-        buffer_[tail_] = value;
+        if (buffer_[tail_] && buffer_[tail_]->full()) {
+            tail_ = (tail_ + 1) % Capacity;
+            size_.fetch_add(1, std::memory_order_release);
+        }
 
-        tail_ = (tail_ + 1) % Capacity;
-        size_.fetch_add(1, std::memory_order_release);
+        // 必要ならChunkを割り当て
+        if (buffer_[tail_] == nullptr) {
+            buffer_[tail_] = ChunkPtr(allocator->allocate(), ChunkDeleter{ allocator });
+            buffer_[tail_]->count = 0;
+        }
+
+        auto& chunk = buffer_[tail_];
+        chunk->tasks[chunk->count] = std::move(value);
+        chunk->count.fetch_add(1,std::memory_order_release);
 
         lock.unlock();
         not_empty_.notify_one();
-
     }
 
-    // ロックなし pop（単一スレッド専用）
-    bool try_pop(T& value) {
+    void push(ChunkPtr&& value) {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
+
+        if (buffer_[tail_] && buffer_[tail_]->full()) {
+            tail_ = (tail_ + 1) % Capacity;
+            size_.fetch_add(1, std::memory_order_release);
+        }
+
+        if (buffer_[tail_] == nullptr) {
+            //nullのスロットに直接代入
+            buffer_[tail_] = std::move(value);
+           
+            lock.unlock();
+            not_empty_.notify_one();
+            return;
+        }
+
+        not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity-1; });
+        //現在のスロットに引数のChunkを入れて、次のスロットに現在のChunkを入れる。
+        size_.fetch_add(1, std::memory_order_release);
+        size_t next = (tail_ + 1) % Capacity;
+        buffer_[next] = std::move(value);
+        std::swap(buffer_[tail_],buffer_[next]);
+        tail_ = next;
+
+        lock.unlock();
+        not_empty_.notify_one();
+    }
+
+    bool try_pop(ChunkPtr& chunkPtr) {
         if (size_.load(std::memory_order_acquire) == 0) {
             return false;
         }
 
-        value = std::move(buffer_[head_]);
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (size_.load(std::memory_order_acquire) == 0) {
+            return false;
+        }
+
+        chunkPtr = std::move(buffer_[head_]);
+
+        buffer_[head_] = nullptr;
+
         head_ = (head_ + 1) % Capacity;
         size_.fetch_sub(1, std::memory_order_release);
 
-        // 空きができたら Producer に通知
         not_full_.notify_one();
         return true;
     }
 
-    bool wait_and_pop(T& value) {
+    // pop（単一スレッド専用）
+    //bool try_pop(T& value) {
+    //    if (size_.load(std::memory_order_acquire) == 0) {
+    //        return false;
+    //    }
+
+    //    //value = std::move(buffer_[head_]);
+    //    head_ = (head_ + 1) % Capacity;
+    //    size_.fetch_sub(1, std::memory_order_release);
+    //   
+    //    not_full_.notify_one();
+    //    return true;
+    //}
+
+    bool wait_and_pop(ChunkPtr& chunkPtr) {
         std::unique_lock<std::mutex> lock(mutex_);
 
         not_empty_.wait(lock, [this] { return size_.load(std::memory_order_acquire) > 0; });
 
-        value = std::move(buffer_[head_]);
+        chunkPtr = ChunkPtr(std::move(buffer_[head_]), ChunkDeleter{ allocator });
+        buffer_[head_] = nullptr;
+
         head_ = (head_ + 1) % Capacity;
         size_.fetch_sub(1, std::memory_order_release);
 
@@ -152,16 +253,19 @@ public:
     }
 
 private:
-    std::array<T, Capacity> buffer_{};
+    ChunkAllocator* allocator;
+    std::array<ChunkPtr, Capacity> buffer_{};
+    //std::array<T, Capacity> buffer_{};
     size_t head_ = 0;
     size_t tail_ = 0;
     std::atomic<size_t> size_{ 0 };
 
-    std::mutex mutex_; // Producer 同士の競合用
+    std::mutex mutex_;
     std::condition_variable not_empty_;
     std::condition_variable not_full_;
 };
 
+//旧待機キュー
 //template<typename T>
 //class WaitQueue {
 //public:
@@ -200,12 +304,30 @@ private:
 
 class JobManager
 {
-    using JobQueue = Debug::DebugJobQueue<JobDeque>;
-
     static constexpr size_t bufferCap = 20'000;
 
+    //Chunkに詰められるTaskの最大数
+    static constexpr size_t ChunkCap = 512;
+
+    //1回の確保でまとめて作るchunkの数
+    static constexpr size_t ChunkMemSize = 14;
+
+    using ChunkAllocator = ChunkAllocator<TaskPtr, ChunkCap, ChunkMemSize,16>;
+
+    using Chunk = ChunkAllocator::Chunk;
+
     //using WaitBuf = WaitQueue<TaskPtr>;
-    using WaitBuf = WaitJobBuffer<TaskPtr,bufferCap>;
+    using WaitBuf = WaitJobBuffer<TaskPtr,bufferCap,ChunkAllocator>;
+
+    using ChunkPtr = WaitBuf::ChunkPtr;
+
+    using JobQueue = Debug::DebugJobQueue<JobDeque<ChunkPtr>>;
+
+    using StealResult = JobQueue::Base::StealResult;
+
+    using PopResult = JobQueue::Base::PopResult;
+
+    using PushResult = JobQueue::Base::PushResult;
 
     //仮として60FPS
     static constexpr float targetFPS = 60.0f;
@@ -386,7 +508,7 @@ private:
     //BGJobをglobalBGQueueにセット
     void pushBackGroudGlobalQueue(TaskPtr task);
 
-    bool pushBottom(TaskPtr task, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue);
+    bool pushBottom(ChunkPtr&& chunkPtr, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue);
 
     void pushLocalQueue(std::unique_ptr<JobQueue>&localQueue, std::unique_ptr<WaitBuf>&waitQueue);
 
@@ -399,13 +521,30 @@ private:
 
     bool pop_and_steal_Queue(size_t queueIndex,std::vector<std::unique_ptr<JobQueue>>&stealQueues,std::function<void()>sub_counterFunc);
 
-    StealResult stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues);
+    StealStatus stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues){
+        size_t n = stealQueues.size();
 
-    void fallbackWaitQueue(std::unique_ptr<WaitBuf>& waitQueue,TaskPtr job) {
-       waitQueue->push(std::move(job));
+        StealResult result;
+        for (size_t i = 1; i < n; ++i) {
+            size_t idx = (queueIndex + i) % n;
+            result = stealQueues[idx]->stealTop(queueIndex);
+
+            if (result.first == StealStatus::Success) {
+                runChunk(queueIndex, std::move(result.second));
+                return StealStatus::Success;
+            }
+        }
+
+        return StealStatus::Empty;
     }
 
-    void runJob(size_t queueIndex,std::optional<TaskPtr>&& optTask);
+    void fallbackWaitQueue(std::unique_ptr<WaitBuf>& waitQueue,ChunkPtr chunkPtr) {
+       waitQueue->push(std::move(chunkPtr));
+    }
+
+    void runChunk(size_t queueIndex,ChunkPtr&& chunkPtr);
+
+    void runJob(size_t queueIndex,TaskPtr&& task);
 
     void run_while_validQueue(size_t queueIndex);
 
@@ -431,6 +570,8 @@ private:
 private:
     double avg_JobTimeMs = 1.0f;
     double avg_ExecuteJobTime = 0.1;
+
+    std::unique_ptr<ChunkAllocator>allocator;
 
     // 時刻
     std::chrono::steady_clock::time_point frameStart;
