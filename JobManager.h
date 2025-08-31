@@ -32,12 +32,26 @@ class ChunkAllocator {
 public:
     struct Chunk {
         u16 next_{};
-        std::atomic<u16> start{0};
-        std::atomic<u16> count{0};
-        std::array<T,Capacity> tasks{};
+        std::atomic<u16> start{ 0 };
+        std::atomic<u16> count{ 0 };
+        std::array<T, Capacity> tasks{};
         bool full() const { return count.load(std::memory_order_acquire) == Capacity; }
         bool empty() const { return count.load(std::memory_order_acquire) == 0; }
+
+        u16 remaining() const noexcept {
+            return count.load(std::memory_order_acquire)
+                - start.load(std::memory_order_acquire);
+        }
     };
+
+    struct ChunkDeleter {
+        ChunkAllocator* alloc;
+        void operator()(Chunk* c) const noexcept {
+            alloc->deallocate(c);
+        }
+    };
+
+    using ChunkHandle = std::unique_ptr<Chunk, ChunkDeleter>;
     
     static constexpr size_t EffectiveAlign = (Align > alignof(Chunk)) ? Align : alignof(Chunk);
 
@@ -82,10 +96,18 @@ public:
         ::operator delete(heap_, PageSize, std::align_val_t{ EffectiveAlign });
     }
 
+    ChunkHandle allocateHandle(){
+        Chunk* c = allocate();
+        if (!c) return nullptr;
+        return ChunkHandle(c, ChunkDeleter{ this });
+    }
+
     Chunk* allocate() {
+
         if (freeList_ == Invalid) {
             return nullptr; // 空きなし
         }
+
         const u16 index = freeList_;
         Chunk* chunk = getChunk(index);
         freeList_ = chunk->next_;
@@ -100,8 +122,6 @@ public:
         if (!chunk) return;
         
         chunk->next_ = freeList_;
-        chunk->start.store(0, std::memory_order_relaxed);
-        chunk->count.store(0, std::memory_order_relaxed);
 
         const u16 index = getIndex(chunk);
         freeList_ = index;
@@ -123,84 +143,145 @@ private:
     u16 freeList_;
 };
 
+template<typename ChunkAllocator,typename Chunk = typename ChunkAllocator::Chunk>
+inline auto stealChunkRange(ChunkAllocator& allocator,
+    Chunk& chunk,uint16_t stealCount)
+{
+    // 残りタスク数を取得
+    uint16_t rem = chunk.remaining();
+    if (rem == 0) {
+        // ChunkHandle がデフォルト構築で「空」を表すならこれでOK
+        return typename ChunkAllocator::ChunkHandle{};
+    }
+
+    // 実際に奪う数は残数以下
+    uint16_t n = std::min(stealCount, rem);
+
+    // 元チャンクの start を advance（フェッチ＆アド）
+    uint16_t oldStart = chunk.start.fetch_add(n, std::memory_order_acq_rel);
+
+    // 新規ハンドルを確保
+    auto handle = allocator.allocateHandle();
+
+    // メタデータを設定
+    handle->tasks = chunk.tasks.data();   // ポインタ型 or 参照ラッパー前提
+    handle->start = oldStart;
+    handle->count = oldStart + n;
+
+    return handle;
+}
+
 //T : 内部で保持する型
 //Capacity : WaitJobBufferがためることができるChunkの最大数
 //ChunkAllocator : Chunkを生成するクラス。
 template <typename T, size_t Capacity,typename ChunkAllocator>
 class WaitJobBuffer {
     using Chunk = typename ChunkAllocator::Chunk;
-
-    struct ChunkDeleter {
-        ChunkAllocator* alloc{};
-        void operator()(Chunk* ptr) const noexcept {
-            if (ptr && alloc) {
-                alloc->deallocate(ptr);
-            }
-        }
-    };
+    using ChunkHandle = typename ChunkAllocator::ChunkHandle;
 
 public:
-    using ChunkPtr = std::unique_ptr<Chunk, ChunkDeleter>;
 
     WaitJobBuffer(ChunkAllocator* alloc): allocator(alloc){}
 
-    // マルチスレッド
+    // マルチスレッド(Job制作用)
     void push(const T& value) {
         std::unique_lock<std::mutex> lock(mutex_);
 
+        // 全体のタスク数が Capacity 未満になるまで待つ
         not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
 
-        if (buffer_[tail_] && buffer_[tail_]->full()) {
-            tail_ = (tail_ + 1) % Capacity;
-            size_.fetch_add(1, std::memory_order_release);
-        }
-
-        // 必要ならChunkを割り当て
-        if (buffer_[tail_] == nullptr) {
-            buffer_[tail_] = ChunkPtr(allocator->allocate(), ChunkDeleter{ allocator });
+        if (!buffer_[tail_]) {
+            buffer_[tail_] = allocator->allocateHandle();
             buffer_[tail_]->count = 0;
         }
 
+        // 現在のチャンクにタスクを書き込む
         auto& chunk = buffer_[tail_];
-        chunk->tasks[chunk->count] = std::move(value);
-        chunk->count.fetch_add(1,std::memory_order_release);
+        size_t idx = chunk->count.fetch_add(1, std::memory_order_relaxed);
+        chunk->tasks[idx] = std::move(value);
+
+        //全体のタスク数を記録
+        size_.fetch_add(1, std::memory_order_release);
+
+        //満タンになった場合、tailを進める
+        if (buffer_[tail_]->full()) {
+            tail_ = (tail_ + 1) % Capacity;
+        }
 
         lock.unlock();
         not_empty_.notify_one();
     }
 
-    void push(ChunkPtr&& value) {
+    // マルチスレッド
+    //TaskPtr push(Job job,int degree,std::vector<TaskPtr>deps) {
+    //    std::unique_lock<std::mutex> lock(mutex_);
+
+    //    // 全体のタスク数が Capacity 未満になるまで待つ
+    //    not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
+
+    //    if (!buffer_[tail_]) {
+    //        buffer_[tail_] = ChunkPtr(
+    //            allocator->allocate(),
+    //            ChunkDeleter{ allocator }
+    //        );
+    //        buffer_[tail_]->count = 0;
+    //    }
+
+    //    // 現在のチャンクにタスクを書き込む
+    //    auto& chunk = buffer_[tail_];
+    //    size_t idx = chunk->count.fetch_add(1, std::memory_order_relaxed);
+    //    chunk->tasks[idx] = std::move(value);
+
+    //    //全体のタスク数を記録
+    //    size_.fetch_add(1, std::memory_order_release);
+
+    //    //満タンになった場合、tailを進める
+    //    if (buffer_[tail_]->full()) {
+    //        tail_ = (tail_ + 1) % Capacity;
+    //    }
+
+    //    lock.unlock();
+    //    not_empty_.notify_one();
+    //}
+
+    void push(ChunkHandle&& value) {
         std::unique_lock<std::mutex> lock(mutex_);
 
-        not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity; });
+        size_t taskSize = value->count - value->start;
 
-        if (buffer_[tail_] && buffer_[tail_]->full()) {
-            tail_ = (tail_ + 1) % Capacity;
-            size_.fetch_add(1, std::memory_order_release);
-        }
+        not_full_.wait(lock, [this,&taskSize] { return (size_.load(std::memory_order_acquire) + taskSize) < Capacity; });
 
-        if (buffer_[tail_] == nullptr) {
+        ASSERT(value,"WaitJobBuffer push ChunkPtr&&value is nullptr");
+        
+        size_.fetch_add(taskSize, std::memory_order_release);
+
+        if (buffer_[tail_] == nullptr||buffer_[tail_]->empty()) {
             //nullのスロットに直接代入
             buffer_[tail_] = std::move(value);
-           
+            if (buffer_[tail_]->full()) {
+                tail_ = (tail_ + 1) % Capacity;
+            }
             lock.unlock();
             not_empty_.notify_one();
+
             return;
         }
 
-        not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity-1; });
-        //現在のスロットに引数のChunkを入れて、次のスロットに現在のChunkを入れる。
-        size_.fetch_add(1, std::memory_order_release);
-        size_t next = (tail_ + 1) % Capacity;
-        buffer_[next] = std::move(value);
-        std::swap(buffer_[tail_],buffer_[next]);
-        tail_ = next;
+        //not_full_.wait(lock, [this] { return size_.load(std::memory_order_acquire) < Capacity-1; });
+        //次のスロットに入れる。
+        tail_ = (tail_ + 1) % Capacity;
+        buffer_[tail_] = std::move(value);
+
+        //入れたChunkが満タンなら
+        if (buffer_[tail_]->full()) {
+            tail_ = (tail_ + 1) % Capacity;
+        }
 
         lock.unlock();
         not_empty_.notify_one();
     }
 
-    bool try_pop(ChunkPtr& chunkPtr) {
+    bool try_pop(ChunkHandle& chunkPtr) {
         if (size_.load(std::memory_order_acquire) == 0) {
             return false;
         }
@@ -211,12 +292,19 @@ public:
             return false;
         }
 
+        ASSERT(buffer_[head_],"buffer_[head_] is nullptr");
         chunkPtr = std::move(buffer_[head_]);
 
         buffer_[head_] = nullptr;
 
-        head_ = (head_ + 1) % Capacity;
-        size_.fetch_sub(1, std::memory_order_release);
+        if(tail_ > head_){
+            head_ = (head_ + 1) % Capacity;
+        }
+
+        size_t taskSize = chunkPtr->count.load() - chunkPtr->start.load();
+        size_.fetch_sub(taskSize, std::memory_order_release);
+
+        ASSERT(size_ >= 0 , "WaitJobBuffer is size_ < 0");
 
         not_full_.notify_one();
         return true;
@@ -236,16 +324,18 @@ public:
     //    return true;
     //}
 
-    bool wait_and_pop(ChunkPtr& chunkPtr) {
+    bool wait_and_pop(ChunkHandle& chunkPtr) {
         std::unique_lock<std::mutex> lock(mutex_);
 
         not_empty_.wait(lock, [this] { return size_.load(std::memory_order_acquire) > 0; });
 
-        chunkPtr = ChunkPtr(std::move(buffer_[head_]), ChunkDeleter{ allocator });
+        chunkPtr = std::move(buffer_[head_]);
         buffer_[head_] = nullptr;
 
         head_ = (head_ + 1) % Capacity;
-        size_.fetch_sub(1, std::memory_order_release);
+
+        size_t taskSize = chunkPtr->count.load() - chunkPtr->start.load();
+        size_.fetch_sub(taskSize, std::memory_order_release);
 
         lock.unlock();
         not_full_.notify_one();
@@ -254,11 +344,12 @@ public:
 
 private:
     ChunkAllocator* allocator;
-    std::array<ChunkPtr, Capacity> buffer_{};
-    //std::array<T, Capacity> buffer_{};
-    size_t head_ = 0;
-    size_t tail_ = 0;
+    std::array<ChunkHandle, Capacity> buffer_{};
+
+    size_t head_ = 0, tail_ = 0;
+    //全体のタスク数
     std::atomic<size_t> size_{ 0 };
+    std::atomic<size_t> chunkSize_{0};
 
     std::mutex mutex_;
     std::condition_variable not_empty_;
@@ -316,10 +407,10 @@ class JobManager
 
     using Chunk = ChunkAllocator::Chunk;
 
+    using ChunkPtr = ChunkAllocator::ChunkHandle;
+
     //using WaitBuf = WaitQueue<TaskPtr>;
     using WaitBuf = WaitJobBuffer<TaskPtr,bufferCap,ChunkAllocator>;
-
-    using ChunkPtr = WaitBuf::ChunkPtr;
 
     using JobQueue = Debug::DebugJobQueue<JobDeque<ChunkPtr>>;
 
@@ -487,6 +578,8 @@ public:
 
     //Taskが持つcategoryに応じて対応のwaitQueueにpushする
     void pushJobWaitQueue(TaskPtr task);
+
+    //TaskPtr pushJobWaitQueue(Job&& job,int degree,JobCategory cat);
     
     //まとめてBackGroundJobをpushする用
     void pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks);
@@ -510,6 +603,10 @@ private:
 
     bool pushBottom(ChunkPtr&& chunkPtr, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue);
 
+    PopStatus popBottom(size_t queueIndex, std::unique_ptr<JobQueue>& queue);
+
+    StealStatus stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues);
+
     void pushLocalQueue(std::unique_ptr<JobQueue>&localQueue, std::unique_ptr<WaitBuf>&waitQueue);
 
     //GlobalBGQueueが空ならNull
@@ -520,23 +617,6 @@ private:
     void run_backGroundQueue(size_t queueIndex);
 
     bool pop_and_steal_Queue(size_t queueIndex,std::vector<std::unique_ptr<JobQueue>>&stealQueues,std::function<void()>sub_counterFunc);
-
-    StealStatus stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues){
-        size_t n = stealQueues.size();
-
-        StealResult result;
-        for (size_t i = 1; i < n; ++i) {
-            size_t idx = (queueIndex + i) % n;
-            result = stealQueues[idx]->stealTop(queueIndex);
-
-            if (result.first == StealStatus::Success) {
-                runChunk(queueIndex, std::move(result.second));
-                return StealStatus::Success;
-            }
-        }
-
-        return StealStatus::Empty;
-    }
 
     void fallbackWaitQueue(std::unique_ptr<WaitBuf>& waitQueue,ChunkPtr chunkPtr) {
        waitQueue->push(std::move(chunkPtr));

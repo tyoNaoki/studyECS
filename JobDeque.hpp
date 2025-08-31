@@ -79,6 +79,10 @@ namespace ECS::JobSystem {
         JobDeque(JobDeque&&) noexcept = default; //ムーブのみOK
         JobDeque& operator=(JobDeque&&) noexcept = default;
 
+        //PopStatus popQueue(ChunkPtr& chunk);
+
+        //StealStatus stealQueues(ChunkPtr& chunk,std::vector<std::unique_ptr<JobDeque<Chunk>>>& stealQueues);
+
         //オーナースレッド専用：ボトムからPush
         PushResult pushBottom(Chunk chunk) {
             size_t b0 = bottom.load(std::memory_order_seq_cst);
@@ -330,5 +334,40 @@ namespace ECS::JobSystem {
 
         bool abortFlag = false;
     };
+
+    /*template<typename Chunk>
+    inline PopStatus JobDeque<Chunk>::popQueue(ChunkPtr& chunk)
+    {
+        auto popRes = popBottom();
+
+        if (popRes.first == PopStatus::Success) {
+            chunk = queueIndex, std::move(popRes.second));
+            return PopStatus::Success;
+        }
+        else if (popRes.first == PopStatus::WouldBlock) {
+            return PopStatus::WouldBlock;
+        }
+
+        return PopStatus::Empty;
+    }
+
+    template<typename Chunk>
+    inline StealStatus JobDeque<Chunk>::stealQueues(ChunkPtr& chunk, std::vector<std::unique_ptr<JobDeque<Chunk>>>& stealQueues)
+    {
+        size_t n = stealQueues.size();
+
+        StealResult result;
+        for (size_t i = 1; i < n; ++i) {
+            size_t idx = (queueIndex + i) % n;
+            result = stealQueues[idx]->stealTop(queueIndex);
+
+            if (result.first == StealStatus::Success) {
+                chunk = std::move(result.second);
+                return StealStatus::Success;
+            }
+        }
+
+        return StealStatus::Empty;
+    }*/
 
 }  // namespace ECS::JobSystem
