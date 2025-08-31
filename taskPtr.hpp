@@ -610,6 +610,8 @@ struct IJob : std::enable_shared_from_this<Derived> {
         // ƒ[ƒJ[”•ª‚¾‚¯ Task ‚ğì¬‚µ‚Ä“o˜^
         auto work = [ctx]() { workerEntry(ctx); };
 
+        //Job job(std::move(work));
+
         auto task = new Task(Job(std::move(work)), 0,cat);
         TaskPtr taskPtr{ std::move(task) };
 
@@ -621,7 +623,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
         }
 
         if (taskPtr->inDegree.load() == 0) {
-            (taskPtr);
+            JobManager::Instance().pushJobWaitQueue(taskPtr);
         }
 
         return std::make_pair(taskPtr,future);

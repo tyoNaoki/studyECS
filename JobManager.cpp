@@ -15,6 +15,7 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     threadSize = threadCount;
 
     outstanding = 0;
+
     realTimeJobCounter = 0;
     backGroundCounter = 0;
 
@@ -144,6 +145,24 @@ void JobManager::pushJobWaitQueue(TaskPtr task)
     }
 }
 
+//TaskPtr JobManager::pushJobWaitQueue(Job&& job, int degree, JobCategory cat)
+//{
+//    auto task = new Task(job, 0, cat);
+//    TaskPtr taskPtr{ std::move(task) };
+//
+//    switch (cat)
+//    {
+//    case JobCategory::RealTime:
+//        pushRealTimeJobWaitQueue(std::move(taskPtr));
+//        break;
+//    case JobCategory::BackGround:
+//        pushBackGroudGlobalQueue(std::move(taskPtr));
+//        break;
+//    default:
+//        break;
+//    }
+//}
+
 void JobManager::setStartFrameTime()
 {
     frameStart = std::chrono::steady_clock::now();
@@ -249,9 +268,13 @@ bool JobManager::pushBottom(ChunkPtr&& chunkPtr, std::unique_ptr<JobQueue>& loca
 void JobManager::pushLocalQueue(std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue)
 {
 
-    WaitBuf::ChunkPtr chunkPtr;
-    while (waitQueue->try_pop(chunkPtr)
-        && pushBottom(std::move(chunkPtr),localQueue,waitQueue)) {
+    ChunkPtr chunkPtr;
+    while (true) {
+        if(!waitQueue->try_pop(chunkPtr)){
+            break;
+        }
+
+        pushBottom(std::move(chunkPtr), localQueue, waitQueue);
     }
 }
 
@@ -358,14 +381,13 @@ bool JobManager::pop_and_steal_Queue(size_t queueIndex, std::vector<std::unique_
     //リアルタイムJobを処理
     //自キューからPOP
     {
-        auto popRes = queues[queueIndex]->popBottom();
+        auto popRes = popBottom(queueIndex,queues[queueIndex]);
 
-        if (popRes.first == PopStatus::Success) {
-            runChunk(queueIndex, std::move(popRes.second));
+        if (popRes == PopStatus::Success) {
             sub_counterFunc();
             return true;
         }
-        else if (popRes.first == PopStatus::WouldBlock) {
+        else if (popRes == PopStatus::WouldBlock) {
             std::this_thread::yield();
             return true;
         }
@@ -385,18 +407,51 @@ bool JobManager::pop_and_steal_Queue(size_t queueIndex, std::vector<std::unique_
     return false;
 }
 
+PopStatus JobManager::popBottom(size_t queueIndex, std::unique_ptr<JobQueue>& queue)
+{
+    auto popRes = queue->popBottom();
+
+    if (popRes.first == PopStatus::Success) {
+        runChunk(queueIndex, std::move(popRes.second));
+        return PopStatus::Success;
+    }
+    else if (popRes.first == PopStatus::WouldBlock) {
+        return PopStatus::WouldBlock;
+    }
+
+    return PopStatus::Empty;
+}
+
+StealStatus JobManager::stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues)
+{
+    size_t n = stealQueues.size();
+
+    StealResult result;
+    for (size_t i = 1; i < n; ++i) {
+        size_t idx = (queueIndex + i) % n;
+        result = stealQueues[idx]->stealTop(queueIndex);
+
+        if (result.first == StealStatus::Success) {
+            runChunk(queueIndex, std::move(result.second));
+            return StealStatus::Success;
+        }
+    }
+
+    return StealStatus::Empty;
+}
+
 void JobManager::runChunk(size_t queueIndex, ChunkPtr&& chunkPtr)
 {
     ASSERT(chunkPtr, "chunkPtr is nullptr!!");
 
     while (true) {
         auto idx = chunkPtr->start.fetch_add(1, std::memory_order_acq_rel);
-        auto end = chunkPtr->count.load(std::memory_order_acquire); 
+        auto end = chunkPtr->count.load(std::memory_order_acquire);
 
         if (idx >= end)
             break; // 全部終わった
 
-        auto& task = chunkPtr->tasks[idx];
+        auto task = std::move(chunkPtr->tasks[idx]);
         runJob(queueIndex, std::move(task));
     }
 }

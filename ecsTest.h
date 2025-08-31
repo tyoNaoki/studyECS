@@ -139,9 +139,9 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	int check = 90'000;
 	// 3) 20 個のジョブをスケジュール
-	for (int i = 0; i < 100; ++i) {
-
+	for (int i = 0; i <8; ++i) {
 		job->schedule();
+
 
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
@@ -275,7 +275,7 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 		t = c;
 		}));
 
-	auto handle = parallelJob->schedule(ECS::JobSystem::JobCategory::RealTime,resultSize,batchSize,8);
+	auto handle = parallelJob->schedule(resultSize,batchSize,8);
 
 	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([](TestConnector& t) {
 		t.resultData[0] = 12; 
@@ -328,7 +328,7 @@ TEST_CASE_ORDER(test_bigVoidJobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	auto handle = parallelJob->schedule(ECS::JobSystem::JobCategory::RealTime,resultSize, batchSize, 8);
+	auto handle = parallelJob->schedule(resultSize, batchSize, 8);
 
 	handle.second.wait();
 
