@@ -163,6 +163,7 @@
     <ClCompile Include="World.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ChunkAllocator.h" />
     <ClInclude Include="EntityEventMixin.hpp" />
     <ClInclude Include="intrusive_ptr.h" />
     <ClInclude Include="JobBarrier.h" />
@@ -170,11 +171,13 @@
     <ClInclude Include="JobDeque.hpp" />
     <ClInclude Include="JobRecorder.h" />
     <ClInclude Include="JobManager.h" />
+    <ClInclude Include="JobWorker.h" />
     <ClInclude Include="Signal.hpp" />
     <ClInclude Include="CallbackList.hpp" />
     <ClInclude Include="Component.h" />
     <ClInclude Include="ComponentPoolManager.hpp" />
     <ClInclude Include="taskPtr.hpp" />
+    <ClInclude Include="TaskQueue.h" />
     <ClInclude Include="TestFramework.hpp" />
     <ClInclude Include="DebugHelpr.h" />
     <ClInclude Include="Event.hpp" />
