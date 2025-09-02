@@ -32,6 +32,7 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
         realTimeLocalQueue.emplace_back(
             std::make_unique<JobQueue>(capacity, i)
         );
+
         backGroundLocalQueue.emplace_back(
             std::make_unique<JobQueue>(capacity, i)
         );
@@ -409,35 +410,26 @@ bool JobManager::pop_and_steal_Queue(size_t queueIndex, std::vector<std::unique_
 
 PopStatus JobManager::popBottom(size_t queueIndex, std::unique_ptr<JobQueue>& queue)
 {
-    auto popRes = queue->popBottom();
+    ChunkPtr chunk;
+    auto popRes = queue->popQueue(chunk);
 
-    if (popRes.first == PopStatus::Success) {
-        runChunk(queueIndex, std::move(popRes.second));
-        return PopStatus::Success;
-    }
-    else if (popRes.first == PopStatus::WouldBlock) {
-        return PopStatus::WouldBlock;
+    if (popRes == PopStatus::Success) {
+        runChunk(queueIndex, std::move(chunk));
     }
 
-    return PopStatus::Empty;
+    return popRes;
 }
 
 StealStatus JobManager::stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues)
 {
-    size_t n = stealQueues.size();
+    ChunkPtr chunk;
+    auto result = stealQueues[queueIndex]->stealQueues(chunk,stealQueues);
 
-    StealResult result;
-    for (size_t i = 1; i < n; ++i) {
-        size_t idx = (queueIndex + i) % n;
-        result = stealQueues[idx]->stealTop(queueIndex);
-
-        if (result.first == StealStatus::Success) {
-            runChunk(queueIndex, std::move(result.second));
-            return StealStatus::Success;
-        }
+    if (result == StealStatus::Success) {
+        runChunk(queueIndex, std::move(chunk));
     }
 
-    return StealStatus::Empty;
+    return result;
 }
 
 void JobManager::runChunk(size_t queueIndex, ChunkPtr&& chunkPtr)
