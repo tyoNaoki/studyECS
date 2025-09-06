@@ -51,13 +51,13 @@ namespace ECS::JobSystem {
     class JobDeque {
 
     public:
-        using PushResult = std::pair<PushStatus, Chunk>;
+        using PushResult = std::pair<PushStatus, std::optional<Chunk>>;
 
-        using PopResult = std::pair<PopStatus, Chunk>;
+        using PopResult = std::pair<PopStatus, std::optional<Chunk>>;
 
-        using StealResult = std::pair<StealStatus, Chunk>;
+        using StealResult = std::pair<StealStatus, std::optional<Chunk>>;
 
-        explicit JobDeque(size_t capacity,size_t index,JobDeque<Chunk>*)
+        explicit JobDeque(size_t capacity,size_t index)
             : bottom(0),
             top(0),
             capacity(capacity),
@@ -76,13 +76,21 @@ namespace ECS::JobSystem {
         JobDeque(JobDeque&&) noexcept = default; //ムーブのみOK
         JobDeque& operator=(JobDeque&&) noexcept = default;
 
-        template<typename TaskQ>
-        bool pushWithTimeout(Chunk& chunk,TaskQ&taskQ,std::chrono::milliseconds timeout = std::chrono::milliseconds{ 2 });
+        size_t remainingSlot(){
+            size_t curSize = unsafe_size();
+            return curSize < capacity ? capacity - curSize : 0;
+        }
 
-        PopStatus popQueue(Chunk& chunk);
+        template<typename TaskQ>
+        bool pushWithTimeout(Chunk&& chunk,TaskQ&taskQ,std::chrono::milliseconds timeout = std::chrono::milliseconds{ 2 });
 
         template<typename JobQueue>
-        StealStatus stealQueues(Chunk& chunk, JobQueue* stealQueues);
+        bool popOrSteal(JobQueue* stealQueues,Chunk&chunk);
+
+        PopStatus pop(Chunk& chunk);
+
+        template<typename JobQueue>
+        StealStatus steal(JobQueue* queues, Chunk& chunk);
 
         //オーナースレッド専用：ボトムからPush
         PushResult pushBottom(Chunk chunk) {
@@ -112,7 +120,7 @@ namespace ECS::JobSystem {
             const std::string log = "PUSH in Queue : " + getQueueIndex();
             checkInvariant(log.c_str());
 
-            return { PushStatus::Success,nullptr};
+            return { PushStatus::Success,std::nullopt };
         }
 
         bool empty() const {
@@ -121,9 +129,8 @@ namespace ECS::JobSystem {
             return t >= b;
         }
 
-        //デバッグ用にのみ。
         size_t unsafe_size() const {
-            return bottom - top.load();
+            return bottom.load() - top.load();
         }
 
         //Jobがまだスロット内に残っているかチェックし、ある場合ログとして出力
@@ -132,7 +139,7 @@ namespace ECS::JobSystem {
 
             for (size_t i = 0; i < capacity; i++)
             {
-                if(slotData[i]!=nullptr){
+                if(slotData[i]!= std::nullopt){
                     validSlots.push_back(i);
                 }
             }
@@ -180,7 +187,7 @@ namespace ECS::JobSystem {
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
             if (b0 <= t0) {
-                return { PopStatus::Empty, nullptr };
+                return { PopStatus::Empty, std::nullopt };
             }
 
             //取り出し候補位置
@@ -190,10 +197,10 @@ namespace ECS::JobSystem {
             //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
             if (!lk.owns_lock()) {
-                return { PopStatus::WouldBlock, nullptr };
+                return { PopStatus::WouldBlock, std::nullopt };
             }
-            if (slotData[idx] == nullptr) {
-                return { PopStatus::Empty, nullptr };
+            if (slotData[idx] == std::nullopt) {
+                return { PopStatus::Empty, std::nullopt };
             }
 
             //最後の１要素
@@ -201,7 +208,7 @@ namespace ECS::JobSystem {
                 size_t curTop = top.load(std::memory_order_acquire);
                 if (curTop != t0) {
                     bottom.store(curTop, std::memory_order_release);
-                    return { PopStatus::Empty, nullptr };
+                    return { PopStatus::Empty, std::nullopt };
                 }
 
                 size_t expected = t0;
@@ -214,19 +221,19 @@ namespace ECS::JobSystem {
                     //steal側が勝利 → bottomはそのままEmpty扱い
                     const std::string log = "POP LAST FAIL in Queue : " + std::to_string(getQueueIndex());
                     checkInvariant(log.c_str());
-                    return { PopStatus::Empty, nullptr };
+                    return { PopStatus::Empty, std::nullopt };
                 }
 
                 //基本この分岐を通る。
-                Chunk result = std::move(slotData[idx]);
-                slotData[idx] = nullptr;
+                Chunk result = std::move(*slotData[idx]);
+                slotData[idx] = std::nullopt;
                 bottom.store(t0 + 1, std::memory_order_release);
                 const std::string msg = "POP LAST OK in " + std::to_string(getQueueIndex());
                 checkInvariant(msg.c_str());
                 return { PopStatus::Success, std::move(result) };
             }
 
-            Chunk result = std::move(slotData[idx]);
+            Chunk result = std::move(*slotData[idx]);
             slotData[idx] = nullptr;
             bottom.fetch_sub(1, std::memory_order_release);
             const std::string nlog = "POP NORMAL OK in Queue : " + std::to_string(getQueueIndex());
@@ -241,7 +248,7 @@ namespace ECS::JobSystem {
             size_t t0 = top.load(std::memory_order_seq_cst);
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             if (t0 >= b0) {
-                return { StealStatus::Empty, nullptr };
+                return { StealStatus::Empty, std::nullopt };
             }
 
             size_t idx = t0 & mask;
@@ -250,15 +257,15 @@ namespace ECS::JobSystem {
             //念のため、steal専用のロックも行う
             std::unique_lock tailLk(stealMutex, std::try_to_lock);
             if (!tailLk.owns_lock()) {
-                return { StealStatus::WouldBlock, nullptr };
+                return { StealStatus::WouldBlock, std::nullopt };
             }
 
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
             if (!lk.owns_lock()) {
-                return { StealStatus::WouldBlock, nullptr };
+                return { StealStatus::WouldBlock, std::nullopt };
             }
-            if (slotData[idx] == nullptr) {
-                return { StealStatus::Empty, nullptr };
+            if (slotData[idx] == std::nullopt) {
+                return { StealStatus::Empty, std::nullopt };
             }
 
             //最後の1要素
@@ -271,13 +278,13 @@ namespace ECS::JobSystem {
                 //Steal失敗
                 const std::string log = "STEAL FAIL of Queue : " + std::to_string(index);
                 checkInvariant(log.c_str());
-                return { StealStatus::Empty, nullptr };
+                return { StealStatus::Empty, std::nullopt };
             }
 
             //基本、この分岐を通る。
-            Chunk result = std::move(slotData[idx]);
+            Chunk result = std::move(*slotData[idx]);
             //対象のスロットリセット
-            slotData[idx] = nullptr;
+            slotData[idx] = std::nullopt;
 
             const std::string slog = "STEAL SUCCESS of Queue : " + std::to_string(index);
             checkInvariant(slog.c_str());
@@ -325,7 +332,7 @@ namespace ECS::JobSystem {
 
         std::vector<std::mutex>        slotMutex;
         std::mutex stealMutex;
-        std::vector<Chunk>  slotData;
+        std::vector<std::optional<Chunk>>  slotData;
 
         // インデックス管理
         std::atomic<size_t> top;     // スティーラーが進める
@@ -339,7 +346,7 @@ namespace ECS::JobSystem {
     };
 
     template<typename Chunk>
-    inline PopStatus JobDeque<Chunk>::popQueue(Chunk& chunk)
+    inline PopStatus JobDeque<Chunk>::pop(Chunk& chunk)
     {
         auto popRes = popBottom();
 
@@ -356,12 +363,14 @@ namespace ECS::JobSystem {
 
     template<typename Chunk>
     template<typename TaskQ>
-    inline bool JobDeque<Chunk>::pushWithTimeout(Chunk& chunk, TaskQ& taskQ, std::chrono::milliseconds timeout)
+    inline bool JobDeque<Chunk>::pushWithTimeout(Chunk&& chunk, TaskQ& taskQ, std::chrono::milliseconds timeout)
     {
-        auto start = std::chrono::steady_clock::now();
+        auto start = std::chrono::steady_clock::now(); 
+
+        auto c = std::move(chunk);
 
         while (true) {
-            auto [status, notPushed] = pushBottom(std::move(chunk));
+            auto [status, notPushed] = pushBottom(std::move(c));
 
             if(status == PushStatus::Success){
                 return true;
@@ -375,7 +384,7 @@ namespace ECS::JobSystem {
             }
 
             //少し待って再挑戦
-            chunk = std::move(notPushed);
+            c = std::move(notPushed);
             std::this_thread::yield();
             continue;
         }
@@ -385,14 +394,42 @@ namespace ECS::JobSystem {
 
     template<typename Chunk>
     template<typename JobQueue>
-    inline StealStatus JobDeque<Chunk>::stealQueues(Chunk& chunk, JobQueue* stealQueues)
+    inline bool JobDeque<Chunk>::popOrSteal(JobQueue* stealQueues, Chunk& chunk)
     {
-        size_t n = stealQueues.size();
+        //自キューからPOP
+        {
+            auto popRes = pop(chunk);
+        
+            if (popRes == PopStatus::Success) {
+                return true;
+            }
+            else if (popRes == PopStatus::WouldBlock) {
+                std::this_thread::yield();
+                return true;
+            }
+        }
+        
+        //他キューからSteal
+        {
+            auto result = steal(stealQueues,chunk);
+            if (result == StealStatus::Success) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    template<typename Chunk>
+    template<typename JobQueue>
+    inline StealStatus JobDeque<Chunk>::steal(JobQueue* queues, Chunk& chunk)
+    {
+        size_t n = queues.size();
 
         StealResult result;
         for (size_t i = 1; i < n; ++i) {
             size_t idx = (queueIndex + i) % n;
-            result = stealQueues[idx]->stealTop(queueIndex);
+            result = queues[idx]->stealTop(queueIndex);
 
             if (result.first == StealStatus::Success) {
                 chunk = std::move(result.second);

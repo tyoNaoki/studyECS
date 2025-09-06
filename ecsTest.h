@@ -147,12 +147,12 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
-	jm.waitForAllRealTimeJob();
+	jm.waitForAllRealTime();
 	std::printf("realTime job finished!! \n");
-	jm.popGlobalBackGroundQueue();
+	//jm.popGlobalBackGroundQueue();
 
 	// 4) すべてのジョブ完了を待機
-	jm.waitForAll();
+	//jm.waitForAll();
 
 	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");
@@ -215,7 +215,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	}
 
 	// 4) すべてのジョブ完了を待機
-	js.waitForAllRealTimeJob();
+	js.waitForAllRealTime();
 
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);

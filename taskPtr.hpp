@@ -12,6 +12,8 @@
 
 namespace ECS::JobSystem{
 
+enum class JobCategory { RealTime, BackGround, Num };
+
 #define REFLECT_FIELDS(Type, ...)                                  \
   static constexpr auto field_ptrs()                                \
   { return std::make_tuple(__VA_ARGS__); }
@@ -107,11 +109,6 @@ public:
     explicit operator bool() const noexcept = delete;
 };
 
-enum class JobCategory : uint8_t {
-    RealTime,
-    BackGround
-};
-
 struct Task {
     Job job;
     std::atomic<int>   inDegree{ 0 };
@@ -132,7 +129,8 @@ struct Task {
 
     void release() {
         if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            delete this;
+
+           delete this;
         }
     }
 
@@ -586,10 +584,9 @@ struct IJob : std::enable_shared_from_this<Derived> {
         // ƒ[ƒJ[”•ª‚¾‚¯ Task ‚ğì¬‚µ‚Ä“o˜^
         auto work = [ctx]() { workerEntry(ctx); };
 
-        auto task = new Task(Job(std::move(work)), 0,cat);
-        TaskPtr taskPtr{ std::move(task) };
+        Job job(std::move(work));
 
-        JobManager::Instance().pushJobWaitQueue(taskPtr);
+        auto taskPtr = JobManager::Instance().schedule(cat,std::move(job),0);
 
         return std::make_pair(taskPtr, future);
     }
@@ -610,21 +607,19 @@ struct IJob : std::enable_shared_from_this<Derived> {
         // ƒ[ƒJ[”•ª‚¾‚¯ Task ‚ğì¬‚µ‚Ä“o˜^
         auto work = [ctx]() { workerEntry(ctx); };
 
-        //Job job(std::move(work));
+        Job job(std::move(work));
 
-        auto task = new Task(Job(std::move(work)), 0,cat);
-        TaskPtr taskPtr{ std::move(task) };
+        /*auto task = new Task(Job(std::move(work)), 0,cat);
+        TaskPtr taskPtr{ std::move(task) };*/
 
-        for (auto& d : deps) {
+       /* for (auto& d : deps) {
             std::lock_guard<std::mutex> lk(d->taskMutex);
             if (d && d->job.valid()) {
                 taskPtr.get()->addDependent(d.get());
             }
-        }
+        }*/
 
-        if (taskPtr->inDegree.load() == 0) {
-            JobManager::Instance().pushJobWaitQueue(taskPtr);
-        }
+        auto taskPtr = JobManager::Instance().schedule(cat,std::move(job),0);
 
         return std::make_pair(taskPtr,future);
     }
