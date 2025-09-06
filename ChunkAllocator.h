@@ -6,25 +6,30 @@ namespace ECS::JobSystem{
     // https://qiita.com/taqu/items/45ab4fb57e4079c3be94
     // Qiita‹LŽ–[Chunk allocator]
     // 
+    // 
+    
+    struct Chunk {
+        std::uint16_t next_{};
+        std::atomic<std::uint16_t> start{ 0 };
+        std::atomic<std::uint16_t> count{ 0 };
+        //std::vector<T, Capacity> tasks{};
+        bool full() const { return count.load(std::memory_order_acquire) == Capacity; }
+        bool empty() const { return count.load(std::memory_order_acquire) == 0; }
+
+        std::uint16_t remaining() const noexcept {
+            return count.load(std::memory_order_acquire)
+                - start.load(std::memory_order_acquire);
+        }
+    };
+
     //Capactity‚Í512‚Ü‚ÅŽw’è‰Â”\
     template <typename T, size_t Capacity, size_t ChunkCount, size_t Align = 16>
     class ChunkAllocator {
         using u16 = std::uint16_t;
 
-    public:
-        struct Chunk {
-            u16 next_{};
-            std::atomic<u16> start{ 0 };
-            std::atomic<u16> count{ 0 };
-            std::array<T, Capacity> tasks{};
-            bool full() const { return count.load(std::memory_order_acquire) == Capacity; }
-            bool empty() const { return count.load(std::memory_order_acquire) == 0; }
+    public
 
-            u16 remaining() const noexcept {
-                return count.load(std::memory_order_acquire)
-                    - start.load(std::memory_order_acquire);
-            }
-        };
+        
 
         struct ChunkDeleter {
             ChunkAllocator* alloc;
@@ -85,7 +90,6 @@ namespace ECS::JobSystem{
         }
 
         Chunk* allocate() {
-
             if (freeList_ == Invalid) {
                 return nullptr; // ‹ó‚«‚È‚µ
             }
@@ -152,4 +156,5 @@ namespace ECS::JobSystem{
 
         return handle;
     }
+
 }

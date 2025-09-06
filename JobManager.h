@@ -15,42 +15,105 @@
 #include "JobBarrier.h"
 #include "JobDebugger.h"
 #include "TaskQueue.h"
-#include "ChunkAllocator.h"
+#include "taskPtr.hpp"
+#include "JobWorker.h"
 
 namespace ECS::JobSystem{
 
+    static constexpr size_t NumCategories = static_cast<size_t>(JobCategory::Num);
+
+    /// <summary>
+    /*pending	キューに積まれ、まだ取得・実行が始まっていないジョブ数	pushBottom() 後、popOrSteal() 前
+      running	ワーカーが取得し、現在実行中のジョブ数   popOrSteal() 成功直後 ～ 完了まで
+      completed	実行が終わり、後片付けや結果格納も含めて完了したジョブ数	runChunk / runJob() 実行後*/
+    /// </summary>
+    struct JobStats {
+
+        size_t pendingJobCount(const JobCategory cat) const noexcept{
+            return pending_[size_t(cat)].load(std::memory_order_acquire);
+        }
+
+        size_t runningJobCount(const JobCategory cat) const noexcept {
+            return running_[size_t(cat)].load(std::memory_order_acquire);
+        }
+
+        size_t completedJobCount(const JobCategory cat) const noexcept {
+            return completed_[size_t(cat)].load(std::memory_order_acquire);
+        }
+
+        size_t notCompletedJobCount(const JobCategory cat)const noexcept{
+            return pending_[size_t(cat)].load(std::memory_order_acquire) + running_[size_t(cat)].load(std::memory_order_acquire);
+        }
+
+        // pending の増減
+        void onEnqueued(const JobCategory cat,size_t count) noexcept {
+            pending_[size_t(cat)].fetch_add(1, std::memory_order_relaxed);
+        }
+
+        void onDequeued(const JobCategory cat,size_t count) noexcept {
+            pending_[size_t(cat)].fetch_sub(1, std::memory_order_relaxed);
+        }
+
+        // running の増減
+        void onStart(const JobCategory cat,size_t count) noexcept {
+            running_[size_t(cat)].fetch_add(1, std::memory_order_relaxed);
+        }
+        void onFinish(const JobCategory cat,size_t count) noexcept {
+            running_[size_t(cat)].fetch_sub(1, std::memory_order_relaxed);
+            completed_[size_t(cat)].fetch_add(1, std::memory_order_relaxed);
+
+            // pending + running が 0 なら全完了を通知
+            if (pending_[size_t(cat)].load(std::memory_order_acquire) == 0 &&
+                running_[size_t(cat)].load(std::memory_order_acquire) == 0)
+            {
+                std::lock_guard<std::mutex> lk(mtx_);
+                cv_.notify_all();
+            }
+        }
+
+        // フレーム終端で指定カテゴリがすべて完了するまで待つ
+        void waitForAll(const JobCategory cat) {
+            std::unique_lock<std::mutex> lk(mtx_);
+            cv_.wait(lk, [&] {
+                return pending_[size_t(cat)].load(std::memory_order_acquire) == 0
+                    && running_[size_t(cat)].load(std::memory_order_acquire) == 0;
+                });
+        }
+
+        void resetCompleted() noexcept {
+            for (auto& f : completed_)    f.store(0);
+        }
+
+        private:
+        // 各状態のカテゴリ別カウンタ
+        std::array<std::atomic<size_t>, NumCategories> pending_{};
+        std::array<std::atomic<size_t>, NumCategories> running_{};
+        std::array<std::atomic<size_t>, NumCategories> completed_{};
+
+        // フレーム同期用
+        std::mutex             mtx_;
+        std::condition_variable cv_;
+    };
+
+
 class JobManager
 {
-    struct Task;
-
-    template<typename T>
-    class intrusive_ptr;
+    /*template<typename T>
+    class intrusive_ptr;*/
 
     using TaskPtr = intrusive_ptr<Task>;
 
     static constexpr size_t bufferCap = 20'000;
 
-    //Chunkに詰められるTaskの最大数
-    static constexpr size_t ChunkCap = 512;
-
-    //1回の確保でまとめて作るchunkの数
-    static constexpr size_t ChunkMemSize = 14;
-
-    using ChunkAllocator = ChunkAllocator<TaskPtr, ChunkCap, ChunkMemSize,16>;
-
-    using Chunk = ChunkAllocator::Chunk;
-
-    using ChunkPtr = ChunkAllocator::ChunkHandle;
-
-    using WaitBuf = TaskQueue<TaskPtr,bufferCap,ChunkAllocator>;
-
-    using JobQueue = Debug::DebugJobQueue<JobDeque<ChunkPtr>>;
+    using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
 
     using StealResult = JobQueue::Base::StealResult;
 
     using PopResult = JobQueue::Base::PopResult;
 
     using PushResult = JobQueue::Base::PushResult;
+
+    using RealTimeOnlyWorker = Worker<RealTimePolicy,JobExecutor>;
 
     //仮として60FPS
     static constexpr float targetFPS = 60.0f;
@@ -144,6 +207,7 @@ public:
 
         if (t->inDegree.load() == 0) {
             pushRealTimeJobWaitQueue(t);
+            
         }
 
         return std::make_pair(
@@ -186,13 +250,48 @@ public:
         return schedule_job(std::move(wrapped), deps);
     }
 
-    void waitForAll();
+    auto scheduleTask(TaskPtr task) {
+        size_t index = getNextQueueIndex();
 
-    void waitForAllRealTimeJob();
+        if (task->category == JobCategory::BackGround) {
+            ASSERT(false, "BackGroundJob not work");
+            //pushBackGroudGlobalQueue(std::move(task));
+        }
 
-    void waitForLocalBackGroundJob();
+        return workers[index]->schedule(task->category,std::move(task));
+    }
 
-    void workerThreadFunction(size_t queueIndex);
+    auto scheduleTask(JobCategory cat,Job&&job,int degree){
+        size_t index = getNextQueueIndex();
+
+        if(cat == JobCategory::BackGround){
+            ASSERT(false,"BackGroundJob not work");
+            //pushBackGroudGlobalQueue(std::move(task));
+        }
+
+        return workers[index]->schedule(cat, std::move(job), degree);
+    }
+
+    size_t getPendingJobCount(const JobCategory cat) const noexcept{
+        return stats_.pendingJobCount(cat);
+    }
+
+    size_t getRunningJobCount(const JobCategory cat) const noexcept {
+        return stats_.runningJobCount(cat);
+    }
+
+    size_t getCompletedJobCount(const JobCategory cat) const noexcept {
+        return stats_.completedJobCount(cat);
+    }
+
+    void waitForAllRealTime() {
+        stats_.waitForAll(JobCategory::RealTime);
+    }
+
+    // 任意カテゴリに対しても待機できるよう汎用版を用意
+    void waitForAll(JobCategory cat) {
+        stats_.waitForAll(cat);
+    }
 
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
@@ -208,13 +307,7 @@ public:
         return nullptr;
     }
 
-    //Taskが持つcategoryに応じて対応のwaitQueueにpushする
-    void pushJobWaitQueue(TaskPtr task);
-
     //TaskPtr pushJobWaitQueue(Job&& job,int degree,JobCategory cat);
-    
-    //まとめてBackGroundJobをpushする用
-    void pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks);
 
     //フレーム始めに計算した処理数のBGを各ワーカーごとのBGQueueに割り振る。
     //計算は以下パラメータを使用する。
@@ -228,39 +321,6 @@ public:
     std::chrono::steady_clock::time_point getStartFrameTime() const;
 
 private:
-    void pushRealTimeJobWaitQueue(TaskPtr task);
-
-    //BGJobをglobalBGQueueにセット
-    void pushBackGroudGlobalQueue(TaskPtr task);
-
-    bool pushBottom(ChunkPtr&& chunkPtr, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue);
-
-    PopStatus popBottom
-    (size_t queueIndex, std::unique_ptr<JobQueue>& queue);
-
-    StealStatus stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues);
-
-    void pushLocalQueue(std::unique_ptr<JobQueue>&localQueue, std::unique_ptr<WaitBuf>&waitQueue);
-
-    //GlobalBGQueueが空ならNull
-    std::optional<TaskPtr>try_popGlobalBackGroundQueue();
-
-    void run_realTimeQueue(size_t queueIndex);
-
-    void run_backGroundQueue(size_t queueIndex);
-
-    bool pop_and_steal_Queue(size_t queueIndex,std::vector<std::unique_ptr<JobQueue>>&stealQueues,std::function<void()>sub_counterFunc);
-
-    void fallbackWaitQueue(std::unique_ptr<WaitBuf>& waitQueue,ChunkPtr chunkPtr) {
-       waitQueue->push(std::move(chunkPtr));
-    }
-
-    void runChunk(size_t queueIndex,ChunkPtr&& chunkPtr);
-
-    void runJob(size_t queueIndex,TaskPtr&& task);
-
-    void run_while_validQueue(size_t queueIndex);
-
     bool allQueuesEmpty() const;
 
     void addDependent(Task* parent, Task* child) {
@@ -276,15 +336,11 @@ private:
 
     size_t calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime);
 
-    void sub_realTimeJob_counter();
-
-    void sub_backGroundJob_counter();
-
 private:
     double avg_JobTimeMs = 1.0f;
     double avg_ExecuteJobTime = 0.1;
 
-    std::unique_ptr<ChunkAllocator>allocator;
+    JobStats stats_;
 
     // 時刻
     std::chrono::steady_clock::time_point frameStart;
@@ -295,28 +351,14 @@ private:
     std::vector<TaskPtr>globalBackGroudQueue;
     std::mutex backGroundMutex;
 
-    //バックグラウンドで少しづつ処理される
-    //全ての待機キューを処理時に個数を決めて取り出す。
-    //処理フレームを問わない。
-    //std::vector<std::unique_ptr<WaitQueue<TaskPtr>>>backGroundWaitQueues;
-    std::vector<std::unique_ptr<WaitBuf>>backGroundWaitQueues;
-    std::vector<std::unique_ptr<JobQueue>> backGroundLocalQueue;
+    std::vector<std::unique_ptr<JobQueue>> localQueues;
 
-    //リアルタイムキュー
-    //優先的に処理される
-    //1フレーム以内に処理を保証
-    std::vector<std::unique_ptr<WaitBuf>> realTimeWaitQueues;
-    std::vector<std::unique_ptr<JobQueue>> realTimeLocalQueue;
-
-    std::vector<std::thread> workers;
+    std::vector<std::unique_ptr<IWorker>> workers;
 
     std::atomic<bool> stopFlag;
     
     //現ジョブの総数
     std::atomic<size_t> outstanding{ 0 };
-
-    std::atomic<size_t> realTimeJobCounter;
-    std::atomic<size_t> backGroundCounter;
 
     std::mutex stealMutex;
 

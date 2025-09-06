@@ -14,136 +14,32 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     nextQueue = 0;
     threadSize = threadCount;
 
-    outstanding = 0;
-
-    realTimeJobCounter = 0;
-    backGroundCounter = 0;
-
-    allocator = std::make_unique<ChunkAllocator>();
-
-    realTimeWaitQueues.reserve(threadCount);
-    backGroundWaitQueues.reserve(threadCount);
-    realTimeLocalQueue.reserve(threadCount);
-
+    localQueues.reserve(threadCount);
     //初期化
     for (size_t i = 0; i < threadCount; ++i) {
-        realTimeWaitQueues.push_back(std::make_unique<WaitBuf>(allocator.get()));
-        backGroundWaitQueues.push_back(std::make_unique<WaitBuf>(allocator.get()));
-        realTimeLocalQueue.emplace_back(
-            std::make_unique<JobQueue>(capacity, i)
-        );
-
-        backGroundLocalQueue.emplace_back(
-            std::make_unique<JobQueue>(capacity, i)
-        );
+       localQueues.emplace_back(std::make_unique<JobQueue>(capacity,i));
     }
 
-    // workers 初期化
     workers.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
-        workers.emplace_back([this, i]() noexcept {
-
-            this->workerThreadFunction(i);
-            });
+        workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(), stats_));
     }
+
 }
 JobManager::~JobManager()
 {
     if (!initFlag)return;
-
-    stopFlag.store(true, std::memory_order_relaxed);
-    {
-        std::lock_guard<std::mutex> lk(wakeMutex);
-        wakeCv.notify_all();           // ワーカー全員を起こす
-    }
-
-    for (auto& w : workers) {
-        if (w.joinable())
-            w.join();
-    }
-}
-void JobManager::waitForAll()
-{
-    std::unique_lock<std::mutex> lk(finishMutex);
-    finishCv.wait(lk, [&] {
-        return abortFlag.load(std::memory_order_acquire)
-            || outstanding.load(std::memory_order_acquire) == 0;
-        });
-}
-
-void JobManager::waitForAllRealTimeJob()
-{
-    std::unique_lock<std::mutex> lk(realTimeJob_Mutex);
-
-    realTimeJob_WaitCv.wait(lk, [&] {
-        return abortFlag.load(std::memory_order_acquire)
-            || realTimeJobCounter.load(std::memory_order_acquire) == 0;
-        });
-}
-
-void JobManager::waitForLocalBackGroundJob()
-{
-    std::unique_lock<std::mutex> lk(backGroundJob_Mutex);
-
-    backGroundJob_WaitCv.wait(lk, [&] {
-        return abortFlag.load(std::memory_order_acquire)
-            || backGroundCounter.load(std::memory_order_acquire) == 0;
-        });
-}
-
-void JobManager::workerThreadFunction(size_t queueIndex)
-{
-    const size_t index = queueIndex;
-    // 終了フラグと outstanding の組み合わせでループ制御
-    while (true) {
-        //停止指示または未完了ジョブなしなら抜ける
-        if (abortFlag.load(std::memory_order_acquire)) {
-            break;
-        }
-
-        if (stopFlag.load(std::memory_order_acquire) &&
-            outstanding.load(std::memory_order_acquire) == 0)
-        {
-            break;
-        }
-
-        run_realTimeQueue(queueIndex);
-
-        if (realTimeLocalQueue[index]->isAbort()||backGroundLocalQueue[index]->isAbort()) {
-            abort();
-            return;
-        }
-    }
-
-    if (abortFlag.load(std::memory_order_acquire)) {
-        run_while_validQueue(index);
-    }
 }
 
 bool JobManager::checkRanAllJobInJobQueues()
 {
-    for (auto& queue : realTimeLocalQueue) {
+    for (auto& queue : localQueues) {
         if (queue->validCheck()) {
             return false;
         }
     }
 
     return true;
-}
-
-void JobManager::pushJobWaitQueue(TaskPtr task)
-{
-    switch (task->category)
-    {
-    case JobCategory::RealTime:
-        pushRealTimeJobWaitQueue(std::move(task));
-        break;
-    case JobCategory::BackGround:
-        pushBackGroudGlobalQueue(std::move(task));
-        break;
-    default:
-        break;
-    }
 }
 
 //TaskPtr JobManager::pushJobWaitQueue(Job&& job, int degree, JobCategory cat)
@@ -174,122 +70,6 @@ std::chrono::steady_clock::time_point JobManager::getStartFrameTime() const
     return frameStart;
 }
 
-void JobManager::pushRealTimeJobWaitQueue(TaskPtr task)
-{
-    //カウンター処理
-    outstanding.fetch_add(1, std::memory_order_acq_rel);
-    realTimeJobCounter.fetch_add(1, std::memory_order_acq_rel);
-
-    size_t idx = getNextQueueIndex();
-    realTimeWaitQueues[idx]->push(task);
-
-    realTimeJob_WaitCv.notify_one();
-}
-
-void JobManager::pushBackGroudGlobalQueue(TaskPtr task)
-{
-    //カウンタ処理
-    outstanding.fetch_add(1, std::memory_order_acq_rel);
-
-    std::lock_guard<std::mutex>lk(backGroundMutex);
-
-    if (globalBackGroudQueue.capacity() < globalBackGroudQueue.size() + 1) {
-        globalBackGroudQueue.reserve(globalBackGroudQueue.size() + 16); 
-    }
-    
-    globalBackGroudQueue.push_back(std::move(task));
-}
-
-void JobManager::pushBackGroudGlobalQueue(std::vector<TaskPtr>&& tasks)
-{
-    const size_t size = tasks.size();
-
-    // タスク数を加算
-    outstanding.fetch_add(size, std::memory_order_acq_rel);
-    backGroundCounter.fetch_add(size, std::memory_order_acq_rel);
-
-    std::lock_guard<std::mutex>lk(backGroundMutex);
-
-    globalBackGroudQueue.reserve(globalBackGroudQueue.size() + size);
-
-    // move で一括挿入
-    globalBackGroudQueue.insert(globalBackGroudQueue.end(),
-        std::make_move_iterator(tasks.begin()),
-        std::make_move_iterator(tasks.end()));
-}
-
-bool JobManager::pushBottom(ChunkPtr&& chunkPtr, std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue)
-{
-    auto start = std::chrono::steady_clock::now();
-    const auto  timeout = std::chrono::milliseconds(2);
-
-    auto& queue = localQueue;
-    auto& waitQ = waitQueue;
-
-    while (true) {
-        PushResult res = queue->pushBottom(std::move(chunkPtr));
-
-        switch (res.first) {
-            case PushStatus::Success:
-            {
-                return true;
-            }
-
-            case PushStatus::WouldBlock:
-            {
-                if (std::chrono::steady_clock::now() - start >= timeout) {
-                    fallbackWaitQueue(waitQ, std::move(res.second));
-                    return false;
-                }
-
-                chunkPtr = std::move(res.second);
-                // 軽めのバックオフ
-                std::this_thread::yield();
-                break;
-            }
-            case PushStatus::Full:
-            {
-                if (std::chrono::steady_clock::now() - start < timeout) {
-                    chunkPtr = std::move(res.second);
-                    //少し待って再挑戦
-                    std::this_thread::yield();
-                }
-                else {
-                    fallbackWaitQueue(waitQ, std::move(res.second));
-                    return false;
-                }
-
-                break;
-            }
-        }
-
-    }
-}
-
-void JobManager::pushLocalQueue(std::unique_ptr<JobQueue>& localQueue, std::unique_ptr<WaitBuf>& waitQueue)
-{
-
-    ChunkPtr chunkPtr;
-    while (true) {
-        if(!waitQueue->try_pop(chunkPtr)){
-            break;
-        }
-
-        pushBottom(std::move(chunkPtr), localQueue, waitQueue);
-    }
-}
-
-std::optional<TaskPtr> JobManager::try_popGlobalBackGroundQueue()
-{
-    std::lock_guard<std::mutex>lock(backGroundMutex);
-
-    if (globalBackGroudQueue.empty()) return std::nullopt;
-
-    auto t = std::move(globalBackGroudQueue.back());
-    globalBackGroudQueue.pop_back();
-    return t;
-}
-
 void JobManager::popGlobalBackGroundQueue() {
     if (globalBackGroudQueue.empty()) return; // グローバルキューが空の場合終了
 
@@ -307,228 +87,45 @@ void JobManager::popGlobalBackGroundQueue() {
 
     size_t rawJobs = popBGNum / getThreadSize(); //一つのワーカーの処理するジョブ数
 
-    backGroundCounter.fetch_add(popBGNum, std::memory_order_acq_rel);
+    //backGroundCounter.fetch_add(popBGNum, std::memory_order_acq_rel);
 
     //繰り上げ分入れるために最後を除いたワーカー分、まずはpopする
     size_t workerNum = getThreadSize() - 1;
 
-    for (size_t t = 0; t < workerNum; ++t) {
-        //chunk
-        for(int j = 0; j < rawJobs;j++){
-            if (auto task = try_popGlobalBackGroundQueue()) {
-                // グローバルから取り出して各待機キューに割り当て
-                backGroundWaitQueues[t]->push(std::move(*task));
-            }
-            else {
-                return; // グローバルキューが空になった場合終了
-            }
-        }
-    }
+    ASSERT(false,"BackGroundJOb not work");
+
+    //for (size_t t = 0; t < workerNum; ++t) {
+    //    //chunk
+    //    for(int j = 0; j < rawJobs;j++){
+    //        if (auto task = try_popGlobalBackGroundQueue()) {
+    //            // グローバルから取り出して各待機キューに割り当て
+    //            workers[t]->schedule(JobCategory::BackGround,std::move(*task));
+    //        }
+    //        else {
+    //            return; // グローバルキューが空になった場合終了
+    //        }
+    //    }
+    //}
 
     // 最後の分は繰り上げ分入れる
-    auto lastPopNum = popBGNum - (rawJobs * workerNum);
-    
-    // 最後だけ
-    for(int i = 0;i < lastPopNum;i++){
-        // chunk分
-        if (auto task = try_popGlobalBackGroundQueue()) {
-            // グローバルから取り出す
-            backGroundWaitQueues[workerNum]->push(std::move(*task));
-        }
-        else {
-            return; // グローバルキューが空になった場合終了
-        }
-    }   
-}
-
-void JobManager::run_realTimeQueue(size_t queueIndex)
-{
-    pushLocalQueue(realTimeLocalQueue[queueIndex], realTimeWaitQueues[queueIndex]);
-
-    if(realTimeJobCounter == 0||
-        !pop_and_steal_Queue(
-        queueIndex
-        ,realTimeLocalQueue
-        , [&]() { sub_realTimeJob_counter();}) 
-        && !realTimeLocalQueue[queueIndex]->isAbort()){
-
-        pushLocalQueue(backGroundLocalQueue[queueIndex], backGroundWaitQueues[queueIndex]);
-
-        pop_and_steal_Queue(
-            queueIndex
-            , backGroundLocalQueue
-            , [&]() { sub_backGroundJob_counter();//カウンタ処理
-            });
-    }
-}
-
-void JobManager::run_backGroundQueue(size_t queueIndex)
-{
-    pushLocalQueue(backGroundLocalQueue[queueIndex], backGroundWaitQueues[queueIndex]);
-
-    if (!pop_and_steal_Queue(queueIndex, backGroundLocalQueue, [&]() {
-        sub_backGroundJob_counter(); 
-        })) {
-        pushLocalQueue(realTimeLocalQueue[queueIndex], realTimeWaitQueues[queueIndex]);
-
-        pop_and_steal_Queue(queueIndex, realTimeLocalQueue, [&]() {
-            sub_realTimeJob_counter();  // リアルタイム用カウンタ処理
-            });
-    }
-}
-
-bool JobManager::pop_and_steal_Queue(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& queues, std::function<void()> sub_counterFunc)
-{
-    //リアルタイムJobを処理
-    //自キューからPOP
-    {
-        auto popRes = popBottom(queueIndex,queues[queueIndex]);
-
-        if (popRes == PopStatus::Success) {
-            sub_counterFunc();
-            return true;
-        }
-        else if (popRes == PopStatus::WouldBlock) {
-            std::this_thread::yield();
-            return true;
-        }
-    }
-
-    //他キューからSteal
-    {
-        auto stealRes = stealQueues(queueIndex, queues);
-
-        if (stealRes == StealStatus::Success) {
-            sub_counterFunc();
-            return true;
-        }
-    }
-
-    std::this_thread::yield();
-    return false;
-}
-
-PopStatus JobManager::popBottom(size_t queueIndex, std::unique_ptr<JobQueue>& queue)
-{
-    ChunkPtr chunk;
-    auto popRes = queue->popQueue(chunk);
-
-    if (popRes == PopStatus::Success) {
-        runChunk(queueIndex, std::move(chunk));
-    }
-
-    return popRes;
-}
-
-StealStatus JobManager::stealQueues(size_t queueIndex, std::vector<std::unique_ptr<JobQueue>>& stealQueues)
-{
-    ChunkPtr chunk;
-    auto result = stealQueues[queueIndex]->stealQueues(chunk,stealQueues);
-
-    if (result == StealStatus::Success) {
-        runChunk(queueIndex, std::move(chunk));
-    }
-
-    return result;
-}
-
-void JobManager::runChunk(size_t queueIndex, ChunkPtr&& chunkPtr)
-{
-    ASSERT(chunkPtr, "chunkPtr is nullptr!!");
-
-    while (true) {
-        auto idx = chunkPtr->start.fetch_add(1, std::memory_order_acq_rel);
-        auto end = chunkPtr->count.load(std::memory_order_acquire);
-
-        if (idx >= end)
-            break; // 全部終わった
-
-        auto task = std::move(chunkPtr->tasks[idx]);
-        runJob(queueIndex, std::move(task));
-    }
-}
-
-void JobManager::runJob(size_t queueIndex, TaskPtr&& task)
-{
-    ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
-
-    task->job.invoke();
-
-    //繋がっているchildの依存カウントを減らしていく
-    for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
-        if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            pushJobWaitQueue(child);
-        }
-    }
-
-    static std::mutex logMutex;
-
-    // runJob 内
-    auto prev = outstanding.fetch_sub(1, std::memory_order_acq_rel);
-    bool didAllFinish = (prev == 1);
-
-    if (didAllFinish) {
-        std::lock_guard<std::mutex> lk(finishMutex);
-        finishCv.notify_all();
-    }
-
-    {
-        std::lock_guard<std::mutex> lk2(logMutex);
-        if (didAllFinish) {
-            test::saveLog("[All FINISH] queue=%zu outstanding=%zu", queueIndex, outstanding.load());
-            std::printf("[All FINISH] queue=%zu outstanding=%zu \n", queueIndex, outstanding.load());
-        }
-        else {
-            test::saveLog("[FINISH] queue=%zu outstanding=%zu", queueIndex, outstanding.load());
-            std::printf("[FINISH] queue=%zu outstanding=%zu \n", queueIndex, outstanding.load());
-        }
-    }
-}
-
-void JobManager::run_while_validQueue(size_t queueIndex)
-{
-    ChunkPtr chunk;
-    //待機キュー内のJob処理
-    while (realTimeWaitQueues[queueIndex]->try_pop(chunk))
-    {
-        runChunk(queueIndex, std::move(chunk));
-    }
-
-    while (backGroundWaitQueues[queueIndex]->try_pop(chunk))
-    {
-        runChunk(queueIndex, std::move(chunk));
-    }
-
-    while (true) {
-        auto popRes = realTimeLocalQueue[queueIndex]->popBottom();
-
-        if (popRes.first == PopStatus::Success) {
-            runChunk(queueIndex, std::move(popRes.second));
-            continue;
-        }
-
-        if (popRes.first == PopStatus::Empty) {
-            break;
-        }
-    }
-
-    while (true) {
-        auto popRes = backGroundLocalQueue[queueIndex]->popBottom();
-
-        if (popRes.first == PopStatus::Success) {
-            runChunk(queueIndex, std::move(popRes.second));
-            continue;
-        }
-
-        if (popRes.first == PopStatus::Empty) {
-            break;
-        }
-    }
+    //auto lastPopNum = popBGNum - (rawJobs * workerNum);
+    //
+    //// 最後だけ
+    //for(int i = 0;i < lastPopNum;i++){
+    //    // chunk分
+    //    if (auto task = try_popGlobalBackGroundQueue()) {
+    //        // グローバルから取り出す
+    //        workers[workerNum]->schedule(JobCategory::BackGround, std::move(*task));
+    //    }
+    //    else {
+    //        return; // グローバルキューが空になった場合終了
+    //    }
+    //}   
 }
 
 bool JobManager::allQueuesEmpty() const
 {
-    for (auto& dq : realTimeLocalQueue)
+    for (auto& dq : localQueues)
         if (!dq->empty()) return false;
     return true;
 }
@@ -544,7 +141,7 @@ void JobManager::abort()
 
 size_t JobManager::getNextQueueIndex()
 {
-    return nextQueue.fetch_add(1, std::memory_order_relaxed) % realTimeWaitQueues.size();
+    return nextQueue.fetch_add(1, std::memory_order_relaxed) % localQueues.size();
 }
 
 size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime) {
@@ -555,19 +152,6 @@ size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double
     if (remaining_ms <= safetyMarginMs||remaining_ms <= avgJobTime) return 0.0; // 十分な残り時間がない場合終了
 
     return static_cast<size_t>(std::min(std::floor(remaining_ms / avgJobTime), static_cast<double>(globalBackGroudQueue.size())));
-}
-
-void JobManager::sub_realTimeJob_counter()
-{
-    if (realTimeJobCounter.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        std::lock_guard<std::mutex> lk(realTimeJob_Mutex);
-        realTimeJob_WaitCv.notify_all();
-    }
-}
-
-void JobManager::sub_backGroundJob_counter()
-{
-    backGroundCounter.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 }//namespace ECS::JobSystem
