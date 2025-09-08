@@ -25,10 +25,11 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     localQueues.reserve(threadCount);
     workers.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
-        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueCap, i));
+        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueSlotCap,RealTimeOnlyWorker::localQueueMaxTask, i));
         workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(), stats_,barrier));
     }
 }
+
 JobManager::~JobManager()
 {
     if (!initFlag)return;

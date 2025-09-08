@@ -3,46 +3,75 @@
 
 namespace ECS::JobSystem{
 
-struct JobExecutor {
     using TaskPtr = intrusive_ptr<Task>;
 
-    template<typename T>
-    void operator()(size_t workerId,T&& chunk) {
-        runChunk(workerId,std::move(chunk));
-    }
+    struct JobExecutor {
 
-private:
-    void runJob(size_t workerId,TaskPtr& task) {
-        ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
+        void operator()(size_t workerId, SliceChunk&& chunk) {
+            runChunk(workerId, std::move(chunk));
+        }
 
-        task->job.invoke();
+    private:
+        void runJob(size_t workerId, TaskPtr& task) {
+            ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
 
-        //繋がっているchildの依存カウントを減らしていく
-        for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
-            if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                //pushJobWaitQueue(child);
+            task->job.invoke();
+
+            //繋がっているchildの依存カウントを減らしていく
+            for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
+                if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                    //pushJobWaitQueue(child);
+                }
             }
         }
-    }
 
-    template<typename T>
-    void runChunk(size_t workerId,T&& chunk) {
-        ASSERT(chunk.count  > 0, "chunkPtr is empty!!");
+        void runChunk(size_t workerId, SliceChunk&& chunk) {
+            ASSERT(chunk.count > 0, "chunkPtr is empty!!");
 
-        auto start = chunk.start;
-        auto end = chunk.count;
+            auto start = chunk.start;
+            auto end = chunk.count;
 
-        for (size_t i = start; i < end; i++) {
-            auto task = chunk.owner->getRef(i);
+            for (size_t i = start; i < end; i++) {
+                auto task = chunk.owner->getRef(i);
 
-            ASSERT(task, "task is nullptr");
-            runJob(workerId, task);
+                ASSERT(task, "task is nullptr");
+                runJob(workerId, task);
 
-            //デストラクタ呼び出し
-            chunk.owner->destroyAt(i);
+                //デストラクタ呼び出し
+                chunk.owner->destroyAt(i);
+            }
+        }
+    };
+
+inline void runJob(size_t workerId, TaskPtr& task) {
+    ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
+
+    task->job.invoke();
+
+    //繋がっているchildの依存カウントを減らしていく
+    for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
+        if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            //pushJobWaitQueue(child);
         }
     }
-};
+}
+
+inline void runChunk(size_t workerId, SliceChunk&& chunk) {
+    //ASSERT(chunk.count > 0, "chunkPtr is empty!!");
+
+    auto owner = chunk.owner;
+    size_t start = chunk.start;
+    size_t end = start + chunk.count;
+
+    // インライン化可能なら完全にインライン化
+    for (size_t i = start; i < end; ++i) {
+        auto task = owner->getRef(i);
+        //ASSERT(task, "task is nullptr");
+
+        runJob(workerId, task);          // inline化 or バッチ化
+        owner->destroyAt(i);             // バルク破棄検討
+    }
+}
 
 struct RealTimePolicy{
 
@@ -56,34 +85,41 @@ struct RealTimePolicy{
         Chunk chunk;
         auto& manager = JobManager::Instance();
 
-        size_t takeNum = (*localQ)->remainingSlot();
+        size_t takeNum = (*localQ)->remainingTasks();
 
-        //待機キューから取得
-        std::vector<Chunk> chunks = rt->popMany(takeNum);
+        //スロットが空ではない
+        if((*localQ)->remainingSlot() != 0){
+            //待機キューから取得
+            //popmanyからstd::vectorをこぴーしてもらう
+            std::vector<Chunk> chunks = rt->popMany(takeNum);
 
-        while (!chunks.empty()) {
-            Chunk chunk = std::move(chunks.back());
+            //配列から取り出す
+            while (!chunks.empty()) {
+                Chunk chunk = std::move(chunks.back());
 
-            chunks.pop_back();
+                chunks.pop_back();
 
-           (*localQ)->pushWithTimeout(std::move(chunk), rt);
+                (*localQ)->pushWithTimeout(std::move(chunk), rt);
+            }
         }
-
+        
         auto realTimeJobCount = manager.getPendingJobCount(JobCategory::RealTime);
         //realTimeJob処理
         if (realTimeJobCount >  0 && (*localQ)->popOrSteal(stealQs, queueSize,chunkHandle)) return true;
 
-        takeNum = (*localQ)->remainingSlot();
+        takeNum = (*localQ)->remainingTasks();
 
-        //待機キューから取得
-        chunks = bg->popMany(takeNum);
+        if ((*localQ)->remainingSlot() != 0) {
+            //待機キューから取得
+            std::vector<Chunk> chunks = bg->popMany(takeNum);
 
-        while (!chunks.empty()) {
-            auto chunk = std::move(chunks.back());
+            while (!chunks.empty()) {
+                auto chunk = std::move(chunks.back());
 
-            chunks.pop_back();
+                chunks.pop_back();
 
-            (*localQ)->pushWithTimeout(std::move(chunk), bg);
+                (*localQ)->pushWithTimeout(std::move(chunk), bg);
+            }
         }
         
         //backGroundJob処理
@@ -95,11 +131,13 @@ struct RealTimePolicy{
     static constexpr size_t realTimeCap = 20'000;
     static constexpr size_t backGroundCap = 1'000;
 
-    static constexpr size_t realTimeChunkSize = 512;
+    //512
+    static constexpr size_t realTimeChunkSize = 1024;
     static constexpr size_t backGroundChunkSize = 512;
 
     //1024
-    static constexpr size_t localQueueCap = 16384;
+    static constexpr size_t localQueueSlotCap = 16;
+    static constexpr size_t localQueueMaxTask = 16384;
 };
 
 //struct BackGroundPolicy {
@@ -147,7 +185,7 @@ struct RealTimePolicy{
 //    static constexpr size_t localQueueCap = 1024;
 //};
 
-using TaskPtr = intrusive_ptr<Task>;
+
 
 class JobStats;
 
@@ -191,7 +229,8 @@ class Worker : public IWorker{
     using BackGroundTaskStorage = BackGroundStorageType<WorkerPolicy>;
 
 public:
-    static constexpr std::size_t localQueueCap = WorkerPolicy::localQueueCap;
+    static constexpr std::size_t localQueueSlotCap = WorkerPolicy::localQueueSlotCap;
+    static constexpr std::size_t localQueueMaxTask = WorkerPolicy::localQueueMaxTask;
 
     //localQやtaskQの初期化処理など
     Worker(size_t id,LocalQPtr queues,size_t queueSize,JobStats&stats,JobBarrier& barrier);
@@ -236,7 +275,7 @@ private:
     size_t stealQueueSize;
 };
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
 inline Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobStats&stats,JobBarrier&barrier) : workerId(id), stats_(stats),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true),thread_([this,&barrier]{barrier.wait();run();})
 {
     realTimeTaskStorage = std::make_unique<RealTimeTaskStorage>();
@@ -253,8 +292,8 @@ inline Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::~Worker()
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
-inline TaskPtr Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::schedule(JobCategory cat, Job&& job, int degree)
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
+inline TaskPtr Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::schedule(JobCategory cat, Job&& job, int degree)
 {
 
     //カウント
@@ -288,7 +327,7 @@ inline TaskPtr Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::schedule(JobCategor
     return nullptr;
 }
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
 inline TaskPtr Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::schedule(JobCategory cat, TaskPtr&& task)
 {
     //カウント
@@ -339,8 +378,8 @@ inline TaskPtr Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::schedule(JobCategor
 // 
 //}
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
-inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::run()
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
+inline void Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::run()
 {
     while (running.load(std::memory_order_relaxed)) {
 
@@ -365,8 +404,8 @@ inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::run()
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
-inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::stop()
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
+inline void Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::stop()
 {
     running.store(false, std::memory_order_relaxed);
 
@@ -384,8 +423,7 @@ inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::stop()
             stats_.onDequeued(cat, count);
 
             stats_.onStart(cat, count);
-            ExecuteFunc{}(workerId, std::move(slice));
-            //ExecuteFunc(workerId, std::move(slice));
+            ExecuteFunc{}(workerId,std::move(slice));
             stats_.onFinish(cat, count);
 
             //ログ出力
@@ -394,8 +432,8 @@ inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::stop()
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
-inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::DebugLog(JobCategory cat)
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
+inline void Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::DebugLog(JobCategory cat)
 {
     static std::mutex logMutex;
 
@@ -417,8 +455,8 @@ inline void Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::DebugLog(JobCategory ca
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy, typename ExecuteFunc>
-inline std::string Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::jobCategoryToString(JobCategory cat)
+template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
+inline std::string Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::jobCategoryToString(JobCategory cat)
 {
     switch (cat) {
     case JobCategory::RealTime:   return "RealTime";

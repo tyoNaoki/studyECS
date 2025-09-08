@@ -57,16 +57,24 @@ namespace ECS::JobSystem {
 
         using StealResult = std::pair<StealStatus, std::optional<Chunk>>;
 
-        explicit JobDeque(size_t capacity,size_t index)
-            : bottom(0),
-            top(0),
-            capacity(capacity),
-            mask(capacity - 1),
-            slotMutex(capacity),
-            slotData(capacity),
+        explicit JobDeque(size_t slotCapacity,
+            size_t maxTasks,
+            size_t index)
+            : top(0),
+            bottom(0),
+            slotCapacity(slotCapacity),
+            mask(slotCapacity - 1),
+            maxTasks_(maxTasks),
+            slotMutex(slotCapacity),
+            slotData(slotCapacity),
             queueIndex(index)
         {
-            ASSERT(capacity > 0 && (capacity & (capacity - 1)) == 0 , "capacity must be power of two");
+            
+            ASSERT(slotCapacity > 0 && (slotCapacity & (slotCapacity - 1)) == 0,
+                "slotCapacity must be a power of two");
+
+            ASSERT(maxTasks > 0 && (maxTasks & (maxTasks - 1)) == 0,
+                "maxTasks must be a power of two");
         }
 
         ~JobDeque() = default;
@@ -76,10 +84,32 @@ namespace ECS::JobSystem {
         JobDeque(JobDeque&&) noexcept = default; //ムーブのみOK
         JobDeque& operator=(JobDeque&&) noexcept = default;
 
-        size_t remainingSlot(){
-            size_t curSize = unsafe_size();
-            return curSize < capacity ? capacity - curSize : 0;
+        // 現在のタスク数
+        size_t totalTasks() const {
+            return totalTasks_.load(std::memory_order_relaxed);
         }
+
+        size_t remainingTasks() const{
+            return maxTasks_ - totalTasks();
+        }
+
+        //slot残り
+        size_t remainingSlot() const {
+            size_t curSize = unsafe_size();
+            return curSize < slotCapacity ? slotCapacity - curSize : 0;
+        }
+
+        bool empty() const {
+            return top.load(std::memory_order_acquire)
+                >= bottom.load(std::memory_order_relaxed);
+        }
+
+        size_t unsafe_size() const {
+            return bottom.load(std::memory_order_relaxed)
+                - top.load(std::memory_order_relaxed);
+        }
+
+        size_t getQueueIndex() const { return queueIndex; }
 
         template<typename TaskQ>
         bool pushWithTimeout(Chunk&& chunk,TaskQ&taskQ,std::chrono::milliseconds timeout = std::chrono::milliseconds{ 2 });
@@ -92,52 +122,46 @@ namespace ECS::JobSystem {
         template<typename JobQueue>
         StealStatus steal(JobQueue* queues,size_t stealQueueSize,Chunk& chunk);
 
-        //オーナースレッド専用：ボトムからPush
+        // オーナースレッド専用：ボトムからPush
         PushResult pushBottom(Chunk chunk) {
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
 
-            if (b0 - t0 >= capacity) {
+            // slot 切れ
+            if (b0 - t0 >= slotCapacity) {
+                return { PushStatus::Full, std::move(chunk) };
+            }
+
+            // タスク数切れ
+            size_t nTasks = chunk.count;
+            size_t prev = totalTasks_.load(std::memory_order_relaxed);
+            if (prev + nTasks > maxTasks_) {
                 return { PushStatus::Full, std::move(chunk) };
             }
 
             size_t idx = b0 & mask;
-
-            //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
 
-            if (!lk.owns_lock()) {
+            if (!lk.owns_lock() || slotData[idx].has_value()) {
                 return { PushStatus::WouldBlock, std::move(chunk) };
             }
 
-            if (slotData[idx]!=std::nullopt) {
-                return { PushStatus::Full, std::move(chunk) };
-            }
-
+            // 実際にチャンクを詰める
             slotData[idx] = std::move(chunk);
-            bottom.fetch_add(1,std::memory_order_release);
+            bottom.fetch_add(1, std::memory_order_release);
 
-            const std::string log = "PUSH in Queue : " + getQueueIndex();
-            checkInvariant(log.c_str());
+            // タスク数カウンタ加算
+            totalTasks_.fetch_add(nTasks, std::memory_order_relaxed);
 
-            return { PushStatus::Success,std::nullopt };
-        }
-
-        bool empty() const {
-            size_t b = bottom;
-            size_t t = top.load(std::memory_order_acquire);
-            return t >= b;
-        }
-
-        size_t unsafe_size() const {
-            return bottom.load() - top.load();
+            checkInvariant(("PUSH OK in Queue:" + std::to_string(queueIndex)).c_str());
+            return { PushStatus::Success, std::nullopt };
         }
 
         //Jobがまだスロット内に残っているかチェックし、ある場合ログとして出力
         bool validCheck() {
             std::vector<size_t>validSlots;
 
-            for (size_t i = 0; i < capacity; i++)
+            for (size_t i = 0; i < slotCapacity; i++)
             {
                 if(slotData[i]!= std::nullopt){
                     validSlots.push_back(i);
@@ -162,8 +186,6 @@ namespace ECS::JobSystem {
 
             return true;
         }
-
-        size_t getQueueIndex(){return queueIndex;}
 
         //スタックなどの処理不可になった場合の緊急停止処置
         bool isAbort() const noexcept { return abortFlag;}
@@ -193,7 +215,6 @@ namespace ECS::JobSystem {
             //取り出し候補位置
             size_t b1 = b0 - 1;
             size_t idx = b1 & mask;
-
 
             //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
@@ -236,9 +257,16 @@ namespace ECS::JobSystem {
 
             Chunk result = std::move(*slotData[idx]);
             slotData[idx] = std::nullopt;
+
             bottom.fetch_sub(1, std::memory_order_release);
+
+            // タスク数カウンタ減算
+            totalTasks_.fetch_sub(result.count, std::memory_order_relaxed);
+
+            //ログ
             const std::string nlog = "POP NORMAL OK in Queue : " + std::to_string(getQueueIndex());
             checkInvariant(nlog.c_str());
+
             return { PopStatus::Success, std::move(result) };
         }
 
@@ -287,8 +315,12 @@ namespace ECS::JobSystem {
             //対象のスロットリセット
             slotData[idx] = std::nullopt;
 
+            // タスク数カウンタ減算
+            totalTasks_.fetch_sub(result.count, std::memory_order_relaxed);
+
             const std::string slog = "STEAL SUCCESS of Queue : " + std::to_string(index);
             checkInvariant(slog.c_str());
+
             return { StealStatus::Success, std::move(result) };
         }
 
@@ -328,17 +360,22 @@ namespace ECS::JobSystem {
         //}
 
     private:
-        std::vector<std::mutex>        slotMutex;
-        std::mutex stealMutex;
-        std::vector<std::optional<Chunk>>  slotData;
+        const size_t                 slotCapacity;  // 2^N
+        const size_t                 mask;          // slotCapacity - 1
+        std::vector<std::mutex>      slotMutex;
+        std::vector<std::optional<Chunk>> slotData;
 
-        // インデックス管理
-        std::atomic<size_t> top;     // スティーラーが進める
-        std::atomic<size_t> bottom;    // オーナーのみ
-        const size_t      capacity;
-        const size_t      mask;      // capacity は 2^N の前提
+        // インデックス & atomic カウンタ
+        const size_t         queueIndex;
+        std::atomic<size_t>  top;
+        std::atomic<size_t>  bottom;
 
-        const size_t queueIndex;
+        // タスク数ベースの容量管理
+        const size_t         maxTasks_;
+        std::atomic<size_t>  totalTasks_{ 0 };
+
+        // 盗み取り用 mutex
+        std::mutex           stealMutex;
 
         bool abortFlag = false;
     };
