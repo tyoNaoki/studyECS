@@ -19,23 +19,30 @@ public:
     JobBarrier(JobBarrier&&) = delete;
     JobBarrier& operator=(JobBarrier&&) = delete;
 
+    void init(size_t total){
+        m_total = total;
+        m_count = 0;
+        m_generation = 0;
+    }
+
     // すべてのスレッドがこの wait() を呼ぶまでブロックし、
     // 最後の一人が呼んだ瞬間に全員を同時リリースする
     void wait() {
         std::unique_lock<std::mutex> lk(m_mutex);
         auto gen = m_generation;
 
+        // 他のスレッドが来るまで待機
+        m_cv.wait(lk, [this, gen] {
+            return gen != m_generation;
+            });
+    }
+
+    void start(){
         if (++m_count == m_total) {
             // 最後の一人：次の世代に進める
             m_generation++;
             m_count = 0;
             m_cv.notify_all();
-        }
-        else {
-            // 他のスレッドが来るまで待機
-            m_cv.wait(lk, [this, gen] {
-                return gen != m_generation;
-                });
         }
     }
 

@@ -586,7 +586,7 @@ struct IJob : std::enable_shared_from_this<Derived> {
 
         Job job(std::move(work));
 
-        auto taskPtr = JobManager::Instance().schedule(cat,std::move(job),0);
+        auto taskPtr = JobManager::Instance().scheduleTask(cat,std::move(job),0);
 
         return std::make_pair(taskPtr, future);
     }
@@ -607,8 +607,6 @@ struct IJob : std::enable_shared_from_this<Derived> {
         // ƒ[ƒJ[”•ª‚¾‚¯ Task ‚ğì¬‚µ‚Ä“o˜^
         auto work = [ctx]() { workerEntry(ctx); };
 
-        Job job(std::move(work));
-
         /*auto task = new Task(Job(std::move(work)), 0,cat);
         TaskPtr taskPtr{ std::move(task) };*/
 
@@ -619,7 +617,9 @@ struct IJob : std::enable_shared_from_this<Derived> {
             }
         }*/
 
-        auto taskPtr = JobManager::Instance().schedule(cat,std::move(job),0);
+        Job job(std::move(work));
+
+        auto taskPtr = JobManager::Instance().scheduleTask(cat,std::move(job),0);
 
         return std::make_pair(taskPtr,future);
     }
@@ -776,10 +776,14 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         for (size_t w = 0; w < workerNum; ++w) {
             auto work = [ctx]() { workerEntry(ctx); };
 
-            auto task = new Task(Job(std::move(work)), 0,cat);
-            TaskPtr taskPtr{ std::move(task) };
+            /*auto task = new Task(Job(std::move(work)), 0,cat);
+            TaskPtr taskPtr{ std::move(task) };*/
 
-            JobManager::Instance().pushJobWaitQueue(taskPtr);
+            Job job(std::move(work));
+
+            auto taskPtr = JobManager::Instance().scheduleTask(cat, std::move(job), 0);
+
+            //JobManager::Instance().pushJobWaitQueue(taskPtr);
 
             tasks.push_back(taskPtr);
         }
@@ -833,7 +837,7 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
             }
 
             if (taskPtr->inDegree.load() == 0) {
-                JobManager::Instance().pushJobWaitQueue(taskPtr);
+                JobManager::Instance().scheduleTask(taskPtr);
             }
 
             tasks.push_back(taskPtr);

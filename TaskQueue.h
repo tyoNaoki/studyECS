@@ -235,6 +235,19 @@ public:
         buffer_[idx].reset(); 
     }
 
+    TaskPtr get(size_t idx){
+        return *buffer_[idx];
+    }
+
+    TaskPtr& getRef(size_t idx) {
+        return *buffer_[idx];
+    }
+
+    TaskPtr tryGet(size_t idx) noexcept {
+        return buffer_[idx].has_value() ? *buffer_[idx]
+            : nullptr;
+    }
+
     TaskPtr* tryGetPtr(size_t idx) noexcept {
         return (buffer_[idx])
             ? std::addressof(*buffer_[idx])
@@ -259,17 +272,20 @@ public:
 };
 
 struct SliceChunk {
-    size_t start;
-    size_t count;
-    TaskArena* owner;
+    size_t start = 0;
+    size_t count = 0;
+    TaskArena* owner = nullptr;
 };
 
 template<typename T, size_t MaxTasks,size_t MaxSliceSize>
 class TaskStorage {
     using TaskArena = TaskArena;
+
+    //全タスクを連続配置で保持
     std::unique_ptr<TaskArena> arena;
     // チャンク記録用の軽量 MPMC キュー等を用意しておく
     std::deque<SliceChunk> sliceDeque;
+    std::mutex lock;
 
 public:
     TaskStorage(){
@@ -289,6 +305,8 @@ public:
     }*/
 
     void enqueue(SliceChunk&& slice){
+        std::lock_guard<std::mutex> guard(lock);
+
         if(sliceDeque.back().count == 0){
             sliceDeque.back() = std::move(slice);
             return;
@@ -320,6 +338,8 @@ public:
     }
 
     SliceChunk popOne(){
+        std::lock_guard lk(lock);
+
         if(empty()){
             return {0,0};
         }
@@ -333,6 +353,13 @@ public:
         std::vector<SliceChunk> out;
 
         size_t curTaskCount = 0;
+
+        std::lock_guard<std::mutex> guard(lock);
+
+        if (empty()) {
+            return out;
+        }
+
         //フルスライスを取り出す
         while(sliceDeque.size() > 1) {
             auto& c = sliceDeque.front();
@@ -349,7 +376,7 @@ public:
 
         // フルスライスが１つも無ければ、バックを返す
         if (out.empty() && !sliceDeque.empty() && sliceDeque.back().count > 0) {
-            ASSERT(sliceDeque.back().count > maxCount,"back() size over");
+            ASSERT(sliceDeque.back().count <= maxCount,"back() size over");
 
             out.push_back(sliceDeque.back());
             sliceDeque.pop_back();
@@ -364,20 +391,25 @@ public:
 
 private:
     void push(size_t start,size_t count){
-        if(sliceDeque.empty()){
-            sliceDeque.push_back({start,0});
-        }
+        std::lock_guard<std::mutex> guard(lock);
 
-        size_t newSize = sliceDeque.back().count + count;
+        //次にsliceを作るときのstart
+        size_t offset = start;
+        size_t remaining = count;
 
-        //最大値を超えた場合
-        if (newSize >= MaxSliceSize) {
-            sliceDeque.back().count = MaxSliceSize;
-            size_t newStart = sliceDeque.back().start + MaxSliceSize;
-            sliceDeque.push_back({ newStart,newSize - MaxSliceSize ,arena.get()});
-        }
-        else {
-            sliceDeque.back().count = newSize;
+        while (remaining > 0) {
+            //新規スライスが必要か、または末尾スライスが既に満杯なら新規作成
+            if (sliceDeque.empty() || sliceDeque.back().count == MaxSliceSize) {
+                sliceDeque.push_back({ offset, 0, arena.get() });
+            }
+
+            auto& curr = sliceDeque.back();
+            size_t space = MaxSliceSize - curr.count;
+            size_t toAdd = std::min(space, remaining);
+
+            curr.count += toAdd;
+            offset += toAdd;
+            remaining -= toAdd;
         }
     }
 };

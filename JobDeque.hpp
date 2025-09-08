@@ -85,12 +85,12 @@ namespace ECS::JobSystem {
         bool pushWithTimeout(Chunk&& chunk,TaskQ&taskQ,std::chrono::milliseconds timeout = std::chrono::milliseconds{ 2 });
 
         template<typename JobQueue>
-        bool popOrSteal(JobQueue* stealQueues,Chunk&chunk);
+        bool popOrSteal(JobQueue* stealQueues,size_t stealQueueSize,Chunk&chunk);
 
         PopStatus pop(Chunk& chunk);
 
         template<typename JobQueue>
-        StealStatus steal(JobQueue* queues, Chunk& chunk);
+        StealStatus steal(JobQueue* queues,size_t stealQueueSize,Chunk& chunk);
 
         //オーナースレッド専用：ボトムからPush
         PushResult pushBottom(Chunk chunk) {
@@ -110,7 +110,7 @@ namespace ECS::JobSystem {
                 return { PushStatus::WouldBlock, std::move(chunk) };
             }
 
-            if (slotData[idx]!=nullptr) {
+            if (slotData[idx]!=std::nullopt) {
                 return { PushStatus::Full, std::move(chunk) };
             }
 
@@ -194,6 +194,7 @@ namespace ECS::JobSystem {
             size_t b1 = b0 - 1;
             size_t idx = b1 & mask;
 
+
             //スロットロック＋中身チェック
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
             if (!lk.owns_lock()) {
@@ -234,7 +235,7 @@ namespace ECS::JobSystem {
             }
 
             Chunk result = std::move(*slotData[idx]);
-            slotData[idx] = nullptr;
+            slotData[idx] = std::nullopt;
             bottom.fetch_sub(1, std::memory_order_release);
             const std::string nlog = "POP NORMAL OK in Queue : " + std::to_string(getQueueIndex());
             checkInvariant(nlog.c_str());
@@ -291,7 +292,6 @@ namespace ECS::JobSystem {
             return { StealStatus::Success, std::move(result) };
         }
 
-
     private:
 
         //動作をログで保存
@@ -328,8 +328,6 @@ namespace ECS::JobSystem {
         //}
 
     private:
-        JobDeque<Chunk>* stealQueues;
-
         std::vector<std::mutex>        slotMutex;
         std::mutex stealMutex;
         std::vector<std::optional<Chunk>>  slotData;
@@ -351,7 +349,7 @@ namespace ECS::JobSystem {
         auto popRes = popBottom();
 
         if (popRes.first == PopStatus::Success) {
-            chunk = std::move(popRes.second);
+            chunk = std::move(*popRes.second);
             return PopStatus::Success;
         }
         else if (popRes.first == PopStatus::WouldBlock) {
@@ -379,12 +377,12 @@ namespace ECS::JobSystem {
             //タイムアウト
             //元のタスクキューに返す
             if (std::chrono::steady_clock::now() - start >= timeout) {
-                taskQ.enqueue(std::move(notPushed));
+                taskQ->enqueue(std::move(*notPushed));
                 return false;
             }
 
             //少し待って再挑戦
-            c = std::move(notPushed);
+            c = std::move(*notPushed);
             std::this_thread::yield();
             continue;
         }
@@ -394,7 +392,7 @@ namespace ECS::JobSystem {
 
     template<typename Chunk>
     template<typename JobQueue>
-    inline bool JobDeque<Chunk>::popOrSteal(JobQueue* stealQueues, Chunk& chunk)
+    inline bool JobDeque<Chunk>::popOrSteal(JobQueue* stealQueues,size_t stealQueueSize, Chunk& chunk)
     {
         //自キューからPOP
         {
@@ -411,7 +409,7 @@ namespace ECS::JobSystem {
         
         //他キューからSteal
         {
-            auto result = steal(stealQueues,chunk);
+            auto result = steal(stealQueues,stealQueueSize,chunk);
             if (result == StealStatus::Success) {
                 return true;
             }
@@ -422,9 +420,10 @@ namespace ECS::JobSystem {
 
     template<typename Chunk>
     template<typename JobQueue>
-    inline StealStatus JobDeque<Chunk>::steal(JobQueue* queues, Chunk& chunk)
+    inline StealStatus JobDeque<Chunk>::steal(JobQueue* queues,size_t stealQueueSize, Chunk& chunk)
     {
-        size_t n = queues.size();
+        //size_t n = (*queues)->size();
+        size_t n = stealQueueSize;
 
         StealResult result;
         for (size_t i = 1; i < n; ++i) {
@@ -432,7 +431,7 @@ namespace ECS::JobSystem {
             result = queues[idx]->stealTop(queueIndex);
 
             if (result.first == StealStatus::Success) {
-                chunk = std::move(result.second);
+                chunk = std::move(*result.second);
                 return StealStatus::Success;
             }
         }
