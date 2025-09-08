@@ -4,7 +4,7 @@
 
 namespace ECS::JobSystem{
 
-void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder> rec, size_t capacity)
+void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
 {
     ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
     initFlag = true;
@@ -14,17 +14,20 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     nextQueue = 0;
     threadSize = threadCount;
 
-    localQueues.reserve(threadCount);
+    
     //‰Šú‰»
-    for (size_t i = 0; i < threadCount; ++i) {
-       localQueues.emplace_back(std::make_unique<JobQueue>(capacity,i));
-    }
+    /*for (size_t i = 0; i < threadCount; ++i) {
+       
+    }*/
 
+    barrier.init(1);
+
+    localQueues.reserve(threadCount);
     workers.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
-        workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(), stats_));
+        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueCap, i));
+        workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(), stats_,barrier));
     }
-
 }
 JobManager::~JobManager()
 {

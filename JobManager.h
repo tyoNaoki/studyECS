@@ -47,20 +47,25 @@ namespace ECS::JobSystem{
 
         // pending ÇÃëùå∏
         void onEnqueued(const JobCategory cat,size_t count) noexcept {
-            pending_[size_t(cat)].fetch_add(1, std::memory_order_relaxed);
+            pending_[size_t(cat)].fetch_add(count, std::memory_order_release);
         }
 
         void onDequeued(const JobCategory cat,size_t count) noexcept {
-            pending_[size_t(cat)].fetch_sub(1, std::memory_order_relaxed);
+            size_t c = pending_[size_t(cat)].fetch_sub(count, std::memory_order_release);
+        
+            if(c < count){
+                std::printf("pending count %zu, sub count is %zu\n",c,count);
+            }
         }
 
         // running ÇÃëùå∏
         void onStart(const JobCategory cat,size_t count) noexcept {
-            running_[size_t(cat)].fetch_add(1, std::memory_order_relaxed);
+            running_[size_t(cat)].fetch_add(count, std::memory_order_release);
         }
+
         void onFinish(const JobCategory cat,size_t count) noexcept {
-            running_[size_t(cat)].fetch_sub(1, std::memory_order_relaxed);
-            completed_[size_t(cat)].fetch_add(1, std::memory_order_relaxed);
+            running_[size_t(cat)].fetch_sub(count, std::memory_order_release);
+            completed_[size_t(cat)].fetch_add(count, std::memory_order_release);
 
             // pending + running Ç™ 0 Ç»ÇÁëSäÆóπÇí ím
             if (pending_[size_t(cat)].load(std::memory_order_acquire) == 0 &&
@@ -105,15 +110,16 @@ class JobManager
 
     static constexpr size_t bufferCap = 20'000;
 
-    using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
+    //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
+    using JobQueue = JobDeque<SliceChunk>;
 
-    using StealResult = JobQueue::Base::StealResult;
+    using StealResult = JobQueue::StealResult;
 
-    using PopResult = JobQueue::Base::PopResult;
+    using PopResult = JobQueue::PopResult;
 
-    using PushResult = JobQueue::Base::PushResult;
+    using PushResult = JobQueue::PushResult;
 
-    using RealTimeOnlyWorker = Worker<RealTimePolicy,JobExecutor>;
+    using RealTimeOnlyWorker = Worker<JobQueue,RealTimePolicy,JobExecutor>;
 
     //âºÇ∆ÇµÇƒ60FPS
     static constexpr float targetFPS = 60.0f;
@@ -140,10 +146,13 @@ public:
     }
 
     void Initialize(size_t threadCount,
-        std::unique_ptr<TimelineRecorder> rec = nullptr,
-        size_t capacity = 1024);
+        std::unique_ptr<TimelineRecorder> rec = nullptr);
 
     ~JobManager();
+
+    void start(){
+        barrier.start();
+    }
 
     //í èÌJobí«â¡
     template<typename F>
@@ -377,6 +386,8 @@ private:
     std::condition_variable finishCv;
 
     std::unique_ptr<TimelineRecorder> recorder;
+
+    JobBarrier barrier;
 
     std::atomic<bool> abortFlag{ false };
 };

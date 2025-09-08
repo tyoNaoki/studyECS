@@ -103,7 +103,7 @@ void busyWait(std::chrono::nanoseconds duration) {
 
 struct TestNormalJobConnector
 {
-	int value;
+	int value = 2;
 
 	TestNormalJobConnector() = default;
 };
@@ -131,23 +131,26 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	auto job = std::make_shared<TestJob>();
 
-	auto globalStart = ECS::JobSystem::now();
-
 	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSystem::JobCategory::BackGround);
 	}*/
 
 	int check = 90'000;
-	// 3) 20 個のジョブをスケジュール
-	for (int i = 0; i <8; ++i) {
-		job->schedule();
 
+	// 3) 20 個のジョブをスケジュール
+	for (int i = 0; i <check; ++i) {
+		job->schedule();
 
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
+	auto globalStart = ECS::JobSystem::now();
+
+	jm.start();
+
 	jm.waitForAllRealTime();
+
 	std::printf("realTime job finished!! \n");
 	//jm.popGlobalBackGroundQueue();
 
