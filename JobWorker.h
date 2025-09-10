@@ -5,45 +5,51 @@ namespace ECS::JobSystem{
 
     using TaskPtr = intrusive_ptr<Task>;
 
-    struct JobExecutor {
+struct JobExecutor {
 
-        void operator()(size_t workerId, SliceChunk&& chunk) {
-            runChunk(workerId, std::move(chunk));
-        }
+void operator()(size_t workerId, SliceChunk&& chunk) {
+    runChunk(workerId, std::move(chunk));
+}
 
-    private:
-        void runJob(size_t workerId, TaskPtr& task) {
-            ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
+private:
+    void runJob(size_t workerId, TaskPtr&& task) {
+        ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
 
-            task->job.invoke();
+        task->job.invoke();
 
-            //繋がっているchildの依存カウントを減らしていく
-            for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
-                if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                    //pushJobWaitQueue(child);
-                }
+        //繋がっているchildの依存カウントを減らしていく
+        for (TaskPtr child = task->nextDependent; child; child = child->nextDependent) {
+            if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                //pushJobWaitQueue(child);
             }
         }
+    }
 
-        void runChunk(size_t workerId, SliceChunk&& chunk) {
-            ASSERT(chunk.count > 0, "chunkPtr is empty!!");
-
-            auto start = chunk.start;
-            auto end = chunk.count;
-
-            for (size_t i = start; i < end; i++) {
-                auto task = chunk.owner->getRef(i);
-
-                ASSERT(task, "task is nullptr");
-                runJob(workerId, task);
-
-                //デストラクタ呼び出し
-                chunk.owner->destroyAt(i);
-            }
+    void runRangeTask(size_t workerId,RangeTask&&task){
+        for (auto&& t : std::move(task.tasks)) {
+            runJob(workerId, std::move(t));
         }
-    };
+    }
 
-inline void runJob(size_t workerId, TaskPtr& task) {
+    void runChunk(size_t workerId, SliceChunk&& chunk) {
+        ASSERT(chunk.count > 0, "chunkPtr is empty!!");
+
+        auto start = chunk.start;
+        auto end = chunk.count;
+
+        for (size_t i = start; i < end; i++) {
+            auto& task = chunk.owner->getRef(i);
+
+            ASSERT(task, "task is nullptr");
+            //runJob(workerId, task);
+            runRangeTask(workerId, std::move(task));
+
+            //デストラクタ呼び出し
+            chunk.owner->destroyAt(i);
+        }
+    }
+};
+inline void runJob(size_t workerId, TaskPtr&& task) {
     ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
 
     task->job.invoke();
@@ -53,6 +59,12 @@ inline void runJob(size_t workerId, TaskPtr& task) {
         if (child->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             //pushJobWaitQueue(child);
         }
+    }
+}
+
+inline void runRangeTask(size_t workerId, RangeTask&& task) {
+    for (auto&& t : std::move(task.tasks)) {
+        runJob(workerId, std::move(t));
     }
 }
 
@@ -68,7 +80,8 @@ inline void runChunk(size_t workerId, SliceChunk&& chunk) {
         auto task = owner->getRef(i);
         //ASSERT(task, "task is nullptr");
 
-        runJob(workerId, task);          // inline化 or バッチ化
+        runRangeTask(workerId,std::move(task));
+        //runJob(workerId, task);          // inline化 or バッチ化
         owner->destroyAt(i);             // バルク破棄検討
     }
 }
@@ -91,7 +104,8 @@ struct RealTimePolicy{
         if((*localQ)->remainingSlot() != 0){
             //待機キューから取得
             //popmanyからstd::vectorをこぴーしてもらう
-            std::vector<Chunk> chunks = rt->popMany(takeNum);
+            std::vector<Chunk> chunks;
+            rt->popMany(takeNum,chunks);
 
             //配列から取り出す
             while (!chunks.empty()) {
@@ -111,7 +125,8 @@ struct RealTimePolicy{
 
         if ((*localQ)->remainingSlot() != 0) {
             //待機キューから取得
-            std::vector<Chunk> chunks = bg->popMany(takeNum);
+            std::vector<Chunk> chunks;
+            bg->popMany(takeNum,chunks);
 
             while (!chunks.empty()) {
                 auto chunk = std::move(chunks.back());
@@ -132,7 +147,7 @@ struct RealTimePolicy{
     static constexpr size_t backGroundCap = 1'000;
 
     //512
-    static constexpr size_t realTimeChunkSize = 1024;
+    static constexpr size_t realTimeChunkSize = 4096;
     static constexpr size_t backGroundChunkSize = 512;
 
     //1024
@@ -301,9 +316,9 @@ inline TaskPtr Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::schedule(JobCategory
     switch (cat)
     {
     case JobCategory::RealTime:
-        return realTimeTaskStorage->pushOne(std::move(job), degree, cat);
+        return realTimeTaskStorage->pushOrAppendRangeTask(std::move(job), degree, cat);
     case JobCategory::BackGround:
-        return backGroundTaskStorage->pushOne(std::move(job), degree, cat);
+        return backGroundTaskStorage->pushOrAppendRangeTask(std::move(job), degree, cat);
     }
 
     return nullptr;
@@ -319,9 +334,9 @@ inline TaskPtr Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::schedule(JobCategor
     switch (cat)
     {
         case JobCategory::RealTime:
-            return realTimeTaskStorage->pushOne(std::move(job),degree,cat);
+            return realTimeTaskStorage->pushOrAppendRangeTask(std::move(job),degree,cat);
         case JobCategory::BackGround:
-            return backGroundTaskStorage->pushOne(std::move(job), degree, cat);
+            return backGroundTaskStorage->pushOrAppendRangeTask(std::move(job), degree, cat);
     }
 
     return nullptr;
@@ -389,8 +404,12 @@ inline void Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::run()
             //取得失敗なので次のループへ
             if(slice.count == 0) continue;
 
-            JobCategory cat = slice.owner->get(slice.start)->category;
-            size_t count = slice.count;
+            auto& task = slice.owner->getRef(slice.start);
+            JobCategory cat = task.cat;
+            size_t count = slice.size();
+
+            /*JobCategory cat = slice.owner->get(slice.start)->category;
+            size_t count = slice.count;*/
 
             //Chunk実行
             stats_.onDequeued(cat, count);
@@ -415,9 +434,9 @@ inline void Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::stop()
         if (policy_(localQueue, stealQueues, stealQueueSize,realTimeTaskStorage, backGroundTaskStorage, slice)) {
             if (slice.count == 0) continue;
 
-            auto task = slice.owner->get(slice.start);
-            JobCategory cat = task->category;
-            size_t count = slice.count;
+            auto& task = slice.owner->getRef(slice.start);
+            JobCategory cat = task.cat;
+            size_t count = slice.size();
 
             //Chunk実行
             stats_.onDequeued(cat, count);

@@ -661,12 +661,13 @@ private:
         catch (...) {
             ctx->setter.set_exception(std::current_exception());
         }
+
     }
 
     inline void Execute() {
         // Derived ÇÃ Execute() ÇåƒÇ—èoÇµ
         //static_cast<Derived*>(this)->Execute(index);
-        ASSERT(false, "Derived class not found Execute(size_t) member function!!");
+        ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
 protected:
