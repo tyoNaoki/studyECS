@@ -113,13 +113,17 @@ struct TestJob
 {
 	using Base = IJob<TestJob,int,TestNormalJobConnector>;
 	using Base::Base;
+	size_t range = 16;
 
 	inline int Execute() {
 		//int sleepTime = generateRandomInt(5, 10);
 		//busyWait(std::chrono::milliseconds(sleepTime));
-
-		auto value = this->jobResult.value;
-		return value * value;
+		for(size_t i = 0;i<range;i++){
+			auto value = this->jobResult.value * this->jobResult.value;
+			this->jobResult.value = value;
+		}
+		
+		return this->jobResult.value;
 	}
 };
 
@@ -135,6 +139,8 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		job->schedule(ECS::JobSystem::JobCategory::BackGround);
 	}*/
 
+	//int check = 5625;
+	//int check = 11250;
 	int check = 90'000;
 
 	// 3) 20 個のジョブをスケジュール
