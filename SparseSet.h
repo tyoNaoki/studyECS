@@ -357,7 +357,7 @@ inline T* SparseSetImpl<T, false>::Emplace(EntityID entity, Args && ...args)
     // êVãKí«â¡
     const size_t newIndex = m_dense.size();
     m_dense.emplace_back(std::forward<Args>(args)...);
-    m_denseToEntity.push_back(entity);
+    m_denseToEntity.emplace_back(entity);
     SetSparseIndex(entity, newIndex);
     return &m_dense.back();
 }

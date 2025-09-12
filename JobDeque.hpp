@@ -1,7 +1,5 @@
 #pragma once
 #include <atomic>
-#include <cassert>
-#include <cstddef>
 #include <new>
 #include <type_traits>
 #include <optional>
@@ -44,8 +42,6 @@ namespace ECS::JobSystem {
         WouldBlock, // ロック中で進めない
         Empty        //空
     };
-
-    
 
     template<typename Chunk>
     class JobDeque {
@@ -179,6 +175,7 @@ namespace ECS::JobSystem {
                 test::saveLog(
                     "[JOB VALID CHECK] queue=%zu slotData[%zu] : still has a pending job",
                     getQueueIndex(), index);
+
                 std::printf(
                     "[JOB VALID CHECK] queue=%zu slotData[%zu] : still has a pending job\n",
                     getQueueIndex(), index);
@@ -195,6 +192,7 @@ namespace ECS::JobSystem {
             if(abortFlag) return;
 
             abortFlag = true;
+
             test::saveLog(
                 "[ABORT] queue=%zu",
                 getQueueIndex());
@@ -208,6 +206,7 @@ namespace ECS::JobSystem {
             //empty判定
             size_t b0 = bottom.load(std::memory_order_seq_cst);
             size_t t0 = top.load(std::memory_order_seq_cst);
+
             if (b0 <= t0) {
                 return { PopStatus::Empty, std::nullopt };
             }
@@ -228,6 +227,7 @@ namespace ECS::JobSystem {
             //最後の１要素
             if (b1 == t0) {
                 size_t curTop = top.load(std::memory_order_acquire);
+
                 if (curTop != t0) {
                     bottom.store(curTop, std::memory_order_release);
                     return { PopStatus::Empty, std::nullopt };
@@ -290,9 +290,11 @@ namespace ECS::JobSystem {
             }
 
             std::unique_lock lk(slotMutex[idx], std::try_to_lock);
+
             if (!lk.owns_lock()) {
                 return { StealStatus::WouldBlock, std::nullopt };
             }
+
             if (slotData[idx] == std::nullopt) {
                 return { StealStatus::Empty, std::nullopt };
             }

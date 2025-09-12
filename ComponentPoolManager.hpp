@@ -105,6 +105,7 @@ public:
         auto& pool = getComponentPool<T>();
 
         registComponentSet<T>(entityID);
+
         return pool.template Emplace<>(
             entityID,
             std::forward<Args>(args)...

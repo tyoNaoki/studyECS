@@ -324,7 +324,6 @@ static World& world() {
     return sWorld;
 }
 
-
 template<typename Pack>
 class SceneViewIterator {
 private:
