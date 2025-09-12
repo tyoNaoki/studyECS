@@ -100,6 +100,49 @@ namespace ECS::JobSystem{
         std::condition_variable cv_;
     };
 
+    struct JobHandle {
+        IJobBase* job;
+        std::unique_ptr<> future;
+        void wait() const {
+            while()
+        }
+    };
+
+    struct JobStorage : ISparseSet{
+        void Delete(EntityID) = 0;
+        virtual void Clear() = 0;
+        virtual size_t Size() const noexcept = 0;
+        virtual bool ContainsEntity(const EntityID) const noexcept = 0;
+        virtual std::vector<EntityID>& GetEntityList() noexcept = 0;
+        virtual EntityID GetEntity(const std::size_t) const = 0;
+        virtual size_t Index(EntityID) const = 0;
+        virtual ecs_map::id_type Hash()const = 0;
+
+        virtual void swap_elements(const EntityID lhs, const EntityID rhs) = 0;
+
+        virtual void swap_elementOnly(const size_t lhs, const size_t rhs) = 0;
+        virtual void swap_entityOnly(const size_t lhs, const size_t rhs) = 0;
+
+        virtual iterator begin() noexcept = 0;
+        virtual iterator end() noexcept = 0;
+
+        virtual const_iterator begin() const noexcept = 0;
+        virtual const_iterator end() const noexcept = 0;
+
+        virtual reverse_iterator rbegin() noexcept = 0;
+        virtual reverse_iterator rend() noexcept = 0;
+
+        virtual const_reverse_iterator crbegin() const noexcept = 0;
+        virtual const_reverse_iterator crend() const noexcept = 0;
+
+        //Job
+        std::vector<std::unique_ptr<IJobBase>>dense;
+    };
+
+    struct ResultStorage : SparseSetImpl<ISetter>{
+        std::vector<std::unique_ptr<ISetter>>results;
+    };
+
 
 class JobManager
 {
@@ -259,6 +302,8 @@ public:
         return schedule_job(std::move(wrapped), deps);
     }
 
+
+
     auto scheduleTask(TaskPtr task) {
         size_t index = getNextQueueIndex();
 
@@ -281,30 +326,13 @@ public:
         return workers[index]->schedule(cat, std::move(job), degree);
     }
 
-    size_t getPendingJobCount(const JobCategory cat) const noexcept{
-        return stats_.pendingJobCount(cat);
-    }
+    //帰り値はJobID
+    //template<typename IJobClass>
+    //EntityID createJob(){return 0;}
 
-    size_t getRunningJobCount(const JobCategory cat) const noexcept {
-        return stats_.runningJobCount(cat);
-    }
-
-    size_t getCompletedJobCount(const JobCategory cat) const noexcept {
-        return stats_.completedJobCount(cat);
-    }
-
-    void waitForAllRealTime() {
-        stats_.waitForAll(JobCategory::RealTime);
-    }
-
-    // 任意カテゴリに対しても待機できるよう汎用版を用意
-    void waitForAll(JobCategory cat) {
-        stats_.waitForAll(cat);
-    }
-
-    bool isAbort() {
-        return abortFlag.load(std::memory_order_acquire);
-    }
+    ////帰り値はJobResultID
+    //template<typename JobResult>
+    //EntityID createJobResult(){return 0;}
 
     bool checkRanAllJobInJobQueues();
 
@@ -328,6 +356,32 @@ public:
     void setStartFrameTime();
 
     std::chrono::steady_clock::time_point getStartFrameTime() const;
+
+public:
+    size_t getPendingJobCount(const JobCategory cat) const noexcept {
+        return stats_.pendingJobCount(cat);
+    }
+
+    size_t getRunningJobCount(const JobCategory cat) const noexcept {
+        return stats_.runningJobCount(cat);
+    }
+
+    size_t getCompletedJobCount(const JobCategory cat) const noexcept {
+        return stats_.completedJobCount(cat);
+    }
+
+    void waitForAllRealTime() {
+        stats_.waitForAll(JobCategory::RealTime);
+    }
+
+    // 任意カテゴリに対しても待機できるよう汎用版を用意
+    void waitForAll(JobCategory cat) {
+        stats_.waitForAll(cat);
+    }
+
+    bool isAbort() {
+        return abortFlag.load(std::memory_order_acquire);
+    }
 
 private:
     bool allQueuesEmpty() const;

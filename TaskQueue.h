@@ -316,6 +316,7 @@ struct SliceChunk {
     size_t start = 0;
     size_t count = 0;
     TaskArena* owner = nullptr;
+
     size_t size() {
         size_t result = 0;
         for(size_t i = start;i<count;i++){
@@ -368,6 +369,7 @@ public:
         if (!arena->isEmpty()) {
             auto last = arena->lastPosition();
             auto rangeTask = arena->tryGet(last);
+
             if (rangeTask && !rangeTask->isFull()) {
                 return arena->constructTask(last, new Task(std::move(job), degree, cat));
             }

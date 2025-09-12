@@ -172,6 +172,7 @@ struct JobFuture : public IFuture {
 
     //JobSystem::run_one_pending_job() を呼びつつ待ち
     T wait_and_get() {
+
         while (true) {
             // まず mutex を獲得して ready フラグをチェック
             if (inner->ready) {
@@ -239,6 +240,7 @@ struct JobFuture<void> : public IFuture {
             if (inner->ready) {
                 if (inner->eptr)
                     std::rethrow_exception(inner->eptr);
+
                 return;
             }
         }
@@ -314,9 +316,15 @@ private:
     std::shared_ptr<FutureInner<T>> inner;
 };
 
+struct ISetter {
+    virtual ~ISetter() = default;
+    virtual void set_value(void* value) = 0;
+    virtual void set_exception(std::exception_ptr e) = 0;
+};
+
 // 書き込み手（セット専用ハンドル）
 template<typename T>
-struct SettableJobFuture {
+struct SettableJobFuture : ISetter{
     explicit SettableJobFuture(std::shared_ptr<FutureInner<T>> i)
         : inner(std::move(i)) {}
 
@@ -330,13 +338,13 @@ struct SettableJobFuture {
     }
 
     // 実行タスク側が結果をセットする
-    void set_value(T v) {
+    void set_value(void* v) override {
         std::lock_guard lk(inner->mtx);
-        inner->result = std::move(v);
+        inner->result = std::move(*static_cast<T*>(v));
         inner->ready = true;
     }
 
-    void set_exception(std::exception_ptr e) {
+    void set_exception(std::exception_ptr e)override {
         std::lock_guard lk(inner->mtx);
         inner->eptr = std::move(e);
         inner->ready = true;
@@ -348,9 +356,8 @@ private:
 
 // void 専用 write-only specialization
 template<>
-class SettableJobFuture<void> {
-    std::shared_ptr<FutureInner<void>> inner;
-public:
+struct SettableJobFuture<void> : ISetter{
+
     explicit SettableJobFuture(std::shared_ptr<FutureInner<void>> i)
         : inner(std::move(i)) {}
 
@@ -363,24 +370,24 @@ public:
     }
 
     // 結果なしの通知だけ
-    void set_value() {
+    void set_value(void*) override{
 
         std::lock_guard lk(inner->mtx);
         inner->ready = true;
     }
 
-    void set_exception(std::exception_ptr e) {
+    void set_exception(std::exception_ptr e) override{
         std::lock_guard lk(inner->mtx);
         inner->eptr = std::move(e);
         inner->ready = true;
     }
+private:
+    std::shared_ptr<FutureInner<void>> inner;
 };
 
 template<typename T>
-class SettableParallelJobFuture {
-    std::shared_ptr<FutureInner<T>> inner;
-    std::shared_ptr<std::atomic<size_t>> counter;
-public:
+struct SettableParallelJobFuture {
+
     explicit SettableParallelJobFuture(std::shared_ptr<FutureInner<T>> i, std::shared_ptr<std::atomic<size_t>> count)
         : inner(std::move(i)),counter(count){}
 
@@ -409,13 +416,14 @@ public:
         inner->eptr = std::move(e);
         inner->ready = true;
     }
+private:
+    std::shared_ptr<FutureInner<T>> inner;
+    std::shared_ptr<std::atomic<size_t>> counter;
 };
 
 template<>
-class SettableParallelJobFuture<void> {
-    std::shared_ptr<FutureInner<void>> inner;
-    std::shared_ptr<std::atomic<size_t>> counter;
-public:
+struct SettableParallelJobFuture<void> {
+   
     explicit SettableParallelJobFuture(std::shared_ptr<FutureInner<void>> i, std::shared_ptr<std::atomic<size_t>> count)
         : inner(std::move(i)), counter(count) {}
 
@@ -443,6 +451,10 @@ public:
         inner->eptr = std::move(e);
         inner->ready = true;
     }
+
+private:
+    std::shared_ptr<FutureInner<void>> inner;
+    std::shared_ptr<std::atomic<size_t>> counter;
 };
 //
 //template<typename S>
@@ -515,12 +527,14 @@ struct DummyBuffer {};
 
 class JobManager;
 
-template<typename Derived,typename ReturnType,typename JobData = std::monostate>
-struct IJob : std::enable_shared_from_this<Derived> {
+struct IJobBase {
+    virtual ~IJobBase() = default;
+    virtual void executeAny() = 0;
+};
+
+template<typename Derived,typename ReturnType>
+struct IJob : IJobBase {
     using TaskPtr = intrusive_ptr<Task>;
-    using Data_t = JobData;
-    
-    using HasData = std::bool_constant<!std::is_same_v<Data_t,std::monostate>>;
 
     using Return_t = ReturnType;
 
@@ -538,35 +552,9 @@ struct IJob : std::enable_shared_from_this<Derived> {
         SettableJobFuture<void>
     >;
 
-    using Buffer_t = std::conditional_t<
-        HasData::value,
-        CommandBuffer<Data_t>,
-        DummyBuffer
-    >;
-
     IJob() = default;
 
-    template <typename T = Data_t,
-        typename = std::enable_if_t<!std::is_same_v<T, void>>>
-        IJob(T&& d)
-        : jobResult(std::forward<T>(d)) {}
-
-
     ~IJob() {};
-
-    struct Context {
-        std::shared_ptr<Derived> self;
-        Setter_t setter;
-
-        Context()
-            : setter(nullptr, 0) {}
-
-        Context(std::shared_ptr<Derived> s,
-            Setter_t&& set)
-            : self(s),setter(std::move(set)) {}
-
-        ~Context() {};
-    };
 
     inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
@@ -624,27 +612,13 @@ struct IJob : std::enable_shared_from_this<Derived> {
         return std::make_pair(taskPtr,future);
     }
 
-    using ICommandPtr = std::unique_ptr<ICommand<JobData>>;
-
-    inline void AddRequeset(ICommandPtr&& command) {
-        if constexpr (HasData::value) {
-            buffer.push(std::move(command));
-        }
-    }
-
-private:
-    static void workerEntry(std::shared_ptr<Context> ctx) {
-        auto self = ctx->self;
-        if (!self) {
-            std::printf("self is nullptr");
-            return;
-        }
+    void executeAny() override {
         
         //帰り値あり
         try {
             if constexpr (HasReturn::value) {
                 if constexpr (std::is_same_v<Return_t, Data_t>) {
-                    self->Execute();
+                    
                     ctx->setter.set_value(self->jobResult); // 値渡し
                 }
                 else {
@@ -654,9 +628,10 @@ private:
             }
             else {
                 // void 戻りの場合
-                self->Execute();
+                static_cast<Derived*>(this)->Execute();
                 ctx->setter.set_value();
             }
+
         }
         catch (...) {
             ctx->setter.set_exception(std::current_exception());
