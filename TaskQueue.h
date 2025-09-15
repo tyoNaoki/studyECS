@@ -25,6 +25,8 @@ class ITaskQueue {};
 //
 //public:
 //    TaskQueue(ChunkAllocator* alloc) : allocator(alloc) {}
+// 
+// 
 //
 //    // マルチスレッド(Job制作用)
 //    void push(const T& value) {

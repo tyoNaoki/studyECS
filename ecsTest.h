@@ -109,18 +109,23 @@ struct TestNormalJobConnector
 };
 
 struct TestJob
-	: public ECS::JobSystem::IJob<TestJob,int,TestNormalJobConnector>
+	: public ECS::JobSystem::IJob<TestJob,int>
 {
-	using Base = IJob<TestJob,int,TestNormalJobConnector>;
+	using Base = IJob<TestJob,int>;
 	using Base::Base;
+	using ReturnType = Base::Return_t;
+
+	TestNormalJobConnector connecter;
 
 	inline int Execute() {
 		//int sleepTime = generateRandomInt(5, 10);
 		//busyWait(std::chrono::milliseconds(sleepTime));
-		auto value = this->jobResult.value * this->jobResult.value;
+		/*auto value = this->jobResult.value * this->jobResult.value;
 		this->jobResult.value = value;
 		
-		return this->jobResult.value;
+		return this->jobResult.value;*/
+		connecter.value = connecter.value * connecter.value;
+		return connecter.value;
 	}
 };
 
@@ -141,19 +146,24 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
-		job->schedule();
-
+		//job->schedule();
+		auto handle = jm.createJob<TestJob>();
+		jm.scheduleJobHandle(handle);
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
 	auto globalStart = ECS::JobSystem::now();
 
+	std::printf("RealTimeJob Start is %zu\n",jm.getRunningJobCount(ECS::JobSystem::JobCategory::RealTime));
 	jm.start();
 
 	jm.waitForAllRealTime();
 
-	std::printf("realTime job finished!! \n");
+	//jm.waitForAllRealTime();
+	auto globalEnd = ECS::JobSystem::now();
+
+	std::printf("realTime job %zu finished!! \n",jm.getCompletedJobCount(ECS::JobSystem::JobCategory::RealTime));
 	//jm.popGlobalBackGroundQueue();
 
 	// 4) すべてのジョブ完了を待機
@@ -163,7 +173,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
-	auto globalEnd = ECS::JobSystem::now();
+	
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";

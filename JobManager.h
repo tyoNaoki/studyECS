@@ -17,6 +17,7 @@
 #include "TaskQueue.h"
 #include "taskPtr.hpp"
 #include "JobWorker.h"
+#include "HashFunctions.hpp"
 
 namespace ECS::JobSystem{
 
@@ -99,50 +100,6 @@ namespace ECS::JobSystem{
         std::mutex             mtx_;
         std::condition_variable cv_;
     };
-
-    struct JobHandle {
-        IJobBase* job;
-        std::unique_ptr<> future;
-        void wait() const {
-            while()
-        }
-    };
-
-    struct JobStorage : ISparseSet{
-        void Delete(EntityID) = 0;
-        virtual void Clear() = 0;
-        virtual size_t Size() const noexcept = 0;
-        virtual bool ContainsEntity(const EntityID) const noexcept = 0;
-        virtual std::vector<EntityID>& GetEntityList() noexcept = 0;
-        virtual EntityID GetEntity(const std::size_t) const = 0;
-        virtual size_t Index(EntityID) const = 0;
-        virtual ecs_map::id_type Hash()const = 0;
-
-        virtual void swap_elements(const EntityID lhs, const EntityID rhs) = 0;
-
-        virtual void swap_elementOnly(const size_t lhs, const size_t rhs) = 0;
-        virtual void swap_entityOnly(const size_t lhs, const size_t rhs) = 0;
-
-        virtual iterator begin() noexcept = 0;
-        virtual iterator end() noexcept = 0;
-
-        virtual const_iterator begin() const noexcept = 0;
-        virtual const_iterator end() const noexcept = 0;
-
-        virtual reverse_iterator rbegin() noexcept = 0;
-        virtual reverse_iterator rend() noexcept = 0;
-
-        virtual const_reverse_iterator crbegin() const noexcept = 0;
-        virtual const_reverse_iterator crend() const noexcept = 0;
-
-        //Job
-        std::vector<std::unique_ptr<IJobBase>>dense;
-    };
-
-    struct ResultStorage : SparseSetImpl<ISetter>{
-        std::vector<std::unique_ptr<ISetter>>results;
-    };
-
 
 class JobManager
 {
@@ -259,7 +216,6 @@ public:
 
         if (t->inDegree.load() == 0) {
             pushRealTimeJobWaitQueue(t);
-            
         }
 
         return std::make_pair(
@@ -302,8 +258,6 @@ public:
         return schedule_job(std::move(wrapped), deps);
     }
 
-
-
     auto scheduleTask(TaskPtr task) {
         size_t index = getNextQueueIndex();
 
@@ -324,6 +278,38 @@ public:
         }
 
         return workers[index]->schedule(cat, std::move(job), degree);
+    }
+
+    IJobBase* getJob(const JobHandle&handle){
+        return jobStorage.dense[handle.jobIndex].get();
+    }
+
+    template<typename T>
+    ResultStorage<T>& getResultStorage() {
+        static ResultStorage<T>storage;
+        return storage;
+    }
+
+    template<typename T>
+    T& getResult(const JobHandle& h) {
+        ASSERT(h.typeId == ecs_map::type_hash<T>(),"typeId is not same");
+        return getResultStorage<T>().get(h.resultIndex);
+    }
+
+    template<class T,class... Args>
+    JobHandle createJob(Args&&... args){
+        auto jobIndex = jobStorage.emplace<T>(args...);
+
+        using Ret = typename T::ReturnType;
+        auto& storage = getResultStorage<Ret>();
+        auto resultIndex = storage.emplace();
+        return JobHandle{jobIndex,ecs_map::type_hash<Ret>(),resultIndex};
+    }
+    
+    void scheduleJobHandle(JobHandle handle){
+        size_t next = getNextQueueIndex();
+        //schedule
+        workers[next]->testSchedule(handle);
     }
 
     //‹A‚è’l‚ÍJobID
@@ -384,6 +370,8 @@ public:
     }
 
 private:
+   
+
     bool allQueuesEmpty() const;
 
     void addDependent(Task* parent, Task* child) {
@@ -417,6 +405,8 @@ private:
     std::vector<std::unique_ptr<JobQueue>> localQueues;
 
     std::vector<std::unique_ptr<IWorker>> workers;
+
+    JobStorage jobStorage;
 
     std::atomic<bool> stopFlag;
     

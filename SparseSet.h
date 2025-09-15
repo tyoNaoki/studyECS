@@ -197,7 +197,8 @@ public:
 
     size_t Index(const EntityID entity)const override;
 
-    ecs_map::id_type Hash() const override;
+    ecs_map::id_type 
+    Hash() const override;
 
     void swap_elements(const EntityID lhs, const EntityID rhs) override;
 
