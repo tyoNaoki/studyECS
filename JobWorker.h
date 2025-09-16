@@ -200,65 +200,6 @@ struct RealTimePolicy{
 //    static constexpr size_t localQueueCap = 1024;
 //};
 
-
-
-struct JobStorage {
-    /*void Delete(EntityID) = 0;
-    virtual void Clear() = 0;
-    virtual size_t Size() const noexcept = 0;
-    virtual bool ContainsEntity(const EntityID) const noexcept = 0;
-    virtual std::vector<EntityID>& GetEntityList() noexcept = 0;
-    virtual EntityID GetEntity(const std::size_t) const = 0;
-    virtual size_t Index(EntityID) const = 0;
-    virtual ecs_map::id_type Hash()const = 0;
-
-    virtual void swap_elements(const EntityID lhs, const EntityID rhs) = 0;
-
-    virtual void swap_elementOnly(const size_t lhs, const size_t rhs) = 0;
-    virtual void swap_entityOnly(const size_t lhs, const size_t rhs) = 0;
-
-    virtual iterator begin() noexcept = 0;
-    virtual iterator end() noexcept = 0;
-
-    virtual const_iterator begin() const noexcept = 0;
-    virtual const_iterator end() const noexcept = 0;
-
-    virtual reverse_iterator rbegin() noexcept = 0;
-    virtual reverse_iterator rend() noexcept = 0;
-
-    virtual const_reverse_iterator crbegin() const noexcept = 0;
-    virtual const_reverse_iterator crend() const noexcept = 0;*/
-
-    template<class IJob, class... Args>
-    size_t emplace(Args&&... args) {
-        dense.emplace_back(std::make_unique<IJob>(std::forward<Args>(args)...));
-        return dense.size() - 1;
-    }
-
-    //Job
-    std::vector<std::unique_ptr<IJobBase>>dense;
-};
-
-template<typename T>
-struct ResultStorage {
-
-    size_t emplace() {
-        dense.emplace_back(); // デフォルト構築
-        return dense.size() - 1;
-    }
-
-    template<class Result>
-    size_t push(Result&& value) {
-        dense.push_back(std::move(value));
-        return dense.size() - 1;
-    }
-
-    T& get(size_t idx) { return dense[idx]; }
-
-private:
-    std::vector<T> dense;
-};
-
 class JobStats;
 
 //タスクキュー
@@ -285,7 +226,7 @@ public:
     virtual TaskPtr schedule(JobCategory cat,
         TaskPtr&&task) = 0;
 
-    virtual void testSchedule(JobHandle handle) = 0;
+    virtual void testSchedule(const JobHandle&handle) = 0;
 };
 
 template<
@@ -361,7 +302,7 @@ public:
     }
 
     //test
-    void testSchedule(JobHandle handle) override{
+    void testSchedule(const JobHandle& handle) override{
         std::lock_guard<std::mutex>lk(testLock);
 
         //RangeTaskStorageが空か現在のRangeTaskが満タン
@@ -460,7 +401,7 @@ public:
 
                         //ResultSlot& result = rangeJob.rStorage->dense[jobH.resultIndex];
 
-                        job->executeAny(jobH);
+                        job->executeAny(jobH.resultIndex);
                             
                             //if (ResultSlot* result = rangeJob.results[j]) {
 

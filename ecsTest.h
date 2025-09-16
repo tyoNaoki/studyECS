@@ -147,8 +147,8 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
-		auto handle = jm.createJob<TestJob>();
-		jm.scheduleJobHandle(handle);
+		auto job = jm.createJob<TestJob>();
+		jm.scheduleJobHandle(job.first);
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}

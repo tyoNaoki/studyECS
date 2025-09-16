@@ -4,7 +4,6 @@
 #include <utility> 
 #include <algorithm>
 #include <cstddef>   // std::nullptr_t
-#include "JobManager.h"
 #include <variant>
 #include <memory>
 #include "intrusive_ptr.h"
@@ -535,7 +534,7 @@ struct JobHandle {
 
 struct IJobBase {
     virtual ~IJobBase() = default;
-    virtual void executeAny(const JobHandle& handle) = 0;
+    virtual void executeAny(const size_t resultIndex) = 0;
 };
 
 template<typename Derived,typename ReturnType>
@@ -621,13 +620,13 @@ struct IJob : IJobBase {
         return std::make_pair(taskPtr,future);
     }
 
-    void executeAny(const JobHandle&handle) override {
+    void executeAny(const size_t resultIndex) override {
         if constexpr (!HasReturn::value) {
             static_cast<Derived*>(this)->Execute();
+            //JobManager::Instance().template setResult<Return_t>(resultIndex);
         }
         else {
-            auto&result = JobManager::Instance().template getResultStorage<Return_t>().get(handle.resultIndex);
-            result = std::move(static_cast<Derived*>(this)->Execute());
+            JobManager::Instance().template setResult<Return_t>(resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
         }
     }
 

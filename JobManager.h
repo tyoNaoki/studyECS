@@ -21,6 +21,135 @@
 
 namespace ECS::JobSystem{
 
+   
+
+    struct JobStorage {
+        /*void Delete(EntityID) = 0;
+        virtual void Clear() = 0;
+        virtual size_t Size() const noexcept = 0;
+        virtual bool ContainsEntity(const EntityID) const noexcept = 0;
+        virtual std::vector<EntityID>& GetEntityList() noexcept = 0;
+        virtual EntityID GetEntity(const std::size_t) const = 0;
+        virtual size_t Index(EntityID) const = 0;
+        virtual ecs_map::id_type Hash()const = 0;
+
+        virtual void swap_elements(const EntityID lhs, const EntityID rhs) = 0;
+
+        virtual void swap_elementOnly(const size_t lhs, const size_t rhs) = 0;
+        virtual void swap_entityOnly(const size_t lhs, const size_t rhs) = 0;
+
+        virtual iterator begin() noexcept = 0;
+        virtual iterator end() noexcept = 0;
+
+        virtual const_iterator begin() const noexcept = 0;
+        virtual const_iterator end() const noexcept = 0;
+
+        virtual reverse_iterator rbegin() noexcept = 0;
+        virtual reverse_iterator rend() noexcept = 0;
+
+        virtual const_reverse_iterator crbegin() const noexcept = 0;
+        virtual const_reverse_iterator crend() const noexcept = 0;*/
+
+        template<class IJob, class... Args>
+        size_t emplace(Args&&... args) {
+            dense.emplace_back(std::make_unique<IJob>(std::forward<Args>(args)...));
+            return dense.size() - 1;
+        }
+
+        //Job
+        std::vector<std::unique_ptr<IJobBase>>dense;
+    };
+
+    template<typename T>
+    struct ResultSlot {
+        T value;
+
+        bool keep = false;
+        std::atomic<bool>done{false};
+        std::exception_ptr eptr;
+
+        ResultSlot() = default;
+        ResultSlot(ResultSlot&&) noexcept = default;
+        ResultSlot& operator=(ResultSlot&&) noexcept = default;
+
+        ResultSlot(const ResultSlot&) = delete;
+        ResultSlot& operator=(const ResultSlot&) = delete;
+
+    };
+
+    template<typename T>
+    struct ResultStorage {
+
+        size_t emplace() {
+            dense.emplace_back(); // デフォルト構築
+            return dense.size() - 1;
+        }
+
+        template<class Result>
+        size_t push(Result&& value) {
+            dense.push_back(std::move(value));
+            return dense.size() - 1;
+        }
+
+        T& get(size_t idx) const{ return dense[idx].value; }
+
+        bool done(size_t idx) const{
+            return dense[idx].done(std::memory_order_acquire);
+        }
+
+        void set(const size_t resultIndex,T&&value){
+            auto& resultSlot = dense[resultIndex];
+            if(resultSlot.done.load(std::memory_order_acquire)){
+                ASSERT(false,"job is done");
+            }
+
+            resultSlot.done = true;
+            resultSlot.value = std::move(value);
+        }
+
+        void clearFrame() {
+            // keep==false の要素を削除
+           /* dense.erase(
+                std::remove_if(dense.begin(), dense.end(),
+                    [](auto& slot) { return !slot.keep&&slot.done; }),
+                dense.end()
+            );*/
+            // 次フレーム用に全て keep=false に戻す
+            for (auto& slot : dense) slot.keep = false;
+        }
+
+    private:
+        std::vector<ResultSlot<T>> dense;
+    };
+
+    template<typename T>
+    struct TaskFuture {
+        explicit TaskFuture() {}
+
+        void bindResult(size_t index) noexcept {
+            resultIndex = index;
+        }
+
+        T& wait_and_get() const {
+            auto& resultStorage = JobManager::Instance().template getResultStorage<T>();
+
+            while (true) {
+                if (resultStorage.done(resultIndex)) {
+                    //if (inner->eptr) std::rethrow_exception(inner->eptr);
+
+                    return resultStorage.get(resultIndex);
+                }
+            }
+        }
+
+        bool isReady() const {
+            return JobManager::Instance().template getResultStorage<T>().done(resultIndex);
+        }
+
+    private:
+        size_t resultIndex;
+    };
+
     static constexpr size_t NumCategories = static_cast<size_t>(JobCategory::Num);
 
     /// <summary>
@@ -285,29 +414,42 @@ public:
     }
 
     template<typename T>
-    ResultStorage<T>& getResultStorage() {
-        static ResultStorage<T>storage;
-        return storage;
+    void setResult(const size_t resultIndex,T&&value){
+        //ASSERT(h.typeId == ecs_map::type_hash<T>(),"typeId is not same");
+        getResultStorage<T>().set(resultIndex,std::move(value));
     }
 
     template<typename T>
-    T& getResult(const JobHandle& h) {
-        ASSERT(h.typeId == ecs_map::type_hash<T>(),"typeId is not same");
-        return getResultStorage<T>().get(h.resultIndex);
+    bool doneJob(const JobHandle&handle)const{
+        return getResultStorage<T>().done(handle.resultIndex);
+    }
+
+    template<typename T>
+    T& getResult(const JobHandle&handle)const {
+        //ASSERT(h.typeId == ecs_map::type_hash<T>(),"typeId is not same");
+        return getResultStorage<T>().get(handle.resultIndex);
     }
 
     template<class T,class... Args>
-    JobHandle createJob(Args&&... args){
+    auto createJob(Args&&... args){
         auto jobIndex = jobStorage.emplace<T>(args...);
 
         using Ret = typename T::ReturnType;
         auto& storage = getResultStorage<Ret>();
         auto resultIndex = storage.emplace();
-        return JobHandle{jobIndex,ecs_map::type_hash<Ret>(),resultIndex};
+
+        auto future = TaskFuture<Ret>();
+        future.bindResult(resultIndex);
+        JobHandle handle{ jobIndex,ecs_map::type_hash<Ret>(),resultIndex };
+
+        return std::make_pair(handle,std::move(future));
     }
     
-    void scheduleJobHandle(JobHandle handle){
+    void scheduleJobHandle(const JobHandle& handle){
+        IJobBase* job = getJob(handle);
+
         size_t next = getNextQueueIndex();
+
         //schedule
         workers[next]->testSchedule(handle);
     }
@@ -370,7 +512,11 @@ public:
     }
 
 private:
-   
+    template<typename T>
+    ResultStorage<T>& getResultStorage() {
+        static ResultStorage<T>storage;
+        return storage;
+    }
 
     bool allQueuesEmpty() const;
 
