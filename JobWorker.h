@@ -40,7 +40,7 @@ private:
         for (size_t i = start; i < end; i++) {
             auto& task = chunk.owner->getRef(i);
 
-            ASSERT(task, "task is nullptr");
+            //ASSERT(task, "task is nullptr");
             //runJob(workerId, task);
             runRangeTask(workerId, std::move(task));
 
@@ -200,8 +200,6 @@ struct RealTimePolicy{
 //    static constexpr size_t localQueueCap = 1024;
 //};
 
-
-
 class JobStats;
 
 //タスクキュー
@@ -227,6 +225,8 @@ public:
 
     virtual TaskPtr schedule(JobCategory cat,
         TaskPtr&&task) = 0;
+
+    virtual void testSchedule(const JobHandle&handle) = 0;
 };
 
 template<
@@ -258,6 +258,164 @@ public:
     TaskPtr schedule(JobCategory cat,Job&& job, int degree, std::vector<TaskPtr>&deps) override;
 
     TaskPtr schedule(JobCategory cat,TaskPtr&&task) override;
+
+    //仮組
+    static constexpr size_t capa = WorkerPolicy::realTimeCap;
+    static constexpr size_t chunkCapa = WorkerPolicy::realTimeChunkSize;
+
+    struct testRangeJob {
+        std::vector<JobHandle>jobs;
+
+        size_t max = 16;
+
+        bool isFull() { return jobs.size() == max; }
+        void push(JobHandle handle) { jobs.push_back(handle);}
+        size_t size() { return jobs.size(); }
+    };
+    
+    struct testSliceChunk{
+        size_t start = 0;
+        size_t count = 0;
+        std::vector<testRangeJob>* ranges = nullptr;
+        size_t maxSize = chunkCapa;
+
+        bool isFull(){
+            return count == maxSize;
+        }
+
+        testSliceChunk(size_t s,size_t c, std::vector<testRangeJob>* r): start(s),count(c),ranges(r){}
+
+        testSliceChunk() = default;
+    };
+
+    std::vector<testRangeJob>taskStore;
+    std::deque<testSliceChunk>testSliceDeque;
+
+    std::vector<testSliceChunk>localTaskStore;
+    std::atomic<size_t>testlocalTaskCount{ 0 };
+
+    std::mutex testLock;
+
+    void testTaskStoreReserve(){
+        taskStore.reserve(capa);
+        localTaskStore.reserve(localQueueSlotCap);
+    }
+
+    //test
+    void testSchedule(const JobHandle& handle) override{
+        std::lock_guard<std::mutex>lk(testLock);
+
+        //RangeTaskStorageが空か現在のRangeTaskが満タン
+        if (taskStore.empty() || taskStore[taskStore.size() - 1].isFull()) {
+            
+            //RangeTask作成
+            taskStore.emplace_back();
+            taskStore[taskStore.size() - 1].push(handle);
+
+            //空
+            if (testSliceDeque.empty()) {
+                testSliceDeque.emplace_front(0, 0, &taskStore);
+            }
+
+            //満タン
+            if(testSliceDeque.front().isFull()){
+                size_t newStart = testSliceDeque.front().start + testSliceDeque.front().count;
+                testSliceDeque.emplace_front(newStart, 0, &taskStore);
+            }
+
+            testSliceDeque.front().count++;
+            stats_.onStart(JobCategory::RealTime, 1);
+            return;
+        }
+
+        //現在のRangeTaskに追加
+        taskStore[taskStore.size() - 1].push(handle);
+
+        stats_.onStart(JobCategory::RealTime,1);
+    }
+
+    bool testPOP(size_t takeNum,std::vector<testSliceChunk>&slices){
+        if(takeNum <= 0){return false;}
+
+        size_t take = (takeNum / chunkCapa);
+
+        if(take<1){
+            return false;
+        }
+
+        slices.reserve(take);
+
+        for(int i = 0;i<take;i++){
+            if(testSliceDeque.empty()){
+                break;
+            }
+
+            auto slice = testSliceDeque.back();
+            testSliceDeque.pop_back();
+            slices.push_back(slice);
+        }
+        
+        return !slices.empty();
+    }
+
+    void localPush(testSliceChunk chunk){
+        localTaskStore.push_back(chunk);
+        testlocalTaskCount.fetch_add(chunk.count,std::memory_order_release);
+    }
+
+    void localPOP(testSliceChunk& chunk){
+        chunk = localTaskStore.back();
+        localTaskStore.pop_back();
+
+        testlocalTaskCount.fetch_sub(chunk.count,std::memory_order_release);
+    }
+
+    void testRun(){
+        while (running.load(std::memory_order_relaxed)) {
+
+            std::vector<testSliceChunk> slices;
+            size_t take = localQueueMaxTask - testlocalTaskCount.load(std::memory_order_acquire);
+
+            //待機キューからchunkを取り出す
+            if(testPOP(take,slices)){
+                while(!slices.empty()){
+                    auto slice = slices.back();
+                    slices.pop_back();
+                    localPush(slice);
+                }
+            }
+
+            if (!localTaskStore.empty()) {
+                testSliceChunk chunk;
+                localPOP(chunk);
+
+                auto& jm = JobManager::Instance();
+
+                //実行
+                for(int i = chunk.start;i<chunk.count;i++){
+                    testRangeJob& rangeJob = (*chunk.ranges)[i];
+
+                    for (int j = 0; j < rangeJob.size(); j++) {
+                        const JobHandle& jobH = rangeJob.jobs[j];
+                        IJobBase* job = jm.getJob(jobH);
+
+                        //ResultSlot& result = rangeJob.rStorage->dense[jobH.resultIndex];
+
+                        job->executeAny(jobH.resultIndex);
+                            
+                            //if (ResultSlot* result = rangeJob.results[j]) {
+
+                            //    //この部分を改善すれば、さらに短縮可能
+                            //    //auto ret = 1;
+                            //    //result->set_value(static_cast<void*>(&ret));
+                            //}
+                    }
+
+                    stats_.onFinish(JobCategory::RealTime, rangeJob.size());
+                }
+            }
+        }
+    }
 
 private:
     //localQueueのpop、stealを行う。
@@ -291,7 +449,16 @@ private:
 };
 
 template<typename LocalQueue,typename WorkerPolicy,typename ExecuteFunc>
-inline Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobStats&stats,JobBarrier&barrier) : workerId(id), stats_(stats),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true),thread_([this,&barrier]{barrier.wait();run();})
+inline Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobStats&stats,JobBarrier&barrier) : workerId(id), stats_(stats),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true), 
+    thread_([this, &barrier] {
+        testTaskStoreReserve();
+        barrier.wait();
+        testRun(); 
+        })
+    
+    /*thread_([this,&barrier]{
+        barrier.wait();
+        run();})*/
 {
     realTimeTaskStorage = std::make_unique<RealTimeTaskStorage>();
     backGroundTaskStorage = std::make_unique<BackGroundTaskStorage>();

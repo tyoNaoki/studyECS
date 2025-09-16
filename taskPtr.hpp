@@ -4,11 +4,11 @@
 #include <utility> 
 #include <algorithm>
 #include <cstddef>   // std::nullptr_t
-#include "JobManager.h"
 #include <variant>
 #include <memory>
 #include "intrusive_ptr.h"
 #include "TestFramework.hpp"
+#include "HashFunctions.hpp"
 
 namespace ECS::JobSystem{
 
@@ -324,7 +324,7 @@ struct ISetter {
 
 // 書き込み手（セット専用ハンドル）
 template<typename T>
-struct SettableJobFuture : ISetter{
+struct SettableJobFuture{
     explicit SettableJobFuture(std::shared_ptr<FutureInner<T>> i)
         : inner(std::move(i)) {}
 
@@ -338,13 +338,13 @@ struct SettableJobFuture : ISetter{
     }
 
     // 実行タスク側が結果をセットする
-    void set_value(void* v) override {
+    void set_value(T&& v) {
         std::lock_guard lk(inner->mtx);
-        inner->result = std::move(*static_cast<T*>(v));
+        //inner->result = static_cast<T>(&v);
         inner->ready = true;
     }
 
-    void set_exception(std::exception_ptr e)override {
+    void set_exception(std::exception_ptr e){
         std::lock_guard lk(inner->mtx);
         inner->eptr = std::move(e);
         inner->ready = true;
@@ -356,7 +356,7 @@ private:
 
 // void 専用 write-only specialization
 template<>
-struct SettableJobFuture<void> : ISetter{
+struct SettableJobFuture<void>{
 
     explicit SettableJobFuture(std::shared_ptr<FutureInner<void>> i)
         : inner(std::move(i)) {}
@@ -370,13 +370,13 @@ struct SettableJobFuture<void> : ISetter{
     }
 
     // 結果なしの通知だけ
-    void set_value(void*) override{
+    void set_value(){
 
         std::lock_guard lk(inner->mtx);
         inner->ready = true;
     }
 
-    void set_exception(std::exception_ptr e) override{
+    void set_exception(std::exception_ptr e){
         std::lock_guard lk(inner->mtx);
         inner->eptr = std::move(e);
         inner->ready = true;
@@ -520,16 +520,21 @@ public:
         }
         cmds_.clear();
     }
-
 };
 
 struct DummyBuffer {};
 
 class JobManager;
 
+struct JobHandle {
+    size_t jobIndex;
+    ecs_map::id_type typeId; // 型ごとに一意なID
+    size_t resultIndex;
+};
+
 struct IJobBase {
     virtual ~IJobBase() = default;
-    virtual void executeAny() = 0;
+    virtual void executeAny(const size_t resultIndex) = 0;
 };
 
 template<typename Derived,typename ReturnType>
@@ -560,19 +565,20 @@ struct IJob : IJobBase {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
-        if constexpr (HasData::value) {
+       /* if constexpr (HasData::value) {
             buffer.flush(jobResult);
-        }
+        }*/
 
-        auto ctx = std::make_shared<Context>(
-            shared_this()
-            , std::move(settable)
-            );
+        //auto ctx = std::make_shared<Context>(
+        //    shared_this()
+        //    , std::move(settable)
+        //    );
 
-        // ワーカー数分だけ Task を作成して登録
-        auto work = [ctx]() { workerEntry(ctx); };
+        //// ワーカー数分だけ Task を作成して登録
+        //auto work = [ctx]() { workerEntry(ctx); };
 
-        Job job(std::move(work));
+        //Job job(std::move(work));
+        Job job;
 
         auto taskPtr = JobManager::Instance().scheduleTask(cat,std::move(job),0);
 
@@ -583,17 +589,17 @@ struct IJob : IJobBase {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
-        if constexpr (HasData::value) {
+        /*if constexpr (HasData::value) {
             buffer.flush(jobResult);
         }
 
         auto ctx = std::make_shared<Context>(
             shared_this()
             , std::move(settable)
-            );
+            );*/
 
         // ワーカー数分だけ Task を作成して登録
-        auto work = [ctx]() { workerEntry(ctx); };
+        //auto work = [ctx]() { workerEntry(ctx); };
 
         /*auto task = new Task(Job(std::move(work)), 0,cat);
         TaskPtr taskPtr{ std::move(task) };*/
@@ -605,38 +611,23 @@ struct IJob : IJobBase {
             }
         }*/
 
-        Job job(std::move(work));
+        //Job job(std::move(work));
+
+        Job job;
 
         auto taskPtr = JobManager::Instance().scheduleTask(cat,std::move(job),0);
 
         return std::make_pair(taskPtr,future);
     }
 
-    void executeAny() override {
-        
-        //帰り値あり
-        try {
-            if constexpr (HasReturn::value) {
-                if constexpr (std::is_same_v<Return_t, Data_t>) {
-                    
-                    ctx->setter.set_value(self->jobResult); // 値渡し
-                }
-                else {
-                    // Execute の結果をその場で値渡し
-                    ctx->setter.set_value(self->Execute());
-                }
-            }
-            else {
-                // void 戻りの場合
-                static_cast<Derived*>(this)->Execute();
-                ctx->setter.set_value();
-            }
-
+    void executeAny(const size_t resultIndex) override {
+        if constexpr (!HasReturn::value) {
+            static_cast<Derived*>(this)->Execute();
+            //JobManager::Instance().template setResult<Return_t>(resultIndex);
         }
-        catch (...) {
-            ctx->setter.set_exception(std::current_exception());
+        else {
+            JobManager::Instance().template setResult<Return_t>(resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
         }
-
     }
 
     inline void Execute() {
@@ -651,12 +642,12 @@ protected:
         return std::enable_shared_from_this<Derived>::shared_from_this();
     }
 
-    [[no_unique_address]] Data_t jobResult;
+    //[[no_unique_address]] Setter_t jobResult;
 
 private:
     std::atomic<size_t> nextBatch_{ 0 };
 
-    Buffer_t buffer;
+    //Buffer_t buffer;
 };
 
 //parallelJobの基底クラス
