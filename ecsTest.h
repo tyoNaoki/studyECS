@@ -148,7 +148,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
 		auto job = jm.createJob<TestJob>();
-		jm.scheduleJobHandle(job.first);
+		jm.scheduleJobHandle(job.first,job.second);
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}
