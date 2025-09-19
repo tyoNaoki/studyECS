@@ -401,7 +401,7 @@ public:
 
                         //ResultSlot& result = rangeJob.rStorage->dense[jobH.resultIndex];
 
-                        job->executeAny(jobH.resultIndex);
+                        job->executeAny(jobH);
                             
                             //if (ResultSlot* result = rangeJob.results[j]) {
 

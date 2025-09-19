@@ -5,9 +5,7 @@
 #include <string>
 #include "Event.hpp"
 
-namespace ECS {
-
-namespace EVENT {
+namespace ECS::EVENT {
 
 template<typename, typename...>
 struct Node;
@@ -223,6 +221,7 @@ public:
 			while (handleNode->prev) {
 				handleNode = handleNode->prev;
 			}
+
 			return handleNode == head;
 		}
 
@@ -263,6 +262,5 @@ private:
 	size_t listener_count_{ 0 };
 };
 
-}//namespace EVENT
-}//namespace ECS
+}//namespace ECS::EVENT
 #endif

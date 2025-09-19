@@ -113,11 +113,10 @@ struct TestJob
 {
 	using Base = IJob<TestJob,int>;
 	using Base::Base;
-	using ReturnType = Base::Return_t;
 
 	TestNormalJobConnector connecter;
 
-	inline int Execute() {
+	int Execute() {
 		//int sleepTime = generateRandomInt(5, 10);
 		//busyWait(std::chrono::milliseconds(sleepTime));
 		/*auto value = this->jobResult.value * this->jobResult.value;
@@ -148,7 +147,13 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
 		auto job = jm.createJob<TestJob>();
-		jm.scheduleJobHandle(job.first,job.second);
+		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
+			t.connecter.value = check;
+			}));*/
+
+		jm.scheduleJobHandle(job);
+
+		//job.wait_and_get();
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}
