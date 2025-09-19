@@ -520,6 +520,10 @@ public:
         }
         cmds_.clear();
     }
+
+    bool isEmpty(){
+        return cmds_.empty();
+    }
 };
 
 struct DummyBuffer {};
@@ -534,14 +538,17 @@ struct JobHandle {
 
 struct IJobBase {
     virtual ~IJobBase() = default;
-    virtual void executeAny(const size_t resultIndex) = 0;
+    virtual void executeAny(const JobHandle& handle) = 0;
 };
 
 template<typename Derived,typename ReturnType>
 struct IJob : IJobBase {
-    using TaskPtr = intrusive_ptr<Task>;
-
     using Return_t = ReturnType;
+
+    using ICommandPtr = std::unique_ptr<ICommand<Derived>>;
+
+private:
+    using TaskPtr = intrusive_ptr<Task>;
 
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
@@ -557,11 +564,13 @@ struct IJob : IJobBase {
         SettableJobFuture<void>
     >;
 
+public:
+
     IJob() = default;
 
     ~IJob() {};
 
-    inline std::pair<TaskPtr, Future_t> schedule(JobCategory cat = JobCategory::RealTime) {
+    std::pair<TaskPtr, Future_t> schedule(JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
@@ -585,7 +594,7 @@ struct IJob : IJobBase {
         return std::make_pair(taskPtr, future);
     }
 
-    inline std::pair<TaskPtr,Future_t> schedule(const std::vector<TaskPtr>& deps, JobCategory cat = JobCategory::RealTime) {
+    std::pair<TaskPtr,Future_t> schedule(const std::vector<TaskPtr>& deps, JobCategory cat = JobCategory::RealTime) {
         auto [settable, future] = Setter_t::create();
 
         //実行前にJob実行の参照データに変更適用
@@ -620,34 +629,40 @@ struct IJob : IJobBase {
         return std::make_pair(taskPtr,future);
     }
 
-    void executeAny(const size_t resultIndex) override {
+    void executeAny(const JobHandle&handle) override {
+        applyCommands();
+
         if constexpr (!HasReturn::value) {
             static_cast<Derived*>(this)->Execute();
-            //JobManager::Instance().template setResult<Return_t>(resultIndex);
+            JobManager::Instance().setResult(handle);
         }
         else {
-            JobManager::Instance().template setResult<Return_t>(resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
+            JobManager::Instance().template setResult<Return_t>(handle, std::move(static_cast<Derived*>(this)->Execute()));
         }
     }
 
-    inline void Execute() {
+    void AddRequeset(ICommandPtr&& command) {
+        commands.push(std::move(command));
+    }
+
+protected:
+    void Execute() {
         // Derived の Execute() を呼び出し
         //static_cast<Derived*>(this)->Execute(index);
         ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
-protected:
-    std::shared_ptr<Derived> shared_this()
-    {
-        return std::enable_shared_from_this<Derived>::shared_from_this();
+private:
+    void applyCommands() {
+        if(commands.isEmpty()) return;
+
+        commands.flush(static_cast<Derived&>(*this));
     }
 
-    //[[no_unique_address]] Setter_t jobResult;
-
 private:
-    std::atomic<size_t> nextBatch_{ 0 };
+    //std::atomic<size_t> nextBatch_{ 0 };
 
-    //Buffer_t buffer;
+    CommandBuffer<Derived> commands;
 };
 
 //parallelJobの基底クラス
