@@ -9,6 +9,7 @@
 #include "intrusive_ptr.h"
 #include "TestFramework.hpp"
 #include "HashFunctions.hpp"
+#include "CallbackList.hpp"
 
 namespace ECS::JobSystem{
 
@@ -539,6 +540,11 @@ struct JobHandle {
 struct IJobBase {
     virtual ~IJobBase() = default;
     virtual void executeAny(const JobHandle& handle) = 0;
+
+    std::mutex dependentLock;
+    std::optional<JobHandle> nextDependent = std::nullopt;
+    std::atomic<int> inDegree{ 0 }; // –¢‰ğŒˆˆË‘¶”
+    std::atomic<bool> ready{ false };
 };
 
 template<typename Derived,typename ReturnType>
@@ -551,6 +557,7 @@ private:
     using TaskPtr = intrusive_ptr<Task>;
 
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+
 
     using Future_t = std::conditional_t<
         HasReturn::value,
