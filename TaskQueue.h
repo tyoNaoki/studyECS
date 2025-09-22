@@ -329,8 +329,16 @@ struct SliceChunk {
     }
 };
 
+class IStorage {
+    virtual ~IStorage() = default;
+    virtual void enqueue(SliceChunk&& slice) = 0;
+    virtual void enqueue(Job&& job, int degree, JobCategory cat) = 0;
+    virtual SliceChunk popOne() = 0;
+    virtual void popMany(size_t maxCount, std::vector<SliceChunk>& out) = 0;
+};
+
 template<typename T, size_t MaxTasks,size_t MaxSliceSize>
-class TaskStorage {
+class TaskStorage{
     using TaskArena = TaskArena;
 
     //全タスクを連続配置で保持
@@ -366,6 +374,8 @@ public:
 
         sliceDeque.push_back(std::move(slice));
     }
+
+    //void enqueue(Job&& job, int degree, JobCategory cat) override{}
 
     T pushOrAppendRangeTask(Job&& job, int degree, JobCategory cat) {
         if (!arena->isEmpty()) {
@@ -419,7 +429,7 @@ public:
         return sliceDeque.pop_front();
     }
 
-    void popMany(size_t maxCount,std::vector<SliceChunk>&out) {
+    void popMany(size_t maxCount,std::vector<SliceChunk>&out){
         ASSERT(maxCount > 0,"Slice popMany() maxCount under zero");
 
         out.reserve((maxCount + MaxSliceSize - 1) / MaxSliceSize);

@@ -48,6 +48,7 @@ private:
             chunk.owner->destroyAt(i);
         }
     }
+
 };
 inline void runJob(size_t workerId, TaskPtr&& task) {
     ASSERT(task && task->job.valid(), "task is invoked in JobQueue!!");
@@ -226,7 +227,7 @@ public:
     virtual TaskPtr schedule(JobCategory cat,
         TaskPtr&&task) = 0;
 
-    virtual void testSchedule(const JobHandle&handle) = 0;
+    virtual void enqueue(JobCategory cat,const JobHandle&handle) = 0;
 };
 
 template<
@@ -302,7 +303,7 @@ public:
     }
 
     //test
-    void testSchedule(const JobHandle& handle) override{
+    void enqueue(JobCategory cat, const JobHandle& handle) override{
         std::lock_guard<std::mutex>lk(testLock);
 
         //RangeTaskStorageが空か現在のRangeTaskが満タン
@@ -397,12 +398,14 @@ public:
 
                     for (int j = 0; j < rangeJob.size(); j++) {
                         const JobHandle& jobH = rangeJob.jobs[j];
-                        IJobBase* job = jm.getJob(jobH);
+                        IJobBase* job = jm.getJob(jobH.jobIndex);
 
                         //ResultSlot& result = rangeJob.rStorage->dense[jobH.resultIndex];
 
                         job->executeAny(jobH);
-                            
+
+                        onJobComplete(jm,job);
+
                             //if (ResultSlot* result = rangeJob.results[j]) {
 
                             //    //この部分を改善すれば、さらに短縮可能
@@ -417,6 +420,8 @@ public:
         }
     }
 
+   
+
 private:
     //localQueueのpop、stealを行う。
     void run();
@@ -427,6 +432,10 @@ private:
     void DebugLog(JobCategory cat);
 
     std::string jobCategoryToString(JobCategory cat);
+
+    void onJobComplete(JobManager& jm, IJobBase* job);
+
+    void processDependents(JobManager& jm, IJobBase* parentJob);
 
 private:
     //localQのインデックス
@@ -648,6 +657,36 @@ inline std::string Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::jobCategoryToSt
     case JobCategory::RealTime:   return "RealTime";
     case JobCategory::BackGround: return "BackGround";
     default:    return "Unknown";
+    }
+}
+
+template<typename LocalQueue, typename WorkerPolicy, typename ExecuteFunc>
+inline void Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::onJobComplete(JobManager& jm,IJobBase* job)
+{
+    if (job->nextDependent != std::nullopt) {
+        //繋がっているchildの依存カウントを減らしていく
+        processDependents(jm, job);
+    }
+
+    //未スケジュール状態に戻す
+    job->ready.store(false);
+}
+
+template<typename LocalQueue, typename WorkerPolicy, typename ExecuteFunc>
+inline void Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::processDependents(JobManager& jm, IJobBase* parentJob) {
+
+    for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
+        child != std::nullopt;
+        child = std::exchange(parentJob->nextDependent, std::nullopt))
+    {
+        auto* childJob = jm.getJob(child->jobIndex);
+
+        if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            //スケジュール済み
+            if (childJob->ready.load(std::memory_order_acquire)) {
+                jm.scheduleDependentHandle(*child);
+            }
+        }
     }
 }
 

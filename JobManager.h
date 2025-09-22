@@ -68,8 +68,6 @@ namespace ECS::JobSystem{
     template<typename T>
     struct ResultSlot {
         T value;
-
-        bool keep = false;
         std::atomic<bool> done{ false };
 
         ResultSlot() = default;
@@ -77,12 +75,10 @@ namespace ECS::JobSystem{
         // コピー可能にする
         ResultSlot(const ResultSlot& other)
             : value(other.value),
-            keep(other.keep),
             done(other.done.load(std::memory_order_relaxed)) {}
 
         ResultSlot& operator=(const ResultSlot& other) {
             value = other.value;
-            keep = other.keep;
             done.store(other.done.load(std::memory_order_relaxed), std::memory_order_relaxed);
             return *this;
         }
@@ -94,7 +90,6 @@ namespace ECS::JobSystem{
 
     template<>
     struct ResultSlot<void> {
-        bool keep = false;
         std::atomic<bool> done{ false };
 
         ResultSlot() = default;
@@ -102,11 +97,9 @@ namespace ECS::JobSystem{
         // コピー可能にする
         ResultSlot(const ResultSlot& other)
             :
-            keep(other.keep),
             done(other.done.load(std::memory_order_relaxed)) {}
 
         ResultSlot& operator=(const ResultSlot& other) {
-            keep = other.keep;
             done.store(other.done.load(std::memory_order_relaxed), std::memory_order_relaxed);
             return *this;
         }
@@ -129,10 +122,6 @@ namespace ECS::JobSystem{
             return dense.size() - 1;
         }
 
-        void setKeep(size_t resultIndex,bool keep){
-            dense[resultIndex].keep = keep;
-        }
-
         T get(size_t idx) { return dense[idx].value; }
 
         bool contains(size_t idx) const{
@@ -153,6 +142,12 @@ namespace ECS::JobSystem{
         }
 
         void set(const size_t resultIndex,T&&value){
+
+            //resultSlotがまだ未作成
+            if(resultIndex >= dense.size()){
+                emplace();//resultSlot作成
+            }
+
             auto& resultSlot = dense[resultIndex];
             if(resultSlot.done.load(std::memory_order_acquire)){
                 ASSERT(false,"job is done");
@@ -163,18 +158,7 @@ namespace ECS::JobSystem{
         }
 
         void clearResult() {
-            // keep==false の要素を削除
-            dense.erase(
-                std::remove_if(dense.begin(), dense.end(),
-                    [](auto& slot) { return !slot.keep&&slot.done; }),
-                dense.end()
-            );
-
-            // 次フレーム用に全て戻す
-            for (auto& slot : dense){
-                slot.keep = false;
-                slot.done = false;
-            }
+            dense.clear();
         }
 
     private:
@@ -193,10 +177,6 @@ namespace ECS::JobSystem{
         size_t push(T&& value) {
             dense.emplace_back();
             return dense.size() - 1;
-        }
-
-        void setKeep(size_t resultIndex, bool keep) {
-            dense[resultIndex].keep = keep;
         }
 
         bool contains(size_t idx) const {
@@ -228,18 +208,7 @@ namespace ECS::JobSystem{
         }
 
         void clearResult() {
-            //keep==falseの要素を削除
-            dense.erase(
-                std::remove_if(dense.begin(), dense.end(),
-                    [](auto& slot) { return !slot.keep && slot.done; }),
-                dense.end()
-            );
-
-            //次フレーム用にkeepとdoneを戻す
-            for (auto& slot : dense) {
-                slot.keep = false;
-                slot.done = false;
-            }
+            dense.clear();
         }
 
     private:
@@ -365,9 +334,6 @@ class JobManager
     JobManager& operator=(JobManager&&) = delete;
     JobManager(const JobManager&) = delete;
     JobManager& operator=(const JobManager&) = delete;
-
-    //resultStorage消去用
-    EVENT::CallbackList<void()> clearResultCallbacks;
 
 public:
     static JobManager& Instance() {
@@ -510,8 +476,8 @@ public:
         return workers[index]->schedule(cat, std::move(job), degree);
     }
 
-    IJobBase* getJob(const JobHandle&handle){
-        return jobStorage.dense[handle.jobIndex].get();
+    IJobBase* getJob(const size_t jobIndex){
+        return jobStorage.dense[jobIndex].get();
     }
 
     template<typename T>
@@ -543,25 +509,70 @@ public:
     }
 
     template<typename T,typename... Args>
-    auto createJob(Args&&... args){
+    JobHandle createJob(Args&&... args){
         using Ret = typename T::Return_t;
 
         auto idx = jobStorage.emplace<T>(std::forward<Args>(args)...);
         JobHandle h{ idx, ecs_map::type_hash<Ret>(), NULL_RESULT };
 
-        return TaskFuture<T>{ h };
+        return h;
+    }
+
+    bool isReadyJobHandle(const JobHandle&handle){
+        auto* job = getJob(handle.jobIndex);
+        return job->ready.load(std::memory_order_acquire);
     }
 
     template<typename T>
-    void scheduleJobHandle(TaskFuture<T>&future){
+    auto scheduleJobHandle(JobHandle& handle){
+        auto* job = getJob(handle.jobIndex);
+
+        //すでにスケジュール済み
+        ASSERT(job->ready.load(std::memory_order_acquire)!= true,"this job schedule yet.");
+
         size_t next = getNextQueueIndex();
 
         //結果スロットをバインド
         auto& storage = getResultStorage<typename T::Return_t>();
-        storage.tryEmplace(future.handle.resultIndex);
+        storage.tryEmplace(handle.resultIndex);
+
+        job->ready.store(true, std::memory_order_release);
+
+        if(job->inDegree.load(std::memory_order_release) == 0){
+            // 依存がないなら即スケジュール
+            workers[next]->enqueue(JobCategory::RealTime, handle);
+        }
+
+        return TaskFuture<T>(handle);
+    }
+
+    //依存ジョブ登録用のhandle
+    void scheduleDependentHandle(JobHandle handle) {
+        size_t next = getNextQueueIndex();
 
         //schedule
-        workers[next]->testSchedule(future.handle);
+        workers[next]->enqueue(JobCategory::RealTime, handle);
+    }
+
+    template<typename T>
+    void addDependent(JobHandle&childHandle,TaskFuture<T> parent){
+        auto& jm = JobManager::Instance();
+
+        auto parentIndex = parent.handle.jobIndex;
+        ASSERT(childHandle.jobIndex != parentIndex,"addDependent() do not use TaskFuture<T> of childHandle");
+
+        auto* child = jm.getJob(childHandle.jobIndex);
+        auto* parent = jm.getJob(parentIndex);
+
+        std::lock_guard<std::mutex> lk(parent->dependentLock);
+        if (!parent.isDone()) { // まだ実行されていない
+            // child を親の nextDependent リストに差し込む
+            child->nextDependent = parent->nextDependent;
+            parent->nextDependent = childHandle;
+
+            // 子ジョブの未解決依存数を増やす
+            child->inDegree.fetch_add(1);
+        }
     }
 
     template<typename JobT>
@@ -609,6 +620,8 @@ public:
     size_t getRunningJobCount(const JobCategory cat) const noexcept {
         return stats_.runningJobCount(cat);
     }
+
+
 
     size_t getCompletedJobCount(const JobCategory cat) const noexcept {
         return stats_.completedJobCount(cat);
@@ -703,6 +716,9 @@ private:
 
     JobStorage jobStorage;
 
+    //resultStorage消去用
+    EVENT::CallbackList<void()> clearResultCallbacks;
+
     std::atomic<bool> stopFlag;
     
     //現ジョブの総数
@@ -733,18 +749,24 @@ private:
 
 template<typename Derived_t>
 struct TaskFuture {
-    JobHandle handle;
+    JobHandle& handle;
 
     using type = Derived_t;
     using Return_t = typename type::Return_t;
     using ICommandPtr = std::unique_ptr<ICommand<Derived_t>>;
 
-    explicit TaskFuture(JobHandle h) : handle(h) {}
+    explicit TaskFuture(JobHandle& h) : handle(h) {}
 
     void keepResult(bool keep) noexcept {
         JobManager::Instance().template setKeep(*this, keep);
     }
 
+    /// <summary>
+    /// job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<JobClass>>([&capture](JobClass& t) {
+    ///     t.temp = capture;
+    /// }));
+    /// </summary>
+    /// <returns></returns>
     void AddRequest(ICommandPtr&& cmd) {
         JobManager::Instance().template addCommand<Derived_t>(handle, std::move(cmd));
     }
@@ -778,8 +800,8 @@ struct TaskFuture {
         }
     }
 
-    bool isReady(size_t resultIndex) const {
-        return JobManager::Instance().template getResultStorage<Return_t>().done(resultIndex);
+    bool isDone() const {
+        return JobManager::Instance().template getResultStorage<Return_t>().done(handle.resultIndex);
     }
 };
 
