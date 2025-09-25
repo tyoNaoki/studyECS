@@ -205,10 +205,10 @@ class JobStats;
 
 //タスクキュー
 template<typename Policy>
-using RealTimeStorageType= TaskStorage<TaskPtr, Policy::realTimeCap, Policy::realTimeChunkSize>;
+using RealTimeStorageType= TaskArena<Policy::realTimeCap, Policy::realTimeChunkSize>;
 
 template<typename Policy>
-using BackGroundStorageType = TaskStorage<TaskPtr, Policy::backGroundCap, Policy::backGroundChunkSize>;
+using BackGroundStorageType = TaskArena<Policy::backGroundCap, Policy::backGroundChunkSize>;
 
 class IWorker {
 public:
@@ -261,15 +261,14 @@ public:
     TaskPtr schedule(JobCategory cat,TaskPtr&&task) override;
 
     //仮組
+    static constexpr size_t rangeJobCap = 16;
     static constexpr size_t capa = WorkerPolicy::realTimeCap;
     static constexpr size_t chunkCapa = WorkerPolicy::realTimeChunkSize;
 
     struct testRangeJob {
         std::vector<JobHandle>jobs;
 
-        size_t max = 16;
-
-        bool isFull() { return jobs.size() == max; }
+        bool isFull() { return jobs.size() == rangeJobCap; }
         void push(JobHandle handle) { jobs.push_back(handle);}
         size_t size() { return jobs.size(); }
     };
@@ -278,10 +277,9 @@ public:
         size_t start = 0;
         size_t count = 0;
         std::vector<testRangeJob>* ranges = nullptr;
-        size_t maxSize = chunkCapa;
 
         bool isFull(){
-            return count == maxSize;
+            return count == chunkCapa;
         }
 
         testSliceChunk(size_t s,size_t c, std::vector<testRangeJob>* r): start(s),count(c),ranges(r){}
@@ -303,61 +301,9 @@ public:
     }
 
     //test
-    void enqueue(JobCategory cat, const JobHandle& handle) override{
-        std::lock_guard<std::mutex>lk(testLock);
+    void enqueue(JobCategory cat, const JobHandle& handle) override;
 
-        //RangeTaskStorageが空か現在のRangeTaskが満タン
-        if (taskStore.empty() || taskStore[taskStore.size() - 1].isFull()) {
-            
-            //RangeTask作成
-            taskStore.emplace_back();
-            taskStore[taskStore.size() - 1].push(handle);
-
-            //空
-            if (testSliceDeque.empty()) {
-                testSliceDeque.emplace_front(0, 0, &taskStore);
-            }
-
-            //満タン
-            if(testSliceDeque.front().isFull()){
-                size_t newStart = testSliceDeque.front().start + testSliceDeque.front().count;
-                testSliceDeque.emplace_front(newStart, 0, &taskStore);
-            }
-
-            testSliceDeque.front().count++;
-            stats_.onStart(JobCategory::RealTime, 1);
-            return;
-        }
-
-        //現在のRangeTaskに追加
-        taskStore[taskStore.size() - 1].push(handle);
-
-        stats_.onStart(JobCategory::RealTime,1);
-    }
-
-    bool testPOP(size_t takeNum,std::vector<testSliceChunk>&slices){
-        if(takeNum <= 0){return false;}
-
-        size_t take = (takeNum / chunkCapa);
-
-        if(take<1){
-            return false;
-        }
-
-        slices.reserve(take);
-
-        for(int i = 0;i<take;i++){
-            if(testSliceDeque.empty()){
-                break;
-            }
-
-            auto slice = testSliceDeque.back();
-            testSliceDeque.pop_back();
-            slices.push_back(slice);
-        }
-        
-        return !slices.empty();
-    }
+    bool testPOP(size_t takeNum,std::vector<testSliceChunk>&slices);
 
     void localPush(testSliceChunk chunk){
         localTaskStore.push_back(chunk);
@@ -404,7 +350,7 @@ public:
 
                         job->executeAny(jobH);
 
-                        onJobComplete(jm,job);
+                        onJobComplete(job);
 
                             //if (ResultSlot* result = rangeJob.results[j]) {
 
@@ -433,9 +379,24 @@ private:
 
     std::string jobCategoryToString(JobCategory cat);
 
-    void onJobComplete(JobManager& jm, IJobBase* job);
+    void onJobComplete(IJobBase* job);
 
-    void processDependents(JobManager& jm, IJobBase* parentJob);
+    void processDependents(IJobBase* parentJob){
+        auto& jm = JobManager::Instance();
+        for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
+            child != std::nullopt;
+            child = std::exchange(parentJob->nextDependent, std::nullopt))
+        {
+            IJobBase* childJob = jm.getJob(child->jobIndex);
+
+            if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                //スケジュール済み
+                if (childJob->ready.load(std::memory_order_acquire)) {
+                    jm.scheduleDependentHandle(*child);
+                }
+            }
+        }
+    }
 
 private:
     //localQのインデックス
@@ -489,6 +450,7 @@ inline TaskPtr Worker<LocalQueue,WorkerPolicy,ExecuteFunc>::schedule(JobCategory
 
     //カウント
     stats_.onEnqueued(cat,1);
+
     switch (cat)
     {
     case JobCategory::RealTime:
@@ -533,6 +495,77 @@ inline TaskPtr Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::schedule(JobCategor
     }
 
     return nullptr;
+}
+
+template<typename LocalQueue, typename WorkerPolicy, typename ExecuteFunc>
+inline void Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::enqueue(JobCategory cat, const JobHandle& handle)
+{
+    switch (cat)
+    {
+    case ECS::JobSystem::JobCategory::RealTime:
+        break;
+    case ECS::JobSystem::JobCategory::BackGround:
+        ASSERT(false,"not work backGround");
+        return;
+        break;
+    default:
+        break;
+    }
+    std::lock_guard<std::mutex>lk(testLock);
+
+    //RangeTaskStorageが空か現在のRangeTaskが満タン
+    if (taskStore.empty() || taskStore[taskStore.size() - 1].isFull()) {
+
+        //RangeTask作成
+        taskStore.emplace_back();
+        taskStore[taskStore.size() - 1].push(handle);
+
+        //空
+        if (testSliceDeque.empty()) {
+            testSliceDeque.emplace_front(0, 0, &taskStore);
+        }
+
+        //満タン
+        if (testSliceDeque.front().isFull()) {
+            size_t newStart = testSliceDeque.front().start + testSliceDeque.front().count;
+            testSliceDeque.emplace_front(newStart, 0, &taskStore);
+        }
+
+        testSliceDeque.front().count++;
+        stats_.onStart(JobCategory::RealTime, 1);
+        return;
+    }
+
+    //現在のRangeTaskに追加
+    taskStore[taskStore.size() - 1].push(handle);
+
+    stats_.onStart(JobCategory::RealTime, 1);
+}
+
+template<typename LocalQueue, typename WorkerPolicy, typename ExecuteFunc>
+inline bool Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::testPOP(size_t takeNum, std::vector<testSliceChunk>& slices)
+{
+    if (takeNum <= 0) { return false; }
+
+    size_t take = (takeNum / chunkCapa);
+
+    if (take < 1) {
+        return false;
+    }
+
+    slices.reserve(take);
+
+    for (int i = 0; i < take; i++) {
+        if (testSliceDeque.empty()) {
+            break;
+        }
+
+        auto slice = testSliceDeque.back();
+        testSliceDeque.pop_back();
+        slices.push_back(slice);
+    }
+
+    return !slices.empty();
 }
 
 //template<typename ChunkAllocator, typename WorkerPolicy>
@@ -661,33 +694,15 @@ inline std::string Worker<LocalQueue,WorkerPolicy, ExecuteFunc>::jobCategoryToSt
 }
 
 template<typename LocalQueue, typename WorkerPolicy, typename ExecuteFunc>
-inline void Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::onJobComplete(JobManager& jm,IJobBase* job)
+inline void Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::onJobComplete(IJobBase* job)
 {
     if (job->nextDependent != std::nullopt) {
         //繋がっているchildの依存カウントを減らしていく
-        processDependents(jm, job);
+        processDependents(job);
     }
 
     //未スケジュール状態に戻す
     job->ready.store(false);
-}
-
-template<typename LocalQueue, typename WorkerPolicy, typename ExecuteFunc>
-inline void Worker<LocalQueue, WorkerPolicy, ExecuteFunc>::processDependents(JobManager& jm, IJobBase* parentJob) {
-
-    for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
-        child != std::nullopt;
-        child = std::exchange(parentJob->nextDependent, std::nullopt))
-    {
-        auto* childJob = jm.getJob(child->jobIndex);
-
-        if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            //スケジュール済み
-            if (childJob->ready.load(std::memory_order_acquire)) {
-                jm.scheduleDependentHandle(*child);
-            }
-        }
-    }
 }
 
 }
