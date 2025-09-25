@@ -67,19 +67,16 @@ namespace ECS::JobSystem{
 
     template<typename T>
     struct ResultSlot {
-        T value;
-        std::atomic<bool> done{ false };
+        std::optional<T> value;
 
         ResultSlot() = default;
 
         // コピー可能にする
         ResultSlot(const ResultSlot& other)
-            : value(other.value),
-            done(other.done.load(std::memory_order_relaxed)) {}
+            : value(other.value) {}
 
         ResultSlot& operator=(const ResultSlot& other) {
             value = other.value;
-            done.store(other.done.load(std::memory_order_relaxed), std::memory_order_relaxed);
             return *this;
         }
 
@@ -87,6 +84,7 @@ namespace ECS::JobSystem{
         ResultSlot(ResultSlot&&) noexcept = default;
         ResultSlot& operator=(ResultSlot&&) noexcept = default;
     };
+
 
     template<>
     struct ResultSlot<void> {
@@ -122,7 +120,7 @@ namespace ECS::JobSystem{
             return dense.size() - 1;
         }
 
-        T get(size_t idx) { return dense[idx].value; }
+        T get(size_t idx) { return *dense[idx].value; }
 
         bool contains(size_t idx) const{
             if(idx >=dense.size()) return false;
@@ -131,7 +129,7 @@ namespace ECS::JobSystem{
         }
 
         bool done(size_t idx) const{
-            return dense[idx].done.load(std::memory_order_acquire);
+            return dense[idx].value != std::nullopt;
         }
 
         //無効なら新しいresultIndexを発行
@@ -142,19 +140,14 @@ namespace ECS::JobSystem{
         }
 
         void set(const size_t resultIndex,T&&value){
-
             //resultSlotがまだ未作成
             if(resultIndex >= dense.size()){
                 emplace();//resultSlot作成
             }
 
             auto& resultSlot = dense[resultIndex];
-            if(resultSlot.done.load(std::memory_order_acquire)){
-                ASSERT(false,"job is done");
-            }
 
             resultSlot.value = std::move(value);
-            resultSlot.done.store(true, std::memory_order_release);
         }
 
         void clearResult() {
@@ -534,11 +527,11 @@ public:
 
         //結果スロットをバインド
         auto& storage = getResultStorage<typename T::Return_t>();
-        storage.tryEmplace(handle.resultIndex);
+        handle.resultIndex = storage.emplace();
 
         job->ready.store(true, std::memory_order_release);
 
-        if(job->inDegree.load(std::memory_order_release) == 0){
+        if(job->inDegree.load(std::memory_order_acquire) == 0){
             // 依存がないなら即スケジュール
             workers[next]->enqueue(JobCategory::RealTime, handle);
         }
@@ -620,8 +613,6 @@ public:
     size_t getRunningJobCount(const JobCategory cat) const noexcept {
         return stats_.runningJobCount(cat);
     }
-
-
 
     size_t getCompletedJobCount(const JobCategory cat) const noexcept {
         return stats_.completedJobCount(cat);

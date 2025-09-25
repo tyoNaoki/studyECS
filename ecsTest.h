@@ -151,7 +151,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 			t.connecter.value = check;
 			}));*/
 
-		jm.scheduleJobHandle(job);
+		auto future = jm.scheduleJobHandle<TestJob>(job);
 
 		//job.wait_and_get();
 		// 少しずつずらしてスケジューリング

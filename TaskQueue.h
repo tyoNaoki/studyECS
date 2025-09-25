@@ -212,282 +212,375 @@ struct RangeTask{
     size_t count(){return tasks.size();}
 };
 
-// in-place 構築用の大規模バッファ
+
+
+enum TaskCategory : uint8_t {
+    Easy,
+    Normal,
+    Heavy,
+    Num
+};
+
+constexpr std::array<size_t, TaskCategory::Num> WorkloadMap = {
+    1,   // Easy
+    8,  // Normal
+    16   // Heavy
+};
+
+inline size_t getWorkload(TaskCategory cat) {
+    return WorkloadMap[static_cast<size_t>(cat)];
+}
+
+struct ChunkMeta {
+    size_t offset;   // data[offset .. offset + capacity)
+    size_t size;     // 現在の有効要素数
+    size_t capacity; // 予約済み容量
+
+    bool isFull() {
+        return size >= capacity;
+    }
+
+
+};
+
+struct Slice {
+    size_t start = 0;
+    size_t size = 0;
+    TaskArena* owner = nullptr;
+    uint8_t currentWorkload = 0;
+};
+
+struct Slot {
+    size_t offset;              // data 内の開始位置
+    size_t size;               // 実際に格納された JobHandle 数
+    TaskCategory category;      // このスロットのカテゴリ
+};
+
+//大規模バッファ
+template<size_t maxTasks, size_t chunkSize>
 class TaskArena {
-    
-    std::vector<std::optional<RangeTask>> buffer_;
-    //std::vector<std::optional<TaskPtr>> buffer_;
-    std::atomic<size_t> writePos_{ 0 };
+    std::vector<JobHandle> data;
+    std::vector<Slot>slots;
+    std::deque<ChunkMeta> chunks;
+
+    std::mutex lock;
+
+    static constexpr size_t chunkMaxSize = chunkSize;
 
 public:
-    TaskArena(size_t maxTasks){
-        // 必ず MaxTasks の slot を用意しておく
-        buffer_.resize(maxTasks);
+    TaskArena(){
+        data.resize(maxTasks);
     }
 
-    size_t lastPosition() const noexcept{
-        return writePos_.load(std::memory_order_relaxed) - 1;
+    TaskCategory getTaskCategory(size_t chunkId, size_t slotIndex) {
+        const auto& c = chunks[chunkId];
+        return slots[c.offset + slotIndex].category;
     }
 
+    size_t slotSize(size_t chunkId, size_t slotIndex) {
+        const auto& c = chunks[chunkId];
+        return slots[c.offset + slotIndex].size;
+    }
+
+    JobHandle& at(size_t chunkId, size_t slotIndex,size_t localIndex) {
+        const auto& c = chunks[chunkId];
+        return data[slots[c.offset + slotIndex].offset + localIndex];
+    }
+
+    void pushJob(TaskCategory cat, JobHandle&& job) {
+        size_t needed = getWorkload(cat);
+        ASSERT(needed == 1,"Job count not same SlotSize");
+
+        // 新しい Slot を作成
+        size_t offset = data.size();
+        data.push_back(std::move(job));
+
+        slots.push_back({ offset, needed, cat });
+
+        {
+            std::lock_guard<std::mutex> guard(lock);
+
+            // Chunk が空 or 満杯なら新しい Chunk を作る
+            if (chunks.empty() || chunks.back().isFull()) {
+                chunks.push_back({ slots.size() - 1, 0, chunkMaxSize });
+            }
+
+            chunks.back().size++;
+        }
+    }
+
+    void pushJobs(TaskCategory cat, std::vector<JobHandle>&& jobs) {
+        size_t needed = getWorkload(cat);
+        ASSERT(jobs.size() == needed,"Job count not same SlotSize");
+
+        // 新しい Slot を作成
+        size_t offset = data.size();
+        data.insert(data.end(),
+            std::make_move_iterator(jobs.begin()),
+            std::make_move_iterator(jobs.end()));
+
+        slots.push_back({ offset, needed, cat });
+
+        {
+            std::lock_guard<std::mutex> guard(lock);
+
+            // Chunk が空 or 満杯なら新しい Chunk を作る
+            if (chunks.empty() || chunks.back().isFull()) {
+                chunks.push_back({ slots.size() - 1, 0, chunkMaxSize });
+            }
+
+            chunks.back().size++;
+        }
+    }
+
+    //chunkが一つもない
     bool isEmpty() const noexcept{
-        return writePos_.load(std::memory_order_relaxed) == 0;
-    }
-
-    // チャンク単位（ここでは 1～N）の先頭インデックスを確保
-    size_t reserve(size_t count) {
-        return writePos_.fetch_add(count, std::memory_order_relaxed);
-    }
-
-    template<typename... Args>
-    void constructAt(size_t idx, Args&&... args) {
-        buffer_[idx].emplace(std::forward<Args>(args)...);
-        //return *buffer_[idx];
-    }
-
-    template<typename... Args>
-    auto constructTask(size_t idx, Args&&... args) {
-        buffer_[idx]->tasks.emplace_back(std::forward<Args>(args)...);
-        return buffer_[idx]->tasks.back();
-    }
-
-    TaskPtr push(size_t idx,TaskPtr&& task) {
-        buffer_[idx]->tasks.push_back(std::move(task));
-        return buffer_[idx]->tasks.back();
+        return chunks.size() == 0;
     }
 
     //破棄
     void destroyAt(size_t idx) {
-        buffer_[idx].reset(); 
+        //data[idx].reset(); 
     }
 
-    /*TaskPtr get(size_t idx){
-        return *buffer_[idx];
-    }
-
-    TaskPtr& getRef(size_t idx) {
-        return *buffer_[idx];
-    }
-
-    TaskPtr tryGet(size_t idx) noexcept {
-        return buffer_[idx].has_value() ? *buffer_[idx]
-            : nullptr;
-    }
-
-    TaskPtr* tryGetPtr(size_t idx) noexcept {
-        return (buffer_[idx])
-            ? std::addressof(*buffer_[idx])
-            : nullptr;
-    }*/
-
-    auto& get(size_t idx){
-        return *buffer_[idx];
-    }
-
-    auto& getRef(size_t idx) {
-        return *buffer_[idx];
-    }
-
-    std::optional<RangeTask> tryGet(size_t idx) noexcept {
-        return buffer_[idx].has_value() ? buffer_[idx] : std::nullopt;
-    }
-
-    auto* tryGetPtr(size_t idx) noexcept {
-        return (buffer_[idx])
-            ? std::addressof(*buffer_[idx])
-            : nullptr;
-    }
-
-    /*std::optional<TaskPtr&> tryGet(size_t idx) noexcept {
-        auto& slot = buffer_[idx];
-
-        if (!slot.has_value()) return std::nullopt;
-
-        return *slot;  
-    }
-
-    std::optional<const TaskPtr&> tryGet(size_t idx) const noexcept {
-        auto& slot = buffer_[idx];
-
-        if (!slot.has_value()) return std::nullopt;
-
-        return *slot;
-    }*/
-};
-
-struct SliceChunk {
-    size_t start = 0;
-    size_t count = 0;
-    TaskArena* owner = nullptr;
-
-    size_t size() {
-        size_t result = 0;
-        for(size_t i = start;i<count;i++){
-            result += owner->getRef(i).count();
+    //一つchunkPop
+    bool popOne(ChunkMeta&meta) {
+        std::lock_guard lk(lock);
+        
+        if(isEmpty() || !chunks.front().isFull()){
+            return false;
         }
-
-        return result;
+        
+        meta = chunks.front();
+        chunks.pop_front();
+        return true;
     }
-};
-
-class IStorage {
-    virtual ~IStorage() = default;
-    virtual void enqueue(SliceChunk&& slice) = 0;
-    virtual void enqueue(Job&& job, int degree, JobCategory cat) = 0;
-    virtual SliceChunk popOne() = 0;
-    virtual void popMany(size_t maxCount, std::vector<SliceChunk>& out) = 0;
-};
-
-template<typename T, size_t MaxTasks,size_t MaxSliceSize>
-class TaskStorage{
-    using TaskArena = TaskArena;
-
-    //全タスクを連続配置で保持
-    std::unique_ptr<TaskArena> arena;
-    // チャンク記録用の軽量 MPMC キュー等を用意しておく
-    std::deque<SliceChunk> sliceDeque;
-    std::mutex lock;
-
-public:
-    TaskStorage(){
-        arena = std::make_unique<TaskArena>(MaxTasks);
-    }
-
-    /*void pushMany(std::vector<Job>& jobs) {
-        auto count = jobs.size();
-        size_t start = arena.reserveChunk(count);
-
-        for (size_t i = 0; i < count; ++i) {
-            new (arena.ptr(start + i))
-                T(std::move(jobs[i]));
-        }
-
-        push(count);
-    }*/
-
-    void enqueue(SliceChunk&& slice){
-        std::lock_guard<std::mutex> guard(lock);
-
-        if(sliceDeque.back().count == 0){
-            sliceDeque.back() = std::move(slice);
-            return;
-        }
-
-        sliceDeque.push_back(std::move(slice));
-    }
-
-    //void enqueue(Job&& job, int degree, JobCategory cat) override{}
-
-    T pushOrAppendRangeTask(Job&& job, int degree, JobCategory cat) {
-        if (!arena->isEmpty()) {
-            auto last = arena->lastPosition();
-            auto rangeTask = arena->tryGet(last);
-
-            if (rangeTask && !rangeTask->isFull()) {
-                return arena->constructTask(last, new Task(std::move(job), degree, cat));
+        
+    //出来たchunkのみpop
+    void popMany(size_t maxCount,std::vector<ChunkMeta>&out){
+        ASSERT(maxCount > 0,"Slice popMany() maxCount under zero");
+    
+        out.reserve((maxCount + chunkMaxSize - 1) / chunkMaxSize);
+    
+        size_t budget = maxCount;
+    
+        {
+            std::lock_guard<std::mutex> guard(lock);
+    
+            if (isEmpty()) {
+                return;
+            }
+    
+            //フルスライスを取り出す
+            while (chunks.size() > 1) {
+                auto& c = chunks.front();
+                if (c.size > budget) break;
+                out.push_back(c);
+                budget -= c.size;
+                chunks.pop_front();
             }
         }
-
-        // 新規RangeTask作成
-        size_t start = arena->reserve(1);
-        arena->constructAt(start);
-        arena->getRef(start).cat = cat;
-        auto result = arena->constructTask(start, new Task(std::move(job), degree, cat));
-        push(start, 1);
-        return result;
     }
 
-    //T pushOne(Job&& job,int degree,JobCategory cat) {
-    //    // (A) バッファを 1 要素分確保
-    //    size_t start = arena->reserve(1);
+    //最後の未完成のchunkも含めてpopする
+    void popManyToLast(size_t maxCount, std::vector<ChunkMeta>& out) {
+        ASSERT(maxCount > 0, "Slice popMany() maxCount under zero");
 
-    //    auto result = arena->constructTask(start, new Task(std::move(job), degree, cat));
-
-    //    push(start,1);
-
-    //    return result;
-    //}
-
-    T pushOne(T&&task) {
-        ASSERT(false,"pushOne not work");
-        // (A) バッファを 1 要素分確保
-        size_t start = arena->reserve(1);
-
-        auto result = arena->push(start,std::move(task));
-
-        push(start, 1);
-
-        return result;
-    }
-
-    SliceChunk popOne(){
-        std::lock_guard lk(lock);
-
-        if(empty()){
-            return {0,0};
-        }
-
-        return sliceDeque.pop_front();
-    }
-
-    void popMany(size_t maxCount,std::vector<SliceChunk>&out){
-        ASSERT(maxCount > 0,"Slice popMany() maxCount under zero");
-
-        out.reserve((maxCount + MaxSliceSize - 1) / MaxSliceSize);
+        out.reserve((maxCount + chunkMaxSize - 1) / chunkMaxSize);
 
         size_t budget = maxCount;
 
         {
             std::lock_guard<std::mutex> guard(lock);
 
-            if (empty()) {
+            if (isEmpty()) {
                 return;
             }
 
             //フルスライスを取り出す
-            while (sliceDeque.size() > 1) {
-                auto& c = sliceDeque.front();
-                if (c.count > budget) break;
+            while (!isEmpty()) {
+                auto& c = chunks.front();
+                if (c.size > budget) break;
                 out.push_back(c);
-                budget -= c.count;
-                sliceDeque.pop_front();
+                budget -= c.size;
+                chunks.pop_front();
             }
-
-            // フルスライスが１つも無ければ、バックを返す
-            if (out.empty() && !sliceDeque.empty() && sliceDeque.back().count <= budget) {
-                ASSERT(sliceDeque.back().count <= budget, "back() size over");
-
-                out.push_back(sliceDeque.back());
-                sliceDeque.pop_back();
-            }
-        }
-    }
-
-    bool empty(){
-        return sliceDeque.empty()||sliceDeque.front().count == 0;
-    }
-
-private:
-    void push(size_t start,size_t count){
-        std::lock_guard<std::mutex> guard(lock);
-
-        //次にsliceを作るときのstart
-        size_t offset = start;
-        size_t remaining = count;
-
-        while (remaining > 0) {
-            //新規スライスが必要か、または末尾スライスが既に満杯なら新規作成
-            if (sliceDeque.empty() || sliceDeque.back().count == MaxSliceSize) {
-                sliceDeque.push_back({ offset, 0, arena.get() });
-            }
-
-            auto& curr = sliceDeque.back();
-            size_t space = MaxSliceSize - curr.count;
-            size_t toAdd = std::min(space, remaining);
-
-            curr.count += toAdd;
-            offset += toAdd;
-            remaining -= toAdd;
         }
     }
 };
+
+//template<typename T, size_t MaxTasks,size_t MaxSliceSize>
+//class TaskStorage{
+//    using TaskArena = TaskArena;
+//
+//public:
+//    TaskStorage(){
+//        arena = std::make_unique<TaskArena>(MaxSliceSize,MaxTasks);
+//    }
+//
+//    /*void pushMany(std::vector<Job>& jobs) {
+//        auto count = jobs.size();
+//        size_t start = arena.reserveChunk(count);
+//
+//        for (size_t i = 0; i < count; ++i) {
+//            new (arena.ptr(start + i))
+//                T(std::move(jobs[i]));
+//        }
+//
+//        push(count);
+//    }*/
+//
+//    void enqueue(SliceChunk&& slice){
+//        std::lock_guard<std::mutex> guard(lock);
+//
+//        if(sliceDeque.back().count == 0){
+//            sliceDeque.back() = std::move(slice);
+//            return;
+//        }
+//
+//        sliceDeque.push_back(std::move(slice));
+//    }
+//
+//    //void enqueue(Job&& job, int degree, JobCategory cat) override{}
+//
+//    T pushOrAppendRangeTask(Job&& job,JobCategory cat) {
+//        if (!arena->isEmpty()) {
+//            auto last = arena->lastPosition();
+//            auto rangeTask = arena->tryGet(last);
+//
+//            if (rangeTask && !rangeTask->isFull()) {
+//                return arena->constructTask(last, new Task(std::move(job), degree, cat));
+//            }
+//        }
+//
+//        // 新規RangeTask作成
+//        size_t start = arena->reserve(1);
+//        arena->constructAt(start);
+//        arena->getRef(start).cat = cat;
+//        auto result = arena->constructTask(start, new Task(std::move(job), degree, cat));
+//        push(start, 1);
+//        return result;
+//    }
+//
+//    T pushJobHandle(JobHandle&& job, JobCategory cat, TaskCategory sizeCat = TaskCategory::Easy) {
+//        if (!arena->isEmpty()) {
+//            auto last = arena->lastPosition();
+//            auto task = arena->tryGet(last);
+//
+//            if (rangeTask && !rangeTask->isFull()) {
+//                return arena->constructTask(last, new Task(std::move(job), degree, cat));
+//            }
+//        }
+//
+//        // 新規RangeTask作成
+//        size_t start = arena->reserve(1);
+//        arena->constructAt(start);
+//        arena->getRef(start).cat = cat;
+//        auto result = arena->constructTask(start, new Task(std::move(job), degree, cat));
+//        push(start, 1);
+//        return result;
+//    }
+//
+//    //T pushOne(Job&& job,int degree,JobCategory cat) {
+//    //    // (A) バッファを 1 要素分確保
+//    //    size_t start = arena->reserve(1);
+//
+//    //    auto result = arena->constructTask(start, new Task(std::move(job), degree, cat));
+//
+//    //    push(start,1);
+//
+//    //    return result;
+//    //}
+//
+//    T pushOne(T&&task) {
+//        ASSERT(false,"pushOne not work");
+//        // (A) バッファを 1 要素分確保
+//        size_t start = arena->reserve(1);
+//
+//        auto result = arena->push(start,std::move(task));
+//
+//        push(start, 1);
+//
+//        return result;
+//    }
+//
+//    SliceChunk popOne(){
+//        std::lock_guard lk(lock);
+//
+//        if(empty()){
+//            return {0,0};
+//        }
+//
+//        return sliceDeque.pop_front();
+//    }
+//
+//    void popMany(size_t maxCount,std::vector<SliceChunk>&out){
+//        ASSERT(maxCount > 0,"Slice popMany() maxCount under zero");
+//
+//        out.reserve((maxCount + MaxSliceSize - 1) / MaxSliceSize);
+//
+//        size_t budget = maxCount;
+//
+//        {
+//            std::lock_guard<std::mutex> guard(lock);
+//
+//            if (empty()) {
+//                return;
+//            }
+//
+//            //フルスライスを取り出す
+//            while (sliceDeque.size() > 1) {
+//                auto& c = sliceDeque.front();
+//                if (c.count > budget) break;
+//                out.push_back(c);
+//                budget -= c.count;
+//                sliceDeque.pop_front();
+//            }
+//
+//            // フルスライスが１つも無ければ、バックを返す
+//            if (out.empty() && !sliceDeque.empty() && sliceDeque.back().count <= budget) {
+//                ASSERT(sliceDeque.back().count <= budget, "back() size over");
+//
+//                out.push_back(sliceDeque.back());
+//                sliceDeque.pop_back();
+//            }
+//        }
+//    }
+//
+//    bool empty(){
+//        return sliceDeque.empty()||sliceDeque.front().count == 0;
+//    }
+//
+//private:
+//    void push(size_t start,size_t count){
+//        std::lock_guard<std::mutex> guard(lock);
+//
+//        //次にsliceを作るときのstart
+//        size_t offset = start;
+//        size_t remaining = count;
+//
+//        while (remaining > 0) {
+//            //新規スライスが必要か、または末尾スライスが既に満杯なら新規作成
+//            if (sliceDeque.empty() || sliceDeque.back().count == MaxSliceSize) {
+//                sliceDeque.push_back({ offset, 0, arena.get() });
+//            }
+//
+//            auto& curr = sliceDeque.back();
+//            size_t space = MaxSliceSize - curr.count;
+//            size_t toAdd = std::min(space, remaining);
+//
+//            curr.count += toAdd;
+//            offset += toAdd;
+//            remaining -= toAdd;
+//        }
+//    }
+//
+//private:
+//    //全タスクを連続配置で保持
+//    std::unique_ptr<TaskArena> arena;
+//
+//    // チャンク記録用の軽量キュー
+//    std::deque<SliceChunk> sliceDeque;
+//    std::mutex lock;
+//};
 }
