@@ -215,9 +215,46 @@ namespace ECS::JobSystem{
       running	ワーカーが取得し、現在実行中のジョブ数   popOrSteal() 成功直後 ～ 完了まで
       completed	実行が終わり、後片付けや結果格納も含めて完了したジョブ数	runChunk / runJob() 実行後*/
     /// </summary>
-    struct JobStats {
+    class JobStats {
+        friend class JobManager;
 
-        size_t pendingJobCount(const JobCategory cat) const noexcept{
+        void onScheduled(const JobCategory cat, size_t count) noexcept{
+            scheduled[size_t(cat)].fetch_add(count, std::memory_order_release);
+        }
+
+        // pending の増減
+        //void onEnqueued(const JobCategory cat, size_t count) noexcept {
+        //    pending_[size_t(cat)].fetch_add(count, std::memory_order_release);
+        //}
+
+        //void onDequeued(const JobCategory cat, size_t count) noexcept {
+        //    size_t c = pending_[size_t(cat)].fetch_sub(count, std::memory_order_release);
+
+        //    if (c < count) {
+        //        std::printf("pending count %zu, sub count is %zu\n", c, count);
+        //    }
+        //}
+
+        //// running の増減
+        //void onStart(const JobCategory cat, size_t count) noexcept {
+        //    running_[size_t(cat)].fetch_add(count, std::memory_order_release);
+        //}
+
+        void onJobFinish(const JobCategory cat, size_t count) noexcept;
+
+    public:
+        // フレーム終端で指定カテゴリがすべて完了するまで待つ
+        void waitForAll(const JobCategory cat);
+
+        void onNotifyWaitAll() noexcept{
+            cv_.notify_all();
+        }
+
+        size_t scheduledJobCount(const JobCategory cat) const noexcept{
+            return scheduled[size_t(cat)].load(std::memory_order_acquire);
+        }
+
+       /* size_t pendingJobCount(const JobCategory cat) const noexcept{
             return pending_[size_t(cat)].load(std::memory_order_acquire);
         }
 
@@ -231,57 +268,14 @@ namespace ECS::JobSystem{
 
         size_t notCompletedJobCount(const JobCategory cat)const noexcept{
             return pending_[size_t(cat)].load(std::memory_order_acquire) + running_[size_t(cat)].load(std::memory_order_acquire);
-        }
+        }*/
 
-        // pending の増減
-        void onEnqueued(const JobCategory cat,size_t count) noexcept {
-            pending_[size_t(cat)].fetch_add(count, std::memory_order_release);
-        }
-
-        void onDequeued(const JobCategory cat,size_t count) noexcept {
-            size_t c = pending_[size_t(cat)].fetch_sub(count, std::memory_order_release);
-        
-            if(c < count){
-                std::printf("pending count %zu, sub count is %zu\n",c,count);
-            }
-        }
-
-        // running の増減
-        void onStart(const JobCategory cat,size_t count) noexcept {
-            running_[size_t(cat)].fetch_add(count, std::memory_order_release);
-        }
-
-        void onFinish(const JobCategory cat,size_t count) noexcept {
-            running_[size_t(cat)].fetch_sub(count, std::memory_order_release);
-            completed_[size_t(cat)].fetch_add(count, std::memory_order_release);
-
-            // pending + running が 0 なら全完了を通知
-            if (pending_[size_t(cat)].load(std::memory_order_acquire) == 0 &&
-                running_[size_t(cat)].load(std::memory_order_acquire) == 0)
-            {
-                std::lock_guard<std::mutex> lk(mtx_);
-                cv_.notify_all();
-            }
-        }
-
-        // フレーム終端で指定カテゴリがすべて完了するまで待つ
-        void waitForAll(const JobCategory cat) {
-            std::unique_lock<std::mutex> lk(mtx_);
-            cv_.wait(lk, [&] {
-                return pending_[size_t(cat)].load(std::memory_order_acquire) == 0
-                    && running_[size_t(cat)].load(std::memory_order_acquire) == 0;
-                });
-        }
-
-        void resetCompleted() noexcept {
-            for (auto& f : completed_)    f.store(0);
-        }
-
-        private:
+    private:
         // 各状態のカテゴリ別カウンタ
-        std::array<std::atomic<size_t>, NumCategories> pending_{};
+        std::array<std::atomic<size_t>, NumCategories> scheduled{};
+        /*std::array<std::atomic<size_t>, NumCategories> pending_{};
         std::array<std::atomic<size_t>, NumCategories> running_{};
-        std::array<std::atomic<size_t>, NumCategories> completed_{};
+        std::array<std::atomic<size_t>, NumCategories> completed_{};*/
 
         // フレーム同期用
         std::mutex             mtx_;
@@ -298,7 +292,7 @@ class JobManager
     static constexpr size_t bufferCap = 20'000;
 
     //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
-    using JobQueue = JobDeque<SliceChunk>;
+    using JobQueue = JobDeque<ChunkMeta>;
 
     using StealResult = JobQueue::StealResult;
 
@@ -306,7 +300,7 @@ class JobManager
 
     using PushResult = JobQueue::PushResult;
 
-    using RealTimeOnlyWorker = Worker<JobQueue,RealTimePolicy,JobExecutor>;
+    using RealTimeOnlyWorker = Worker<JobQueue,RealTimePolicy>;
 
     static constexpr size_t NULL_RESULT = std::numeric_limits<size_t>::max();
 
@@ -328,10 +322,30 @@ class JobManager
     JobManager(const JobManager&) = delete;
     JobManager& operator=(const JobManager&) = delete;
 
+    struct Executor {
+        void runJob(size_t workerId, JobHandle* handle);
+
+        void runSlot(TaskArena* owner, size_t workerId, size_t offset, size_t localIndex);
+
+        void runChunk(size_t workerId, ChunkMeta&& chunk);
+
+    private:
+        void processDependents(IJobBase* parentJob);
+    };
+
 public:
     static JobManager& Instance() {
         static JobManager manager;
         return manager;
+    }
+
+    Executor& executor() {
+        static Executor exec;
+        return exec;
+    }
+
+    JobStats& getStats(){
+        return stats_;
     }
 
     void Initialize(size_t threadCount,
@@ -485,13 +499,8 @@ public:
     }
 
     template<typename T>
-    void setKeep(const TaskFuture<T>& future,bool keep){
-        getResultStorage<typename T::Return_t>().setKeep(future.handle.resultIndex, keep);
-    }
-
-    template<typename T>
     bool doneJob(const TaskFuture<T>& future)const{
-        return getResultStorage<typename T::Return_t>().done.load(future.handle.resultIndex);
+        return getResultStorage<typename T::Return_t>().done(future.handle.resultIndex);
     }
 
     template<typename T>
@@ -502,11 +511,12 @@ public:
     }
 
     template<typename T,typename... Args>
-    JobHandle createJob(Args&&... args){
+    JobHandle createJob(TaskCategory taskCategory,JobCategory jobCategory,Args&&... args){
         using Ret = typename T::Return_t;
 
+        //いずれ、自動でtaskCategoryを算出できるようにする
         auto idx = jobStorage.emplace<T>(std::forward<Args>(args)...);
-        JobHandle h{ idx, ecs_map::type_hash<Ret>(), NULL_RESULT };
+        JobHandle h{ idx, ecs_map::type_hash<Ret>(), NULL_RESULT,taskCategory,jobCategory };
 
         return h;
     }
@@ -523,7 +533,7 @@ public:
         //すでにスケジュール済み
         ASSERT(job->ready.load(std::memory_order_acquire)!= true,"this job schedule yet.");
 
-        size_t next = getNextQueueIndex();
+        stats_.onScheduled(handle.jobCategory,1);
 
         //結果スロットをバインド
         auto& storage = getResultStorage<typename T::Return_t>();
@@ -532,19 +542,10 @@ public:
         job->ready.store(true, std::memory_order_release);
 
         if(job->inDegree.load(std::memory_order_acquire) == 0){
-            // 依存がないなら即スケジュール
-            workers[next]->enqueue(JobCategory::RealTime, handle);
+            enqueue(handle);
         }
 
         return TaskFuture<T>(handle);
-    }
-
-    //依存ジョブ登録用のhandle
-    void scheduleDependentHandle(JobHandle handle) {
-        size_t next = getNextQueueIndex();
-
-        //schedule
-        workers[next]->enqueue(JobCategory::RealTime, handle);
     }
 
     template<typename T>
@@ -559,7 +560,7 @@ public:
 
         std::lock_guard<std::mutex> lk(parent->dependentLock);
         if (!parent.isDone()) { // まだ実行されていない
-            // child を親の nextDependent リストに差し込む
+            // childを親のnextDependentに差し込む
             child->nextDependent = parent->nextDependent;
             parent->nextDependent = childHandle;
 
@@ -567,6 +568,8 @@ public:
             child->inDegree.fetch_add(1);
         }
     }
+
+    
 
     template<typename JobT>
     void addCommand(const JobHandle&handle, std::unique_ptr<ICommand<JobT>>&&cmd){
@@ -606,25 +609,11 @@ public:
     std::chrono::steady_clock::time_point getStartFrameTime() const;
 
 public:
-    size_t getPendingJobCount(const JobCategory cat) const noexcept {
-        return stats_.pendingJobCount(cat);
-    }
-
-    size_t getRunningJobCount(const JobCategory cat) const noexcept {
-        return stats_.runningJobCount(cat);
-    }
-
-    size_t getCompletedJobCount(const JobCategory cat) const noexcept {
-        return stats_.completedJobCount(cat);
-    }
-    //リアルタイムジョブの待機
-    void waitForAllRealTime() {
-        stats_.waitForAll(JobCategory::RealTime);
-    }
-
-    // 任意カテゴリに対しても待機できるよう汎用版を用意
-    void waitForAll(JobCategory cat) {
-        stats_.waitForAll(cat);
+    void allFlushJob(const JobCategory category) {
+        //全フラッシュ
+        for (int i = 0; i < workers.size(); i++) {
+            workers[i]->flush(category);
+        }
     }
 
     bool isAbort() {
@@ -671,6 +660,15 @@ public:
     }
 
 private:
+    void enqueue(JobHandle handle){
+        size_t next = getNextQueueIndex();
+
+        workers[next]->enqueue(handle);
+        
+        //waitForAllで待機しているスレッドを呼び出し
+        stats_.onNotifyWaitAll();
+    }
+
     bool allQueuesEmpty() const;
 
     void addDependent(Task* parent, Task* child) {

@@ -4,6 +4,71 @@
 
 namespace ECS::JobSystem{
 
+void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* handle) {
+    ASSERT(handle, "task is invoked in JobQueue!!");
+
+    JobManager& jm = JobManager::Instance();
+    auto* job = jm.getJob(handle->jobIndex);
+
+    job->executeAny(*handle);
+
+    //依存ジョブがある場合
+    if (job->nextDependent != std::nullopt) {
+        //依存カウンタをリンク順にたどって減算していく。
+        processDependents(job);
+    }
+
+    jm.stats_.onJobFinish(handle->jobCategory,1);
+}
+
+void ECS::JobSystem::JobManager::Executor::runSlot(TaskArena* owner, size_t workerId, size_t offset, size_t localIndex)
+{
+    auto* begin = owner->getJobsBeginInSlot(offset, localIndex);
+    auto* end = owner->getJobsEndInSlot(offset, localIndex);
+
+    if (begin == end) return;
+
+    JobManager& jm = JobManager::Instance();
+    for (auto* it = begin; it != end; ++it) {
+        auto* job = jm.getJob(it->jobIndex);
+
+        job->executeAny(*it);
+
+        //依存ジョブがある場合
+        if(job->nextDependent!=std::nullopt){
+            //依存カウンタをリンク順にたどって減算していく。
+            processDependents(job);
+        }
+    }
+
+    jm.stats_.onJobFinish(begin->jobCategory,owner->getSizeInSlot(offset,localIndex));
+}
+
+void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
+{
+    for (size_t i = 0; i < chunk.size; i++) {
+        runSlot(chunk.owner, workerId, chunk.offset, i);
+    }
+}
+
+void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parentJob)
+{
+    auto& jm = JobManager::Instance();
+    for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
+        child != std::nullopt;
+        child = std::exchange(parentJob->nextDependent, std::nullopt))
+    {
+        IJobBase* childJob = jm.getJob(child->jobIndex);
+
+        if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            //スケジュール済み
+            if (childJob->ready.load(std::memory_order_acquire)) {
+                jm.enqueue(*child);
+            }
+        }
+    }
+}
+
 void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
 {
     ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
@@ -13,7 +78,6 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     stopFlag = false;
     nextQueue = 0;
     threadSize = threadCount;
-
     
     //初期化
     /*for (size_t i = 0; i < threadCount; ++i) {
@@ -25,8 +89,8 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     localQueues.reserve(threadCount);
     workers.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
-        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueSlotCap,RealTimeOnlyWorker::localQueueMaxTask, i));
-        workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(), stats_,barrier));
+        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueMaxChunk, i));
+        workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(),barrier));
     }
 }
 
@@ -156,6 +220,37 @@ size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double
     if (remaining_ms <= safetyMarginMs||remaining_ms <= avgJobTime) return 0.0; // 十分な残り時間がない場合終了
 
     return static_cast<size_t>(std::min(std::floor(remaining_ms / avgJobTime), static_cast<double>(globalBackGroudQueue.size())));
+}
+
+void JobStats::onJobFinish(const JobCategory cat, size_t count) noexcept
+{
+    bool shouldNotify = false;
+    {
+        auto& counter = scheduled[size_t(cat)];
+        if (counter.fetch_sub(count, std::memory_order_acq_rel) == count) {
+            // 0 になった瞬間
+            shouldNotify = true;
+        }
+    }
+    if (shouldNotify) {
+        cv_.notify_all();
+    }
+}
+
+void JobStats::waitForAll(const JobCategory cat)
+{
+    std::unique_lock<std::mutex> lk(mtx_);
+    auto& jm = JobManager::Instance();
+
+    while (true) {
+        //現在enqueueされているジョブをすべてflushさせる
+        jm.allFlushJob(cat);
+        if (scheduledJobCount(cat) == 0) {
+            break;
+        }
+        //再度enqueuされた場合、notifyAllが呼ばれる
+        cv_.wait(lk);
+    }
 }
 
 }//namespace ECS::JobSystem

@@ -1,5 +1,6 @@
 #pragma once
 #include "taskPtr.hpp"
+#include <deque>
 
 namespace ECS::JobSystem{
 
@@ -212,43 +213,29 @@ struct RangeTask{
     size_t count(){return tasks.size();}
 };
 
-
-
-enum TaskCategory : uint8_t {
-    Easy,
-    Normal,
-    Heavy,
-    Num
-};
-
-constexpr std::array<size_t, TaskCategory::Num> WorkloadMap = {
-    1,   // Easy
-    8,  // Normal
-    16   // Heavy
-};
-
-inline size_t getWorkload(TaskCategory cat) {
-    return WorkloadMap[static_cast<size_t>(cat)];
-}
+class TaskArena;
 
 struct ChunkMeta {
     size_t offset;   // data[offset .. offset + capacity)
     size_t size;     // 現在の有効要素数
     size_t capacity; // 予約済み容量
+    TaskArena* owner;
 
     bool isFull() {
         return size >= capacity;
     }
 
-
+    bool isEmpty(){
+        return size == 0;
+    }
 };
 
-struct Slice {
-    size_t start = 0;
-    size_t size = 0;
-    TaskArena* owner = nullptr;
-    uint8_t currentWorkload = 0;
-};
+//struct Slice {
+//    size_t start = 0;
+//    size_t size = 0;
+//    TaskArena* owner = nullptr;
+//    uint8_t currentWorkload = 0;
+//};
 
 struct Slot {
     size_t offset;              // data 内の開始位置
@@ -257,80 +244,106 @@ struct Slot {
 };
 
 //大規模バッファ
-template<size_t maxTasks, size_t chunkSize>
 class TaskArena {
     std::vector<JobHandle> data;
     std::vector<Slot>slots;
     std::deque<ChunkMeta> chunks;
 
+    std::unordered_map<TaskCategory,std::vector<JobHandle>>currentSlots;
+    ChunkMeta currentChunk;
+
     std::mutex lock;
 
-    static constexpr size_t chunkMaxSize = chunkSize;
+    size_t chunkMaxSize;
+
+    const uint8_t maxWorkloadOfOneSlot;
 
 public:
-    TaskArena(){
-        data.resize(maxTasks);
+    TaskArena(uint8_t maxSlotWorkCap,size_t maxTasks, size_t chunkSize) : maxWorkloadOfOneSlot(maxSlotWorkCap),chunkMaxSize(chunkSize){
+        data.reserve(maxTasks);
+
+        for (int i = 0; i < static_cast<int>(TaskCategory::Num); i++) {
+            auto cat = static_cast<TaskCategory>(i);
+            currentSlots[cat] = {};
+            currentSlots[cat].reserve(maxWorkloadOfOneSlot / getWorkload(cat));
+        }
+
+        chunkInitialize(currentChunk);
+
+        /*currentSlots[TaskCategory::Easy] = std::vector<JobHandle>();
+        currentSlots[TaskCategory::Easy].reserve(maxWorkloadOfOneSlot/getWorkload(TaskCategory::Easy));
+
+        currentSlots[TaskCategory::Normal] = std::vector<JobHandle>();
+        currentSlots[TaskCategory::Normal].reserve(maxWorkloadOfOneSlot / getWorkload(TaskCategory::Normal));*/
     }
 
-    TaskCategory getTaskCategory(size_t chunkId, size_t slotIndex) {
-        const auto& c = chunks[chunkId];
-        return slots[c.offset + slotIndex].category;
+    TaskCategory getTaskCategory(size_t offset,size_t slotIndex) {
+        return slots[offset + slotIndex].category;
     }
 
-    size_t slotSize(size_t chunkId, size_t slotIndex) {
-        const auto& c = chunks[chunkId];
-        return slots[c.offset + slotIndex].size;
+    auto* getJobsBeginInSlot(size_t chunkOffset, size_t slotIndex) {
+        Slot& s = slots[chunkOffset + slotIndex];
+        return data.data() + s.offset;
     }
 
-    JobHandle& at(size_t chunkId, size_t slotIndex,size_t localIndex) {
-        const auto& c = chunks[chunkId];
-        return data[slots[c.offset + slotIndex].offset + localIndex];
+    auto* getJobsEndInSlot(size_t chunkOffset, size_t slotIndex) {
+        Slot& s = slots[chunkOffset + slotIndex];
+        return data.data() + s.offset + s.size;
     }
 
-    void pushJob(TaskCategory cat, JobHandle&& job) {
-        size_t needed = getWorkload(cat);
-        ASSERT(needed == 1,"Job count not same SlotSize");
+    size_t getSizeInSlot(size_t chunkOffset, size_t slotIndex) {
+        Slot& s = slots[chunkOffset + slotIndex];
+        return s.size;
+    }
 
-        // 新しい Slot を作成
-        size_t offset = data.size();
-        data.push_back(std::move(job));
+    JobHandle& at(size_t offset,size_t slotIndex, size_t localIndex) {
+        return data[slots[offset + slotIndex].offset + localIndex];
+    }
 
-        slots.push_back({ offset, needed, cat });
-
-        {
-            std::lock_guard<std::mutex> guard(lock);
-
-            // Chunk が空 or 満杯なら新しい Chunk を作る
-            if (chunks.empty() || chunks.back().isFull()) {
-                chunks.push_back({ slots.size() - 1, 0, chunkMaxSize });
+    void flushIncomplete(){
+        std::lock_guard<std::mutex> guard(lock);
+        //現在の未完成スロットすべて積む
+        for(auto&[cat,slot] : currentSlots){
+            if(!slot.empty()){
+                pushJobs(cat,std::move(slot));
+                slot = {};
+                slot.reserve(maxWorkloadOfOneSlot/getWorkload(cat));
             }
+        }
 
-            chunks.back().size++;
+        //未完成のchunkも空でなければ積む
+        if(!currentChunk.isEmpty()){
+            chunks.push_back(std::move(currentChunk));
+            chunkInitialize(currentChunk);
         }
     }
 
-    void pushJobs(TaskCategory cat, std::vector<JobHandle>&& jobs) {
-        size_t needed = getWorkload(cat);
-        ASSERT(jobs.size() == needed,"Job count not same SlotSize");
+    void enqueue(TaskCategory cat,JobHandle handle){
 
-        // 新しい Slot を作成
-        size_t offset = data.size();
-        data.insert(data.end(),
-            std::make_move_iterator(jobs.begin()),
-            std::make_move_iterator(jobs.end()));
+        uint8_t workload = getWorkload(cat);
 
-        slots.push_back({ offset, needed, cat });
-
-        {
-            std::lock_guard<std::mutex> guard(lock);
-
-            // Chunk が空 or 満杯なら新しい Chunk を作る
-            if (chunks.empty() || chunks.back().isFull()) {
-                chunks.push_back({ slots.size() - 1, 0, chunkMaxSize });
-            }
-
-            chunks.back().size++;
+        std::lock_guard<std::mutex> guard(lock);
+        if(workload >= maxWorkloadOfOneSlot){
+            pushJob(cat,std::move(handle));
+            return;
         }
+
+        currentSlots[cat].push_back(std::move(handle));
+
+        //一つslotが最大値に達したら
+        if(isFullSlot(cat)){
+            pushJobs(cat, std::move(currentSlots[cat]));
+           
+            currentSlots[cat] = {};
+            currentSlots[cat].reserve(maxWorkloadOfOneSlot/workload);
+            return;
+        }
+    }
+
+    void enqueue(ChunkMeta&& chunk) {
+        std::lock_guard<std::mutex> guard(lock);
+
+        chunks.push_back(std::move(chunk));
     }
 
     //chunkが一つもない
@@ -347,20 +360,20 @@ public:
     bool popOne(ChunkMeta&meta) {
         std::lock_guard lk(lock);
         
-        if(isEmpty() || !chunks.front().isFull()){
+        if(isEmpty()){
             return false;
         }
         
-        meta = chunks.front();
+        meta = std::move(chunks.front());
         chunks.pop_front();
         return true;
     }
-        
-    //出来たchunkのみpop
+
+    //chunkをpop
     void popMany(size_t maxCount,std::vector<ChunkMeta>&out){
         ASSERT(maxCount > 0,"Slice popMany() maxCount under zero");
     
-        out.reserve((maxCount + chunkMaxSize - 1) / chunkMaxSize);
+        out.reserve(std::min(maxCount, chunks.size()));
     
         size_t budget = maxCount;
     
@@ -371,41 +384,58 @@ public:
                 return;
             }
     
-            //フルスライスを取り出す
-            while (chunks.size() > 1) {
-                auto& c = chunks.front();
-                if (c.size > budget) break;
-                out.push_back(c);
-                budget -= c.size;
+            while (!isEmpty() && budget > 0) {
+                out.push_back(std::move(chunks.front()));
+                budget --;
                 chunks.pop_front();
             }
         }
     }
 
-    //最後の未完成のchunkも含めてpopする
-    void popManyToLast(size_t maxCount, std::vector<ChunkMeta>& out) {
-        ASSERT(maxCount > 0, "Slice popMany() maxCount under zero");
+private:
+    bool isFullSlot(TaskCategory cat){
+        uint8_t workload = getWorkload(cat);
+        return (workload * static_cast<uint8_t>(currentSlots[cat].size())) >= maxWorkloadOfOneSlot;
+    }
 
-        out.reserve((maxCount + chunkMaxSize - 1) / chunkMaxSize);
+    void pushJob(TaskCategory cat, JobHandle&& job) {
+        size_t offset = data.size();
+        data.push_back(std::move(job));
 
-        size_t budget = maxCount;
+        slots.push_back({ offset, 1, cat });
 
-        {
-            std::lock_guard<std::mutex> guard(lock);
+        currentChunk.size++;
 
-            if (isEmpty()) {
-                return;
-            }
-
-            //フルスライスを取り出す
-            while (!isEmpty()) {
-                auto& c = chunks.front();
-                if (c.size > budget) break;
-                out.push_back(c);
-                budget -= c.size;
-                chunks.pop_front();
-            }
+        //満杯なら現在のchunkを積む
+        if (currentChunk.isFull()) {
+            chunks.push_back(std::move(currentChunk));
+            chunkInitialize(currentChunk);
         }
+    }
+
+    void pushJobs(TaskCategory cat, std::vector<JobHandle>&& jobs) {
+
+        size_t size = jobs.size();
+
+        // 新しい Slot を作成
+        size_t offset = data.size();
+        data.insert(data.end(),
+            std::make_move_iterator(jobs.begin()),
+            std::make_move_iterator(jobs.end()));
+
+        slots.push_back({ offset, size, cat });
+
+        currentChunk.size++;
+
+        //満杯ならchunkを積む
+        if (currentChunk.isFull()) {
+            chunks.push_back(std::move(currentChunk));
+            chunkInitialize(currentChunk);
+        }
+    }
+
+    void chunkInitialize(ChunkMeta& chunk){
+        chunk = {slots.size(), 0, chunkMaxSize,this };
     }
 };
 

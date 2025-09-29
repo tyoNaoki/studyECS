@@ -157,6 +157,7 @@
   <ItemGroup>
     <ClCompile Include="EntityPool.cpp" />
     <ClCompile Include="JobManager.cpp" />
+    <ClCompile Include="JobWorker.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="Scene.cpp" />
     <ClCompile Include="SceneView.cpp" />
