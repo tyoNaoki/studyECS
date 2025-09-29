@@ -6,12 +6,31 @@
 #include <cstddef>   // std::nullptr_t
 #include <variant>
 #include <memory>
+#include <array>
 #include "intrusive_ptr.h"
 #include "TestFramework.hpp"
 #include "HashFunctions.hpp"
 #include "CallbackList.hpp"
 
 namespace ECS::JobSystem{
+
+
+    enum class TaskCategory : uint8_t {
+        Easy = 0,
+        Normal = 1,
+        Heavy = 2,
+        Num = 3
+    };
+
+    constexpr std::array<uint8_t, static_cast<size_t>(TaskCategory::Num)> WorkloadMap = {
+        1,   // Easy
+        8,  // Normal
+        16   // Heavy
+    };
+
+    inline uint8_t getWorkload(TaskCategory cat) {
+        return WorkloadMap[static_cast<size_t>(cat)];
+    }
 
 enum class JobCategory { RealTime, BackGround, Num };
 
@@ -535,6 +554,8 @@ struct JobHandle {
     size_t jobIndex;
     ecs_map::id_type typeId; // Œ^‚²‚Æ‚ÉˆêˆÓ‚ÈID
     size_t resultIndex;
+    TaskCategory taskCategory;
+    JobCategory jobCategory;
 };
 
 struct IJobBase {

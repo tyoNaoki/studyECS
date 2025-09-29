@@ -146,7 +146,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// 3) 20 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
-		auto job = jm.createJob<TestJob>();
+		auto job = jm.createJob<TestJob>(ECS::JobSystem::TaskCategory::Easy, ECS::JobSystem::JobCategory::RealTime);
 		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
 			t.connecter.value = check;
 			}));*/
@@ -160,15 +160,15 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	std::printf("RealTimeJob Start is %zu\n",jm.getRunningJobCount(ECS::JobSystem::JobCategory::RealTime));
+	std::printf("RealTimeJob Start is %zu\n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 	jm.start();
 
-	jm.waitForAllRealTime();
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	//jm.waitForAllRealTime();
 	auto globalEnd = ECS::JobSystem::now();
 
-	std::printf("realTime job %zu finished!! \n",jm.getCompletedJobCount(ECS::JobSystem::JobCategory::RealTime));
+	std::printf("realTime job %zu finished!! \n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 	//jm.popGlobalBackGroundQueue();
 
 	// 4) すべてのジョブ完了を待機
@@ -235,7 +235,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	}
 
 	// 4) すべてのジョブ完了を待機
-	js.waitForAllRealTime();
+	js.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
