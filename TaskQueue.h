@@ -4,8 +4,6 @@
 
 namespace ECS::JobSystem{
 
-class ITaskQueue {};
-
 // ディスクリプタ：バッファ上の [start, start+count) を表す
 
 

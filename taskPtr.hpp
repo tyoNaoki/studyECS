@@ -491,61 +491,6 @@ private:
 //    }
 //};
 
-template<typename T>
-struct ICommand {
-    virtual ~ICommand() = default;
-    virtual void apply(T& obj) = 0;
-};
-
-template<>
-struct ICommand<void> {};
-
-//template<typename Struct, std::size_t I>
-//struct AssignFieldCmd : ICommand<Struct> {
-//    using FieldT = std::tuple_element_t<I, Struct>;
-//    FieldT value_;
-//
-//    AssignFieldCmd(FieldT v) : value_(std::move(v)) {}
-//
-//    void apply(Struct& s) override {
-//        boost::pfr::get<I>(s) = value_;
-//    }
-//};
-
-template<typename T>
-struct FuncCmd : ICommand<T> {
-    std::function<void(T&)> fn_;
-
-    FuncCmd(std::function<void(T&)>&& f) : fn_(std::move(f)) {}
-
-    void apply(T& obj) override {
-        fn_(obj);
-    }
-};
-
-// コマンドバッファ：ICommand<T> を蓄積して flush 時にすべて apply
-template<typename T>
-class CommandBuffer {
-    std::vector<std::unique_ptr<ICommand<T>>> cmds_;
-
-    using ICommandPtr = std::unique_ptr<ICommand<T>>;
-public:
-    void push(ICommandPtr&& c) {
-        cmds_.push_back(std::move(c));
-    }
-
-    void flush(T& obj) {
-        for (auto& cmd : cmds_) {
-            cmd->apply(obj);
-        }
-        cmds_.clear();
-    }
-
-    bool isEmpty(){
-        return cmds_.empty();
-    }
-};
-
 struct DummyBuffer {};
 
 class JobManager;
@@ -669,8 +614,8 @@ public:
         }
     }
 
-    void AddRequeset(ICommandPtr&& command) {
-        commands.push(std::move(command));
+    void AddRequeset(std::function<void(Derived&)>&& fn) {
+        commands.emplace_back(std::move(fn));
     }
 
 protected:
@@ -682,15 +627,20 @@ protected:
 
 private:
     void applyCommands() {
-        if(commands.isEmpty()) return;
 
-        commands.flush(static_cast<Derived&>(*this));
+        if(commands.empty()) return;
+
+        for (auto& fn : commands) {
+            fn(*this); // 直接呼び出し
+        }
+        commands.clear();
     }
 
 private:
     //std::atomic<size_t> nextBatch_{ 0 };
 
-    CommandBuffer<Derived> commands;
+    // コマンドバッファ
+    std::vector<std::function<void(Derived&)>> commands;
 };
 
 //parallelJobの基底クラス

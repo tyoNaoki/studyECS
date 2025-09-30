@@ -282,6 +282,7 @@ namespace ECS::JobSystem{
         std::condition_variable cv_;
     };
 
+
 class JobManager
 {
     /*template<typename T>
@@ -355,6 +356,19 @@ public:
 
     void start(){
         barrier.start();
+    }
+
+    template<typename... Args>
+    void log(const Args&... args) {
+        (localLogBuffer << ... << args) << "\n";
+    }
+
+    // フレーム終端や waitForAll で呼ぶ
+    void flushLogs() {
+        std::lock_guard<std::mutex> lk(logMutex_);
+        std::cout << localLogBuffer.str();
+        localLogBuffer.str("");
+        localLogBuffer.clear();
     }
 
     //通常Job追加
@@ -569,10 +583,8 @@ public:
         }
     }
 
-    
-
     template<typename JobT>
-    void addCommand(const JobHandle&handle, std::unique_ptr<ICommand<JobT>>&&cmd){
+    void addCommand(const JobHandle&handle, std::function<void(JobT&)>cmd){
         auto* job = static_cast<JobT*>(getJob(handle));
         job->AddRequeset(std::move(cmd));
     }
@@ -696,6 +708,9 @@ private:
     size_t threadSize;
     bool initFlag;
 
+    std::mutex logMutex_;
+    inline static thread_local std::ostringstream localLogBuffer;
+
     std::vector<TaskPtr>globalBackGroudQueue;
     std::mutex backGroundMutex;
 
@@ -745,10 +760,6 @@ struct TaskFuture {
     using ICommandPtr = std::unique_ptr<ICommand<Derived_t>>;
 
     explicit TaskFuture(JobHandle& h) : handle(h) {}
-
-    void keepResult(bool keep) noexcept {
-        JobManager::Instance().template setKeep(*this, keep);
-    }
 
     /// <summary>
     /// job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<JobClass>>([&capture](JobClass& t) {
