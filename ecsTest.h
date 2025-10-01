@@ -142,8 +142,11 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	//int check = 5625;
 	int check = 90'000;
+	jm.start();
 
-	// 3) 20 個のジョブをスケジュール
+	auto globalStart = ECS::JobSystem::now();
+
+	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
 		auto job = jm.createJob<TestJob>(ECS::JobSystem::TaskCategory::Easy, ECS::JobSystem::JobCategory::RealTime);
@@ -158,10 +161,8 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
-	auto globalStart = ECS::JobSystem::now();
 
-	std::printf("RealTimeJob Start is %zu\n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
-	jm.start();
+	//std::printf("RealTimeJob Start is %zu\n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
@@ -289,17 +290,17 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 
-	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([&resultSize](TestConnector& t) {
+	auto handle = parallelJob->schedule(resultSize, batchSize, 8);
+
+	/*parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([&resultSize](TestConnector& t) {
 		TestConnector c;
 		c.resultData.resize(resultSize);
 		t = c;
 		}));
 
-	auto handle = parallelJob->schedule(resultSize,batchSize,8);
-
 	parallelJob->AddRequeset(std::make_unique<ECS::JobSystem::FuncCmd<TestConnector>>([](TestConnector& t) {
 		t.resultData[0] = 12; 
-		}));
+		}));*/
 
 	auto result = handle.second.wait_and_get();
 

@@ -29,7 +29,8 @@ void ECS::JobSystem::JobManager::Executor::runSlot(TaskArena* owner, size_t work
     if (begin == end) return;
 
     JobManager& jm = JobManager::Instance();
-    for (auto* it = begin; it != end; ++it) {
+
+    for (auto* it = begin; it != end; ++it) { 
         auto* job = jm.getJob(it->jobIndex);
 
         job->executeAny(*it);
@@ -54,6 +55,7 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
 void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parentJob)
 {
     auto& jm = JobManager::Instance();
+
     for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
         child != std::nullopt;
         child = std::exchange(parentJob->nextDependent, std::nullopt))
@@ -243,12 +245,10 @@ void JobStats::waitForAll(const JobCategory cat)
     auto& jm = JobManager::Instance();
 
     while (true) {
-        //現在enqueueされているジョブをすべてflushさせる
-        jm.allFlushJob(cat);
         if (scheduledJobCount(cat) == 0) {
             break;
         }
-        //再度enqueuされた場合、notifyAllが呼ばれる
+
         cv_.wait(lk);
     }
 }

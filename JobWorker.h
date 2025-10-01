@@ -6,6 +6,23 @@
 
 namespace ECS::JobSystem{
 
+    struct Logger {
+        inline static thread_local std::ostringstream localLogBuffer;
+        inline static std::mutex outMutex;
+
+        template<typename... Args>
+        static void log(const Args&... args) {
+            (localLogBuffer << ... << args) << "\n";
+        }
+
+        static void flushLogs() {
+            std::lock_guard<std::mutex> lk(outMutex);
+            std::cout << localLogBuffer.str();
+            localLogBuffer.str("");
+            localLogBuffer.clear();
+        }
+    };
+
 struct RealTimePolicy{
 
     template<typename LocalQ, typename StealQs, typename RealTimeTasks, typename BackGroundTasks>
@@ -571,6 +588,7 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
         if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize,realTimeTaskStorage, backGroundTaskStorage)) {
             //ÉçÉOèoóÕ
+            
             DebugLog(category);
         }
     }
@@ -579,22 +597,21 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
 template<typename LocalQueue,typename WorkerPolicy>
 inline void Worker<LocalQueue,WorkerPolicy>::DebugLog(JobCategory cat)
 {
-    static std::mutex logMutex;
+    auto&jm = JobManager::Instance();
 
-    std::lock_guard<std::mutex>log(logMutex);
-
-    const auto& stats = JobManager::Instance().getStats();
+    const auto& stats = jm.getStats();
     auto notCompletedCount = stats.scheduledJobCount(cat);
-    if(notCompletedCount > 90'000){
-        std::printf("noCompletedCount is %zu", notCompletedCount);
-    }
 
     test::saveLog("[FINISH] queue=%zu outstanding=%zu", workerId, notCompletedCount);
-    std::printf("[FINISH] queue=%zu outstanding=%zu \n", workerId, notCompletedCount);
+    //Logger::log("[FINISH] queue =",workerId,", outstanding =",notCompletedCount);
+
+    //std::printf("[FINISH] queue=%zu outstanding=%zu \n", workerId, notCompletedCount);
 
     if(notCompletedCount == 0){
         test::saveLog("All FINISH : %s", jobCategoryToString(cat).c_str());
-        std::printf("All FINISH : %s\n", jobCategoryToString(cat).c_str());
+        //Logger::log("All FINISH : ", jobCategoryToString(cat).c_str());
+
+        //std::printf("All FINISH : %s\n", jobCategoryToString(cat).c_str());
     }
 }
 

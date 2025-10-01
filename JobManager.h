@@ -246,10 +246,6 @@ namespace ECS::JobSystem{
         // フレーム終端で指定カテゴリがすべて完了するまで待つ
         void waitForAll(const JobCategory cat);
 
-        void onNotifyWaitAll() noexcept{
-            cv_.notify_all();
-        }
-
         size_t scheduledJobCount(const JobCategory cat) const noexcept{
             return scheduled[size_t(cat)].load(std::memory_order_acquire);
         }
@@ -355,6 +351,19 @@ public:
 
     void start(){
         barrier.start();
+    }
+
+    template<typename... Args>
+    void log(const Args&... args) {
+        (localLogBuffer << ... << args) << "\n";
+    }
+
+    // フレーム終端や waitForAll で呼ぶ
+    void flushLogs() {
+        std::lock_guard<std::mutex> lk(logMutex_);
+        std::cout << localLogBuffer.str();
+        localLogBuffer.str("");
+        localLogBuffer.clear();
     }
 
     //通常Job追加
@@ -520,8 +529,8 @@ public:
 
         return h;
     }
-
-    bool isReadyJobHandle(const JobHandle&handle){
+    
+    bool isScheduledJobHandle(const JobHandle&handle){
         auto* job = getJob(handle.jobIndex);
         return job->ready.load(std::memory_order_acquire);
     }
@@ -569,10 +578,8 @@ public:
         }
     }
 
-    
-
     template<typename JobT>
-    void addCommand(const JobHandle&handle, std::unique_ptr<ICommand<JobT>>&&cmd){
+    void addCommand(const JobHandle&handle, std::function<void(JobT&)>&&cmd){
         auto* job = static_cast<JobT*>(getJob(handle));
         job->AddRequeset(std::move(cmd));
     }
@@ -664,9 +671,6 @@ private:
         size_t next = getNextQueueIndex();
 
         workers[next]->enqueue(handle);
-        
-        //waitForAllで待機しているスレッドを呼び出し
-        stats_.onNotifyWaitAll();
     }
 
     bool allQueuesEmpty() const;
@@ -695,6 +699,9 @@ private:
 
     size_t threadSize;
     bool initFlag;
+
+    std::mutex logMutex_;
+    inline static thread_local std::ostringstream localLogBuffer;
 
     std::vector<TaskPtr>globalBackGroudQueue;
     std::mutex backGroundMutex;
@@ -739,16 +746,13 @@ private:
 template<typename Derived_t>
 struct TaskFuture {
     JobHandle& handle;
+    std::mutex waitMutex;
+    std::condition_variable cv;
 
     using type = Derived_t;
     using Return_t = typename type::Return_t;
-    using ICommandPtr = std::unique_ptr<ICommand<Derived_t>>;
 
     explicit TaskFuture(JobHandle& h) : handle(h) {}
-
-    void keepResult(bool keep) noexcept {
-        JobManager::Instance().template setKeep(*this, keep);
-    }
 
     /// <summary>
     /// job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<JobClass>>([&capture](JobClass& t) {
@@ -756,13 +760,15 @@ struct TaskFuture {
     /// }));
     /// </summary>
     /// <returns></returns>
-    void AddRequest(ICommandPtr&& cmd) {
+    void AddRequest(std::function<void(Derived_t&)> cmd) {
         JobManager::Instance().template addCommand<Derived_t>(handle, std::move(cmd));
     }
 
+    //基本はisDoneで確認して取り出す形にする。
     Return_t wait_and_get() const {
         auto index = handle.resultIndex;
-        auto& resultStorage = JobManager::Instance().template getResultStorage<Return_t>();
+        auto& jm = JobManager::Instance();
+        auto& resultStorage = jm.template getResultStorage<Return_t>();
 
         if (!resultStorage.contains(index)) {
             ASSERT(false, "this handle is not bind result");
@@ -770,27 +776,28 @@ struct TaskFuture {
             if constexpr (!std::is_void_v<Return_t>)
                 return Return_t{};
             else
-                return; // void の場合は return だけ
+                return;
         }
 
-        while (true) {
-            if (resultStorage.done(index)) {
-                if constexpr (!std::is_void_v<Return_t>) {
-                    return resultStorage.get(index);
-                }
-                else {
-                    // void の場合は値を返さず終了
-                    return;
-                }
-            }
-            else {
-                std::this_thread::yield();
-            }
+        std::unique_lock<std::mutex> lk(waitMutex);
+
+        cv.wait(lk, [&] {
+            return resultStorage.done(index);
+            });
+
+        if constexpr (!std::is_void_v<Return_t>) {
+            return resultStorage.get(index);
+        }
+        else {
+            return;
         }
     }
 
     bool isDone() const {
-        return JobManager::Instance().template getResultStorage<Return_t>().done(handle.resultIndex);
+        auto& jm = JobManager::Instance();
+        auto& resultStorage = jm.template getResultStorage<Return_t>();
+
+        return resultStorage.contains(handle.resultIndex) && resultStorage.done(handle.resultIndex);
     }
 };
 
