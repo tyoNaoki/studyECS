@@ -245,12 +245,10 @@ void JobStats::waitForAll(const JobCategory cat)
     auto& jm = JobManager::Instance();
 
     while (true) {
-        //現在enqueueされているジョブをすべてflushさせる
-        jm.allFlushJob(cat);
         if (scheduledJobCount(cat) == 0) {
             break;
         }
-        //再度enqueuされた場合、notifyAllが呼ばれる
+
         cv_.wait(lk);
     }
 }

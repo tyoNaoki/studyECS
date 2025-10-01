@@ -218,7 +218,7 @@ struct ChunkMeta {
     size_t size;     // 現在の有効要素数
     size_t capacity; // 予約済み容量
     TaskArena* owner;
-
+    
     bool isFull() {
         return size >= capacity;
     }
@@ -369,19 +369,22 @@ public:
 
     //chunkをpop
     void popMany(size_t maxCount,std::vector<ChunkMeta>&out){
-        ASSERT(maxCount > 0,"Slice popMany() maxCount under zero");
+
+        //取得スロットが空
+        if(maxCount <= 0)return;
+
+        //現在の満タンのchunkがない場合、代わりに未完成のchunkを積む
+        if (isEmpty()) {
+            flushIncomplete();
+        }
     
         out.reserve(std::min(maxCount, chunks.size()));
-    
+
         size_t budget = maxCount;
     
         {
             std::lock_guard<std::mutex> guard(lock);
-    
-            if (isEmpty()) {
-                return;
-            }
-    
+
             while (!isEmpty() && budget > 0) {
                 out.push_back(std::move(chunks.front()));
                 budget --;

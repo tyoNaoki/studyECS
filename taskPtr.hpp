@@ -517,8 +517,6 @@ template<typename Derived,typename ReturnType>
 struct IJob : IJobBase {
     using Return_t = ReturnType;
 
-    using ICommandPtr = std::unique_ptr<ICommand<Derived>>;
-
 private:
     using TaskPtr = intrusive_ptr<Task>;
 
@@ -631,8 +629,9 @@ private:
         if(commands.empty()) return;
 
         for (auto& fn : commands) {
-            fn(*this); // 直接呼び出し
+            fn(static_cast<Derived&>(*this)); // 直接呼び出し
         }
+
         commands.clear();
     }
 
@@ -665,12 +664,6 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         SettableParallelJobFuture<Data_t>,
         SettableParallelJobFuture<void>
         >;
-
-    using Buffer_t = std::conditional_t<
-        HasData::value,
-        CommandBuffer<Data_t>,
-        DummyBuffer
-        > ;
 
     IParallelJob() = default;
 
@@ -711,11 +704,6 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
 
         auto [settable, future] = Setter_t::create(numBatches);
-
-        //実行前にJob実行の参照データに変更適用
-        if constexpr (HasData::value) {
-            buffer.flush(jobResult);
-        }
 
         nextBatch_.store(0, std::memory_order_relaxed);
 
@@ -761,11 +749,6 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
 
         auto [settable, future] = Setter_t::create(numBatches);
-
-        //実行前にJob実行の参照データに変更適用
-        if constexpr (HasData::value){
-            buffer.flush(jobResult);
-        }
         
         nextBatch_.store(0, std::memory_order_relaxed);
 
@@ -806,12 +789,8 @@ struct IParallelJob : std::enable_shared_from_this<Derived>{
         return std::make_pair(tasks,future);
     }
 
-    using ICommandPtr = std::unique_ptr<ICommand<ParallelJobData>>;
-
-    inline void AddRequeset(ICommandPtr&& command){
-        if constexpr (HasData::value){
-            buffer.push(std::move(command));
-        }
+    void AddRequeset(std::function<void(Derived&)>&& fn) {
+        commands.emplace_back(std::move(fn));
     }
    
 private:
@@ -863,6 +842,17 @@ private:
         ASSERT(false, "Derived class not found Execute(size_t) member function!!");
     }
 
+    void applyCommands() {
+
+        if (commands.empty()) return;
+
+        for (auto& fn : commands) {
+            fn(static_cast<Derived&>(*this)); // 直接呼び出し
+        }
+
+        commands.clear();
+    }
+
 protected:
     inline void ExecuteBatch(const size_t start,const size_t len,Derived*self) {
         for (size_t i = start; i < start + len; ++i) {
@@ -880,7 +870,8 @@ protected:
 private:
     std::atomic<size_t> nextBatch_{ 0 };
 
-    Buffer_t buffer;
+    // コマンドバッファ
+    std::vector<std::function<void(Derived&)>> commands;
 
     size_t threadSize;
 };
