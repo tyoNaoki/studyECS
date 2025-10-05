@@ -78,10 +78,6 @@ public:
         destroy_fn = [](void* p) {
             static_cast<F*>(p)->~F();
         };
-
-        if(destroy_fn){
-            int a = 0;
-        }
     }
 
     //デストラクター
@@ -436,6 +432,7 @@ struct SettableParallelJobFuture {
         inner->eptr = std::move(e);
         inner->ready = true;
     }
+
 private:
     std::shared_ptr<FutureInner<T>> inner;
     std::shared_ptr<std::atomic<size_t>> counter;
@@ -506,6 +503,7 @@ struct JobHandle {
 struct IJobBase {
     virtual ~IJobBase() = default;
     virtual void executeAny(const JobHandle& handle) = 0;
+    virtual void executeJob(const size_t&resultIndex) = 0;
 
     std::mutex dependentLock;
     std::optional<JobHandle> nextDependent = std::nullopt;
@@ -513,15 +511,16 @@ struct IJobBase {
     std::atomic<bool> ready{ false };
 };
 
+
+
 template<typename Derived,typename ReturnType>
 struct IJob : IJobBase {
     using Return_t = ReturnType;
 
-private:
-    using TaskPtr = intrusive_ptr<Task>;
-
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
+private:
+    using TaskPtr = intrusive_ptr<Task>;
 
     using Future_t = std::conditional_t<
         HasReturn::value,
@@ -605,10 +604,22 @@ public:
 
         if constexpr (!HasReturn::value) {
             static_cast<Derived*>(this)->Execute();
-            JobManager::Instance().setResult(handle);
+            JobManager::Instance().setResult(handle.resultIndex);
         }
         else {
-            JobManager::Instance().template setResult<Return_t>(handle, std::move(static_cast<Derived*>(this)->Execute()));
+            JobManager::Instance().template setResult<Return_t>(handle.resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
+        }
+    }
+
+    void executeJob(const size_t& resultIndex) override {
+        applyCommands();
+
+        if constexpr (!HasReturn::value) {
+            static_cast<Derived*>(this)->Execute();
+            JobManager::Instance().setResult(resultIndex);
+        }
+        else {
+            JobManager::Instance().template setResult<Return_t>(resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
         }
     }
 

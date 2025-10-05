@@ -109,24 +109,33 @@ struct TestNormalJobConnector
 };
 
 struct TestJob
-	: public ECS::JobSystem::IJob<TestJob,int>
+	: public ECS::JobSystem::IJob<TestJob,void>
 {
-	using Base = IJob<TestJob,int>;
+	using Base = IJob<TestJob,void>;
 	using Base::Base;
 
 	TestNormalJobConnector connecter;
 
-	int Execute() {
+	/*static void Execute(TestJob*job) {
+		job->connecter.value = job->connecter.value * job->connecter.value;
+		
+	}*/
+
+	void Execute() {
+		connecter.value = connecter.value * connecter.value;
+		//return connecter.value;
+	}
+};
+
+//connecter.value = connecter.value * connecter.value;
 		//int sleepTime = generateRandomInt(5, 10);
 		//busyWait(std::chrono::milliseconds(sleepTime));
 		/*auto value = this->jobResult.value * this->jobResult.value;
 		this->jobResult.value = value;
-		
+
 		return this->jobResult.value;*/
-		connecter.value = connecter.value * connecter.value;
-		return connecter.value;
-	}
-};
+		//connecter.value = connecter.value * connecter.value;
+		//return connecter.value;
 
 TEST_CASE_PRIORITY(test_jobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
@@ -141,15 +150,12 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	}*/
 
 	//int check = 5625;
-	int check = 90'000;
-	jm.start();
-
-	auto globalStart = ECS::JobSystem::now();
+	int check = 180'000;
 
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
-		auto job = jm.createJob<TestJob>(ECS::JobSystem::TaskCategory::Easy, ECS::JobSystem::JobCategory::RealTime);
+		auto job = jm.createJobId<TestJob>();
 		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
 			t.connecter.value = check;
 			}));*/
@@ -161,12 +167,12 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
-
-	//std::printf("RealTimeJob Start is %zu\n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+	auto globalStart = ECS::JobSystem::now();
+	jm.start();
 
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
-	//jm.waitForAllRealTime();
 	auto globalEnd = ECS::JobSystem::now();
 
 	std::printf("realTime job %zu finished!! \n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
