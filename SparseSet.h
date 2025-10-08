@@ -299,7 +299,6 @@ public:
                 next = idx;     // new next
             }
         }
-
     }
 
     template<typename Compare, typename Sort = algorithm::std_sort, typename... Args>

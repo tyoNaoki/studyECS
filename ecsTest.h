@@ -143,8 +143,6 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	jm.Initialize(7,std::move(recorder));
 	jm.setStartFrameTime();
 
-	auto job = std::make_shared<TestJob>();
-
 	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSystem::JobCategory::BackGround);
 	}*/
@@ -155,7 +153,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
-		auto job = jm.createJobId<TestJob>();
+		auto job = jm.createJob<TestJob>();
 		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
 			t.connecter.value = check;
 			}));*/
@@ -212,9 +210,9 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'A';
 
-		auto handle = job->schedule();
+		//auto handle = job->schedule();
 
-		jobAHandles.push_back(handle.first);
+		//jobAHandles.push_back(handle.first);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -225,7 +223,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'B';
 
-		job->schedule(jobAHandles);
+		//job->schedule(jobAHandles);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
@@ -235,7 +233,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 		// ジョブ名を 'A'～ に割り当て
 		char name = 'C';
 
-		auto handle = job->schedule();
+		//auto handle = job->schedule();
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));

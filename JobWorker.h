@@ -165,6 +165,8 @@ inline auto makeBackGroundStorage() {
     return std::make_unique<TaskArena>(Policy::slotWorkCapacity,Policy::backGroundCap, Policy::backGroundChunkSize);
 }
 
+struct JobEntry;
+
 class IWorker {
 public:
 
@@ -216,109 +218,11 @@ public:
     static constexpr size_t rangeJobCap = 16;
     static constexpr size_t capa = WorkerPolicy::realTimeCap;
     static constexpr size_t chunkCapa = WorkerPolicy::realTimeChunkSize;
-
-    struct testRangeJob {
-        std::vector<JobHandle>jobs;
-
-        bool isFull() { return jobs.size() == rangeJobCap; }
-        void push(JobHandle handle) { jobs.push_back(handle);}
-        size_t size() { return jobs.size(); }
-    };
-    
-    struct testSliceChunk{
-        size_t start = 0;
-        size_t count = 0;
-        std::vector<testRangeJob>* ranges = nullptr;
-
-        bool isFull(){
-            return count == chunkCapa;
-        }
-
-        testSliceChunk(size_t s,size_t c, std::vector<testRangeJob>* r): start(s),count(c),ranges(r){}
-
-        testSliceChunk() = default;
-    };
-
-    std::vector<testRangeJob>taskStore;
-    std::deque<testSliceChunk>testSliceDeque;
-
-    std::vector<testSliceChunk>localTaskStore;
-    std::atomic<size_t>testlocalTaskCount{ 0 };
-
-    std::mutex testLock;
-
-    void testTaskStoreReserve(){
-        taskStore.reserve(capa);
-        localTaskStore.reserve(localQueueMaxChunk);
-    }
-
+   
     //BackGround未完成
     void enqueue(const JobHandle handle) override;
 
     void flush(const JobCategory cat) override;
-
-    bool testPOP(size_t takeNum,std::vector<testSliceChunk>&slices);
-
-    void localPush(testSliceChunk chunk){
-        localTaskStore.push_back(chunk);
-        testlocalTaskCount.fetch_add(chunk.count,std::memory_order_release);
-    }
-
-    void localPOP(testSliceChunk& chunk){
-        chunk = localTaskStore.back();
-        localTaskStore.pop_back();
-
-        testlocalTaskCount.fetch_sub(chunk.count,std::memory_order_release);
-    }
-
-    void testRun(){
-        while (running.load(std::memory_order_relaxed)) {
-
-            std::vector<testSliceChunk> slices;
-            size_t take = localQueueMaxChunk - testlocalTaskCount.load(std::memory_order_acquire);
-
-            //待機キューからchunkを取り出す
-            if(testPOP(take,slices)){
-                while(!slices.empty()){
-                    auto slice = slices.back();
-                    slices.pop_back();
-                    localPush(slice);
-                }
-            }
-
-            if (!localTaskStore.empty()) {
-                testSliceChunk chunk;
-                localPOP(chunk);
-
-                auto& jm = JobManager::Instance();
-
-                //実行
-                for(int i = chunk.start;i<chunk.count;i++){
-                    testRangeJob& rangeJob = (*chunk.ranges)[i];
-
-                    for (int j = 0; j < rangeJob.size(); j++) {
-                        const JobHandle& jobH = rangeJob.jobs[j];
-                        IJobBase* job = jm.getJob(jobH.jobIndex);
-
-                        //ResultSlot& result = rangeJob.rStorage->dense[jobH.resultIndex];
-
-                        jm.executor().runJob(workerId,jobH);
-
-                        onJobComplete(job);
-
-                            //if (ResultSlot* result = rangeJob.results[j]) {
-
-                            //    //この部分を改善すれば、さらに短縮可能
-                            //    //auto ret = 1;
-                            //    //result->set_value(static_cast<void*>(&ret));
-                            //}
-                    }
-
-                    //stats_.onFinish(JobCategory::RealTime, rangeJob.size());
-                }
-            }
-        }
-    }
 
 private:
     //localQueueのpop、stealを行う。
@@ -330,25 +234,6 @@ private:
     void DebugLog(JobCategory cat);
 
     std::string jobCategoryToString(JobCategory cat);
-
-    void onJobComplete(IJobBase* job);
-
-    void processDependents(IJobBase* parentJob){
-        auto& jm = JobManager::Instance();
-        for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
-            child != std::nullopt;
-            child = std::exchange(parentJob->nextDependent, std::nullopt))
-        {
-            IJobBase* childJob = jm.getJob(child->jobIndex);
-
-            if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-                //スケジュール済み
-                if (childJob->ready.load(std::memory_order_acquire)) {
-                    jm.scheduleDependentHandle(*child);
-                }
-            }
-        }
-    }
 
 private:
     //localQのインデックス
@@ -503,32 +388,6 @@ inline void Worker<LocalQueue, WorkerPolicy>::flush(const JobCategory cat)
     }
 }
 
-template<typename LocalQueue, typename WorkerPolicy>
-inline bool Worker<LocalQueue, WorkerPolicy>::testPOP(size_t takeNum, std::vector<testSliceChunk>& slices)
-{
-    if (takeNum <= 0) { return false; }
-
-    size_t take = (takeNum / chunkCapa);
-
-    if (take < 1) {
-        return false;
-    }
-
-    slices.reserve(take);
-
-    for (int i = 0; i < take; i++) {
-        if (testSliceDeque.empty()) {
-            break;
-        }
-
-        auto slice = testSliceDeque.back();
-        testSliceDeque.pop_back();
-        slices.push_back(slice);
-    }
-
-    return !slices.empty();
-}
-
 //template<typename ChunkAllocator, typename WorkerPolicy>
 //inline bool Worker<ChunkAllocator, WorkerPolicy>::popOrSteal(ChunkHandle* chunkHandle)
 //{
@@ -623,18 +482,6 @@ inline std::string Worker<LocalQueue,WorkerPolicy>::jobCategoryToString(JobCateg
     case JobCategory::BackGround: return "BackGround";
     default:    return "Unknown";
     }
-}
-
-template<typename LocalQueue, typename WorkerPolicy>
-inline void Worker<LocalQueue, WorkerPolicy>::onJobComplete(IJobBase* job)
-{
-    if (job->nextDependent != std::nullopt) {
-        //繋がっているchildの依存カウントを減らしていく
-        processDependents(job);
-    }
-
-    //未スケジュール状態に戻す
-    job->ready.store(false);
 }
 
 }

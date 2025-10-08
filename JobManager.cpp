@@ -8,11 +8,11 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* ha
     ASSERT(handle, "task is invoked in JobQueue!!");
 
     JobManager& jm = JobManager::Instance();
-    auto& job = jm.getJobFunc(handle->jobIndex);
-    job(jm.getJob(handle->jobIndex));
+    auto& jobEntry = jm.getJobEntry(handle->jobId);
+    //ASSERT(job.func,"job is executed");
 
-    //job->executeAny(*handle);
-    //job.invoke();
+    jobEntry.func(jobEntry.data);
+    jobEntry.func = nullptr;
 
     //依存ジョブがある場合
     //if (job->nextDependent != std::nullopt) {
@@ -33,10 +33,12 @@ void ECS::JobSystem::JobManager::Executor::runSlot(TaskArena* owner, size_t work
     JobManager& jm = JobManager::Instance();
 
     for (auto* it = begin; it != end; ++it) { 
-        auto& job = jm.getJobFunc(it->jobIndex);
-        job(jm.getJob(it->jobIndex));
+        auto& job = jm.getJobEntry(it->jobId);
 
-        
+        //ASSERT(job.func,"job is executed");
+
+        job.func(job.data);
+        job.func = nullptr;
     }
 
     //依存ジョブがある場合
@@ -63,15 +65,15 @@ void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parentJob
         child != std::nullopt;
         child = std::exchange(parentJob->nextDependent, std::nullopt))
     {
-        //IJobBase* childJob = jm.getJob(child->jobIndex);
+        auto& childJobEntry = jm.getJobEntry(child->jobId);
+        auto* childJob = childJobEntry.data;
 
-        //if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        //    //スケジュール済み
-        //    if (childJob->ready.load(std::memory_order_acquire)) {
-        //        jm.enqueue(*child);
-        //    }
-        //\
-        //}
+        if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            //スケジュール済み
+            if (childJobEntry.func) {
+                jm.scheduleDependentHandle(*child);
+            }
+        }
     }
 }
 

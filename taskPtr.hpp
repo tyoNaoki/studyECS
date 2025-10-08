@@ -13,7 +13,8 @@
 #include "CallbackList.hpp"
 
 namespace ECS::JobSystem{
-
+    static constexpr size_t NULL_JOB_ID = std::numeric_limits<size_t>::max();
+    using JobId = size_t;
 
     enum class TaskCategory : uint8_t {
         Easy = 0,
@@ -493,135 +494,88 @@ struct DummyBuffer {};
 class JobManager;
 
 struct JobHandle {
-    size_t jobIndex;
-    ecs_map::id_type typeId; // 型ごとに一意なID
-    size_t resultIndex;
+    JobId jobId;
     TaskCategory taskCategory;
     JobCategory jobCategory;
 };
 
 struct IJobBase {
     virtual ~IJobBase() = default;
-    virtual void executeAny(const JobHandle& handle) = 0;
-    virtual void executeJob(const size_t&resultIndex) = 0;
 
     std::mutex dependentLock;
     std::optional<JobHandle> nextDependent = std::nullopt;
     std::atomic<int> inDegree{ 0 }; // 未解決依存数
-    std::atomic<bool> ready{ false };
 };
 
+// 結果を持つ場合
+template<typename T>
+struct ResultHolder {
+protected:
+    T result;
+};
 
+template<typename T>
+struct TaskFuture;
 
-template<typename Derived,typename ReturnType>
-struct IJob : IJobBase {
-    using Return_t = ReturnType;
+template<typename,typename>
+struct IJob;
+
+template<typename Derived>
+struct IJob<Derived,void> : IJobBase {
+    using Return_t = void;
 
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
-
-private:
-    using TaskPtr = intrusive_ptr<Task>;
-
-    using Future_t = std::conditional_t<
-        HasReturn::value,
-        JobFuture<Return_t>,
-        JobFuture<void>
-    >;
-
-    using Setter_t = std::conditional_t<
-        HasReturn::value,
-        SettableJobFuture<Return_t>,
-        SettableJobFuture<void>
-    >;
 
 public:
 
     IJob() = default;
 
-    ~IJob() {};
+    ~IJob() = default;
 
-    std::pair<TaskPtr, Future_t> schedule(JobCategory cat = JobCategory::RealTime) {
-        auto [settable, future] = Setter_t::create();
-
-        //実行前にJob実行の参照データに変更適用
-       /* if constexpr (HasData::value) {
-            buffer.flush(jobResult);
-        }*/
-
-        //auto ctx = std::make_shared<Context>(
-        //    shared_this()
-        //    , std::move(settable)
-        //    );
-
-        //// ワーカー数分だけ Task を作成して登録
-        //auto work = [ctx]() { workerEntry(ctx); };
-
-        //Job job(std::move(work));
-        Job job;
-
-        auto taskPtr = JobManager::Instance().scheduleTask(cat,std::move(job),0);
-
-        return std::make_pair(taskPtr, future);
+    void AddRequeset(std::function<void(Derived&)>&& fn) {
+        commands.emplace_back(std::move(fn));
     }
 
-    std::pair<TaskPtr,Future_t> schedule(const std::vector<TaskPtr>& deps, JobCategory cat = JobCategory::RealTime) {
-        auto [settable, future] = Setter_t::create();
-
-        //実行前にJob実行の参照データに変更適用
-        /*if constexpr (HasData::value) {
-            buffer.flush(jobResult);
-        }
-
-        auto ctx = std::make_shared<Context>(
-            shared_this()
-            , std::move(settable)
-            );*/
-
-        // ワーカー数分だけ Task を作成して登録
-        //auto work = [ctx]() { workerEntry(ctx); };
-
-        /*auto task = new Task(Job(std::move(work)), 0,cat);
-        TaskPtr taskPtr{ std::move(task) };*/
-
-       /* for (auto& d : deps) {
-            std::lock_guard<std::mutex> lk(d->taskMutex);
-            if (d && d->job.valid()) {
-                taskPtr.get()->addDependent(d.get());
-            }
-        }*/
-
-        //Job job(std::move(work));
-
-        Job job;
-
-        auto taskPtr = JobManager::Instance().scheduleTask(cat,std::move(job),0);
-
-        return std::make_pair(taskPtr,future);
+protected:
+    void Execute() {
+        // Derived の Execute() を呼び出し
+        //static_cast<Derived*>(this)->Execute(index);
+        ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
-    void executeAny(const JobHandle&handle) override {
-        applyCommands();
+private:
+    void applyCommands() {
 
-        if constexpr (!HasReturn::value) {
-            static_cast<Derived*>(this)->Execute();
-            JobManager::Instance().setResult(handle.resultIndex);
+        if (commands.empty()) return;
+
+        for (auto& fn : commands) {
+            fn(static_cast<Derived&>(*this)); // 直接呼び出し
         }
-        else {
-            JobManager::Instance().template setResult<Return_t>(handle.resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
-        }
+
+        commands.clear();
     }
 
-    void executeJob(const size_t& resultIndex) override {
-        applyCommands();
+protected:
+    friend struct TaskFuture<Derived>;
 
-        if constexpr (!HasReturn::value) {
-            static_cast<Derived*>(this)->Execute();
-            JobManager::Instance().setResult(resultIndex);
-        }
-        else {
-            JobManager::Instance().template setResult<Return_t>(resultIndex, std::move(static_cast<Derived*>(this)->Execute()));
-        }
-    }
+private:
+    // コマンドバッファ
+    std::vector<std::function<void(Derived&)>> commands;
+};
+
+template<typename Derived,typename ReturnType>
+struct IJob 
+    : IJobBase
+    , ResultHolder<ReturnType> {
+    using Return_t = ReturnType;
+
+    using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+
+public:
+
+    IJob() = default;
+
+    ~IJob() = default;
 
     void AddRequeset(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
@@ -646,9 +600,12 @@ private:
         commands.clear();
     }
 
-private:
-    //std::atomic<size_t> nextBatch_{ 0 };
+protected:
+    using ResultHolder<ReturnType>::result;
 
+    friend struct TaskFuture<Derived>;
+
+private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
 };
