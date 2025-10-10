@@ -149,6 +149,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	//int check = 5625;
 	int check = 180'000;
+	
 
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
@@ -166,6 +167,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	}
 
 	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+	
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 

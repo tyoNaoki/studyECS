@@ -87,16 +87,14 @@ struct RealTimePolicy{
         if (stats.scheduledJobCount(JobCategory::BackGround) <= 0) return false;
 
         if((*localQ)->popOrSteal(stealQs,queueSize,chunkHandle)){
-            for (size_t i = 0; i < chunkHandle.size; i++) {
-                manager.executor().runSlot(chunkHandle.owner, workerId, chunkHandle.offset, i);
-            }
+            manager.executor().runChunk(workerId, std::move(chunkHandle));
 
             executeCategory = JobCategory::BackGround;
             return true;
         }
     }
 
-    static constexpr size_t realTimeCap = 20'000;
+    static constexpr size_t realTimeCap = 30'000;
     static constexpr size_t backGroundCap = 1'000;
 
     //512
