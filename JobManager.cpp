@@ -23,38 +23,49 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* ha
     jm.stats_.onJobFinish(handle->jobCategory,1);
 }
 
-void ECS::JobSystem::JobManager::Executor::runSlot(TaskArena* owner, size_t workerId, size_t offset, size_t localIndex)
+void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, ChunkMeta&&chunk)
 {
-    auto* begin = owner->getJobsBeginInSlot(offset, localIndex);
-    auto* end = owner->getJobsEndInSlot(offset, localIndex);
+    //if (chunk.begin == chunk.end) return;
 
-    if (begin == end) return;
+    //JobManager& jm = JobManager::Instance();
 
+    ////処理するスロット
+    //JobHandle*it;
+
+    //int maxWorkload = getMaxWorkload();
+
+    ////処理するmaxWorkloadを超えるか、endになるまで回す
+
+    //for (JobHandle* it = chunk.begin; it->taskCategory == chunk.begin->taskCategory; ++it) {
+    //    auto& job = jm.getJobEntry(it->jobId);
+
+    //    //ASSERT(job.func,"job is executed");76
+
+    //    job.func(job.data);
+    //    job.func = nullptr;
+    //}
+
+}
+
+void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
+{
+    if(chunk.begin == chunk.end) return;
     JobManager& jm = JobManager::Instance();
 
-    for (auto* it = begin; it != end; ++it) { 
+    auto jobCategory = chunk.begin->jobCategory;
+    size_t size = chunk.size();
+
+    for (JobHandle* it = chunk.begin; it != chunk.end; ++it) {
+        ASSERT(jm.containsJob(it->jobId),"job not contains");
         auto& job = jm.getJobEntry(it->jobId);
 
-        //ASSERT(job.func,"job is executed");
+        ASSERT(job.func,"job is executed");
 
         job.func(job.data);
         job.func = nullptr;
     }
 
-    //依存ジョブがある場合
-        //if(job->nextDependent!=std::nullopt){
-        //    //依存カウンタをリンク順にたどって減算していく。
-        //    processDependents(job);
-        //}
-
-    jm.stats_.onJobFinish(begin->jobCategory,owner->getSizeInSlot(offset,localIndex));
-}
-
-void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
-{
-    for (size_t i = 0; i < chunk.size; i++) {
-        runSlot(chunk.owner, workerId, chunk.offset, i);
-    }
+    jm.stats_.onJobFinish(jobCategory, size);
 }
 
 void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parentJob)

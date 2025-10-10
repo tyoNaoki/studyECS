@@ -95,8 +95,12 @@ namespace ECS::JobSystem{
             jobData.clear();
         }
 
-        JobEntry& getJobEntry(JobId id){
+        JobEntry& getJobEntry(const JobId id){
             return jobData[sparse[id]];
+        }
+
+        bool containsJob(const JobId id) const{
+            return id != NULL_JOB_ID && id < sparse.size() && jobIds[sparse[id]] == id;
         }
 
         //void removeJobData(size_t removeIndex){
@@ -209,8 +213,6 @@ class JobManager
 
     using TaskPtr = intrusive_ptr<Task>;
 
-    static constexpr size_t bufferCap = 20'000;
-
     //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
     using JobQueue = JobDeque<ChunkMeta>;
 
@@ -245,7 +247,7 @@ class JobManager
     struct Executor {
         void runJob(size_t workerId, JobHandle* handle);
 
-        void runSlot(TaskArena* owner, size_t workerId, size_t offset, size_t localIndex);
+        void runSlot(size_t workerId,ChunkMeta&&chunk);
 
         void runChunk(size_t workerId, ChunkMeta&& chunk);
 
@@ -421,9 +423,8 @@ public:
         return jobStorage.getJobEntry(jobId);
     }
 
-    bool containsJob(const size_t jobIndex){
-        //return jobStorage.jobs
-        return false;
+    bool containsJob(const JobId jobId) const{
+        return jobStorage.containsJob(jobId);
     }
 
     //‚±‚±‚É
