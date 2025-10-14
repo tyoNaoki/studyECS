@@ -9,17 +9,17 @@
 #include <type_traits>
 #include <array>
 #include <limits>
+#include <utility>
+
 #include "JobRecorder.h"
 #include "JobDeque.hpp"
-#include <utility>
 #include "JobBarrier.h"
 #include "JobDebugger.h"
 #include "TaskQueue.h"
 #include "taskPtr.hpp"
-#include "JobWorker.h"
 #include "HashFunctions.hpp"
 #include "CallbackList.hpp"
-#include <limits>
+#include "JobWorker.h"
 
 namespace ECS::JobSystem{
 
@@ -29,97 +29,144 @@ namespace ECS::JobSystem{
     template<>
     struct TaskFuture<void>;
 
+    enum class JobStatus : uint8_t{
+            UnSchedule,   // スケジュール前
+            Scheduled,   // 実行待ち
+            Running,     // 実行中
+            Completed    //実行完了
+    };
+
     struct JobEntry {
         using Invoker = void(*)(IJobBase*);
 
         Invoker func = nullptr;
+        //null時:未作成
         IJobBase* data = nullptr;
+
+        std::atomic<JobStatus> status{JobStatus::UnSchedule};
 
         JobEntry() = default;
         JobEntry(Invoker f, IJobBase* d) : func(f), data(d) {}
     };
 
     struct JobStorage {
+        void reserveJobs(size_t reserveCount) {
+            sparse.reserve(reserveCount);
+            jobData.reserve(reserveCount);
+            jobIds.reserve(reserveCount);
+        }
+
+        void clearAll() {
+            std::lock_guard<std::mutex> lk(lock);
+
+            sparse.clear();
+            jobData.clear();
+            jobIds.clear();
+            freeIds.clear();
+            removeJobs.clear();
+            nextIndex = 0;
+        }
+
         //JobIDを返す。
         template<class DerivedJob, class... Args>
         JobId emplaceJobData(Args&&... args) {
             std::lock_guard<std::mutex> lk(lock);
 
-            JobId newId = createJobId();
+            JobId newId = allocateJobId();
 
             if(sparse.size()<=newId){
                 sparse.emplace_back();
                 sparse.back() = NULL_JOB_ID;
             }
 
-            ASSERT(sparse[newId] == NULL_JOB_ID,"valid sparse slot do not use");
+
+            ASSERT(sparse[getJodIndex(newId)] == NULL_JOB_ID,"valid sparse slot do not use");
 
             auto* p = new DerivedJob(std::forward<Args>(args)...);
             const size_t newIndex = jobData.size();
             jobData.emplace_back(nullptr,std::move(p));
             jobIds.push_back(newId);
 
-            sparse[newId] = newIndex;
+            sparse[getJodIndex(newId)] = newIndex;
 
             return newId;
         }
 
+        //schedule時に対応ジョブに関数ポインターを割り当てる
         template<class DerivedJob>
-        void bindJobFunction(const JobId& id){
-            jobData[id].func = &Invoke<DerivedJob>;
+        void createJobFunction(const JobId& id){
+            jobData[getJobIndex(id)].func = &Invoke<DerivedJob>;
         }
 
-        void removeJob(JobId& id){
-            size_t removeIndex = jobIds[id];
-            //すでに無効
-            if(jobData.empty()|| removeIndex == NULL_JOB_ID) return;
-
-            jobIds.back() = removeIndex;
-
-            std::swap(jobData[removeIndex],jobData.back());
-            std::swap(jobIds[removeIndex],jobIds.back());
-
-            jobData.pop_back();
-            jobIds.pop_back();
-
-            sparse[id] = NULL_JOB_ID;
-            freeIds.push_back(id);
-            id = NULL_JOB_ID;
+        void addRemoveJobs(std::vector<JobHandle>&& jobs) {
+            removeJobs.insert(removeJobs.end(),
+                std::move_iterator(jobs.begin()),
+                std::move_iterator(jobs.end()));
         }
 
-        void reserveJobs(size_t reserveCount) {
-            jobData.reserve(reserveCount);
-        }
+        //GetJobEntry関数の参照が壊れるので、絶対にFrameの最後全てのジョブを処理か、処理をしていないタイミングで行うこと!!
+        void removeJobsOnLastFrame() {
+            std::lock_guard<std::mutex> lk(lock);
 
-        void clearJobs(){
-            jobData.clear();
+            std::sort(removeJobs.begin(), removeJobs.end(),
+                [&](JobHandle& a, JobHandle& b) {
+                    return sparse[a.jobId] > sparse[b.jobId]; // removeIndex の大きい順
+                });
+
+            for (auto& removeHandle : removeJobs) {
+                removeJob(removeHandle.jobId);
+            }
+
+            removeJobs.clear();
         }
 
         JobEntry& getJobEntry(const JobId id){
-            return jobData[sparse[id]];
+            return jobData[sparse[getJobIndex(id)]];
         }
 
         bool containsJob(const JobId id) const{
-            return id != NULL_JOB_ID && id < sparse.size() && jobIds[sparse[id]] == id;
+            JobIndex index = getJobIndex(id);
+            return index < sparse.size() && sparse[index] < jobIds.size() && jobIds[sparse[index]] == id;
         }
-
-        //void removeJobData(size_t removeIndex){
-        //    //sparseとdense
-        //}
 
         template<class T>
         static void Invoke(IJobBase* raw) {
             static_cast<T*>(raw)->Execute();
         }
 
-        JobId createJobId() {
+        JobId allocateJobId() {
             if(!freeIds.empty()){
-                JobId id = freeIds.back();
+                // removeの時以外でfreeIdsが使用されないので、ロックレスで問題なし
+                JobId old = freeIds.back();
                 freeIds.pop_back();
-                return id;
-            }
 
-            return nextId++;
+                return composeJobId(getJobIndex(old), getJobVersion(old) + 1);
+            }
+            
+            return composeJobId(nextIndex++,0u);
+        }
+
+    private:
+        void removeJob(JobId& id) {
+            JobId removeId = jobIds[getJobIndex(id)];
+            JobIndex removeIndex = getJobIndex(removeId);
+
+            std::lock_guard<std::mutex> lk(lock);
+
+            //すでに無効
+            ASSERT(jobData.empty() || removeIndex >= jobData.size(),"this id is NULL");
+
+            jobIds.back() = removeId;
+
+            std::swap(jobData[removeIndex], jobData.back());
+            std::swap(jobIds[removeIndex], jobIds.back());
+
+            jobData.pop_back();
+            jobIds.pop_back();
+
+            sparse[id] = NULL_JOB_INDEX;
+            freeIds.push_back(id);
+            id = NULL_JOB_ID;
         }
 
     private:
@@ -131,7 +178,9 @@ namespace ECS::JobSystem{
         //JobIdのリスト
         std::vector<JobId>jobIds;
 
-        JobId nextId{ 0 };
+        std::vector<JobHandle>removeJobs;
+
+        JobIndex nextIndex{ 0 };
         std::vector<JobId> freeIds;
         std::mutex lock;
     };
@@ -247,7 +296,7 @@ class JobManager
     struct Executor {
         void runJob(size_t workerId, JobHandle* handle);
 
-        void runSlot(size_t workerId,ChunkMeta&&chunk);
+        void runSlot(size_t workerId, JobHandle* begin, JobHandle* end);
 
         void runChunk(size_t workerId, ChunkMeta&& chunk);
 
@@ -270,7 +319,7 @@ public:
         return stats_;
     }
 
-    void Initialize(size_t threadCount,
+    void Initialize(size_t reserveJobNum,size_t threadCount,
         std::unique_ptr<TimelineRecorder> rec = nullptr);
 
     ~JobManager();
@@ -286,137 +335,11 @@ public:
 
     // フレーム終端や waitForAll で呼ぶ
     void flushLogs() {
+
         std::lock_guard<std::mutex> lk(logMutex_);
         std::cout << localLogBuffer.str();
         localLogBuffer.str("");
         localLogBuffer.clear();
-    }
-
-    //通常Job追加
-    template<typename F>
-    auto schedule_job(F&& func){
-
-        using R = std::invoke_result_t<std::decay_t<F>>;
-
-        auto [settable, future] = SettableJobFuture<R>::create();
-
-        TaskPtr t{ new Task(
-            Job([fn = std::forward<F>(func),
-            setter = std::move(settable)]() mutable {
-                 if constexpr (std::is_void_v<R>) {
-                    fn();           
-                    setter.set_value(); //実行完了フラグを建てる
-                }else {
-                    setter.set_value(fn()); // 戻り値を取り出してセット
-                }
-            }),
-            0
-        ) };
-
-        if (t->inDegree.load() == 0) {
-            pushRealTimeJobWaitQueue(t);
-        }
-
-        return std::make_pair(
-            t,
-            future
-        );
-    }
-
-    //通常Job追加(依存Task)
-    template<typename F>
-    auto schedule_job(F&& func,const std::vector<TaskPtr>& deps) {
-
-        using R = std::invoke_result_t<std::decay_t<F>>;
-
-        auto [settable, future] = SettableJobFuture<R>::create();
-
-        TaskPtr t{ new Task(
-            Job([fn = std::forward<F>(func),
-            setter = std::move(settable)]() mutable {
-
-                if constexpr (std::is_void_v<R>) {
-                    fn();            
-                    setter.set_value(); //実行完了フラグを建てる
-                }else {
-                    setter.set_value(fn()); // 戻り値を取り出してセット
-                }
-            }),
-            0
-        ) };
-
-        for (auto &d : deps) {
-            std::lock_guard<std::mutex> lk(d->taskMutex);
-            if (d&&d->job.valid()) {
-                addDependent(d.get(), t.get());
-            }
-        }
-
-        if (t->inDegree.load() == 0) {
-            pushRealTimeJobWaitQueue(t);
-        }
-
-        return std::make_pair(
-            t, 
-            future
-        );
-    }
-
-    //debug付きJob追加
-    template<typename F>
-    auto schedule(char name,F&& func){
-
-        auto wrapped = [this,
-            name,
-            fn = std::forward<F>(func)]() mutable
-        {
-            int h = recorder ? recorder->recordStart(name) : 0;
-
-            fn();
-
-            if (recorder) recorder->recordEnd(h);
-        };
-
-        return schedule_job(std::move(wrapped));
-    }
-
-    //debug付きJob追加
-    template<typename F>
-    auto schedule(char name, F&& func, const std::vector<TaskPtr>& deps){
-    
-        auto wrapped = [
-            this,
-            name,
-            fn = std::forward<F>(func)]() mutable
-        {
-            int h = recorder ? recorder->recordStart(name) : 0;
-            fn();
-            if (recorder) recorder->recordEnd(h);
-        };
-
-        return schedule_job(std::move(wrapped), deps);
-    }
-
-    auto scheduleTask(TaskPtr task) {
-        size_t index = getNextQueueIndex();
-
-        if (task->category == JobCategory::BackGround) {
-            ASSERT(false, "BackGroundJob not work");
-            //pushBackGroudGlobalQueue(std::move(task));
-        }
-
-        return workers[index]->schedule(task->category,std::move(task));
-    }
-
-    auto scheduleTask(JobCategory cat,Job&&job,int degree){
-        size_t index = getNextQueueIndex();
-
-        if(cat == JobCategory::BackGround){
-            ASSERT(false,"BackGroundJob not work");
-            //pushBackGroudGlobalQueue(std::move(task));
-        }
-
-        return workers[index]->schedule(cat, std::move(job), degree);
     }
 
     auto& getJobEntry(const JobId jobId){
@@ -436,19 +359,19 @@ public:
     >
     JobHandle createJob(Args&&... args){
         JobId id = jobStorage.emplaceJobData<T>(std::forward<Args>(args)...);
+        jobStorage.createJobFunction<T>(id);
         JobHandle h{ id, TC,JC};
         return h;
     }
 
     template<typename T>
-    auto scheduleJobHandle(const JobHandle& jobHadnle) {
+    TaskFuture<T>&& scheduleJobHandle(const JobHandle& jobHadnle) {
 
         auto&entry = getJobEntry(jobHadnle.jobId);
         //すでにスケジュール済み
         ASSERT(!entry.func,"this job is scheduled");
 
         //いずれ、自動でtaskCategoryを算出できるようにする
-        jobStorage.bindJobFunction<T>(jobHadnle.jobId);
 
         stats_.onScheduled(jobHadnle.jobCategory,1);
 
@@ -456,7 +379,7 @@ public:
             enqueue(jobHadnle);
         }
 
-        return TaskFuture<T>(jobHadnle);
+        return std::move(TaskFuture<T>(jobHadnle));
     }
 
     void scheduleDependentHandle(JobHandle childHandle){
@@ -522,32 +445,16 @@ public:
     std::chrono::steady_clock::time_point getStartFrameTime() const;
 
 public:
-    void allFlushJob(const JobCategory category) {
-        //全フラッシュ
-        for (int i = 0; i < workers.size(); i++) {
-            workers[i]->flush(category);
-        }
-    }
+    void allFlushJob(const JobCategory category);
 
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
     }
 
 private:
-    void enqueue(JobHandle handle){
-        size_t next = getNextQueueIndex();
-
-        workers[next]->enqueue(handle);
-    }
+    void enqueue(JobHandle handle);
 
     bool allQueuesEmpty() const;
-
-    void addDependent(Task* parent, Task* child) {
-        // child を親の先頭に差し込む
-        child->nextDependent = parent->nextDependent;
-        parent->nextDependent = child;
-        child->inDegree.fetch_add(1);
-    }
 
     void abort();
 

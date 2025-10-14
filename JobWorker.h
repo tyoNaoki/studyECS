@@ -234,12 +234,11 @@ private:
     std::string jobCategoryToString(JobCategory cat);
 
 private:
+    std::atomic<bool> running = false;
+
     //localQのインデックス
     const size_t workerId;
     WorkerPolicy policy_;
-
-    std::thread     thread_;
-    std::atomic<bool> running = false;
 
     //タスクキュー
     std::unique_ptr<TaskArena>realTimeTaskStorage;
@@ -251,7 +250,10 @@ private:
     LocalQPtr stealQueues;
 
     size_t stealQueueSize;
-};
+
+    std::thread     thread_;
+}
+
 
 template<typename LocalQueue,typename WorkerPolicy>
 inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobBarrier&barrier) : workerId(id),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true), 
