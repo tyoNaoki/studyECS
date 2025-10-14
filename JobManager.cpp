@@ -1,6 +1,7 @@
 #include "JobManager.h"
 #include "taskPtr.hpp"
 #include "JobDeque.hpp"
+#include "JobWorker.h"
 
 namespace ECS::JobSystem{
 
@@ -23,28 +24,24 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* ha
     jm.stats_.onJobFinish(handle->jobCategory,1);
 }
 
-void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, ChunkMeta&&chunk)
+void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*begin,JobHandle*end)
 {
-    //if (chunk.begin == chunk.end) return;
+    if (begin == end) return;
+    JobManager& jm = JobManager::Instance();
 
-    //JobManager& jm = JobManager::Instance();
+    auto jobCategory = begin->jobCategory;
+    size_t size = end - begin;
 
-    ////処理するスロット
-    //JobHandle*it;
+    for (JobHandle* it = begin; it != end; ++it) {
+        ASSERT(jm.containsJob(it->jobId), "job not contains");
+        auto& job = jm.getJobEntry(it->jobId);
 
-    //int maxWorkload = getMaxWorkload();
+        ASSERT(job.inner->load(), "job is executed");
 
-    ////処理するmaxWorkloadを超えるか、endになるまで回す
+        job.func(job.data);
+    }
 
-    //for (JobHandle* it = chunk.begin; it->taskCategory == chunk.begin->taskCategory; ++it) {
-    //    auto& job = jm.getJobEntry(it->jobId);
-
-    //    //ASSERT(job.func,"job is executed");76
-
-    //    job.func(job.data);
-    //    job.func = nullptr;
-    //}
-
+    jm.stats_.onJobFinish(jobCategory, size);
 }
 
 void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
@@ -88,7 +85,7 @@ void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parentJob
     }
 }
 
-void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
+void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
 {
     ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
     initFlag = true;
@@ -97,11 +94,6 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
     stopFlag = false;
     nextQueue = 0;
     threadSize = threadCount;
-    
-    //初期化
-    /*for (size_t i = 0; i < threadCount; ++i) {
-       
-    }*/
 
     barrier.init(1);
 
@@ -111,6 +103,8 @@ void JobManager::Initialize(size_t threadCount, std::unique_ptr<TimelineRecorder
         localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueMaxChunk, i));
         workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(),barrier));
     }
+
+    jobStorage.reserveJobs(reserveJobNum);
 }
 
 JobManager::~JobManager()
@@ -208,6 +202,19 @@ void JobManager::popGlobalBackGroundQueue() {
     //        return; // グローバルキューが空になった場合終了
     //    }
     //}   
+}
+
+void JobManager::allFlushJob(const JobCategory category){
+    //全フラッシュ
+    for (int i = 0; i < workers.size(); i++) {
+        workers[i]->flush(category);
+    }
+}
+
+void JobManager::enqueue(JobHandle handle){
+    size_t next = getNextQueueIndex();
+
+    workers[next]->enqueue(handle);
 }
 
 bool JobManager::allQueuesEmpty() const
