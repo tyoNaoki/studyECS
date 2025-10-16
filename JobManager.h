@@ -46,7 +46,35 @@ namespace ECS::JobSystem{
         std::atomic<JobStatus> status{JobStatus::UnSchedule};
 
         JobEntry() = default;
-        JobEntry(Invoker f, IJobBase* d) : func(f), data(d) {}
+        JobEntry(Invoker f, IJobBase* d) : func(f), data(d),status(JobStatus::UnSchedule) {}
+
+        // ムーブ可能にする
+        JobEntry(JobEntry&& other) noexcept {
+            func = other.func;
+            data = other.data;
+            status.store(other.status.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+        }
+
+        JobEntry& operator=(JobEntry&& other) noexcept {
+            if (this != &other) {
+                func = other.func;
+                data = other.data;
+                status.store(other.status.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+            }
+            return *this;
+        }
+
+        void swap(JobEntry& other) noexcept {
+            std::swap(func, other.func);
+            std::swap(data, other.data);
+            // atomic は直接 swap できないので load/store 経由
+            auto s1 = status.load(std::memory_order_relaxed);
+            auto s2 = other.status.load(std::memory_order_relaxed);
+            status.store(s2, std::memory_order_relaxed);
+            other.status.store(s1, std::memory_order_relaxed);
+        }
     };
 
     struct JobStorage {
@@ -63,7 +91,7 @@ namespace ECS::JobSystem{
             jobData.clear();
             jobIds.clear();
             freeIds.clear();
-            removeJobs.clear();
+            removeJobData.clear();
             nextIndex = 0;
         }
 
@@ -80,14 +108,14 @@ namespace ECS::JobSystem{
             }
 
 
-            ASSERT(sparse[getJodIndex(newId)] == NULL_JOB_ID,"valid sparse slot do not use");
+            ASSERT(sparse[getJobIndex(newId)] == NULL_JOB_ID,"valid sparse slot do not use");
 
             auto* p = new DerivedJob(std::forward<Args>(args)...);
             const size_t newIndex = jobData.size();
             jobData.emplace_back(nullptr,std::move(p));
             jobIds.push_back(newId);
 
-            sparse[getJodIndex(newId)] = newIndex;
+            sparse[getJobIndex(newId)] = newIndex;
 
             return newId;
         }
@@ -98,26 +126,28 @@ namespace ECS::JobSystem{
             jobData[getJobIndex(id)].func = &Invoke<DerivedJob>;
         }
 
+        void addRemoveJob(JobHandle handle){removeJobData.push_back(handle);}
+
         void addRemoveJobs(std::vector<JobHandle>&& jobs) {
-            removeJobs.insert(removeJobs.end(),
+            removeJobData.insert(removeJobData.end(),
                 std::move_iterator(jobs.begin()),
                 std::move_iterator(jobs.end()));
         }
 
         //GetJobEntry関数の参照が壊れるので、絶対にFrameの最後全てのジョブを処理か、処理をしていないタイミングで行うこと!!
-        void removeJobsOnLastFrame() {
+        void removeJobs() {
             std::lock_guard<std::mutex> lk(lock);
 
-            std::sort(removeJobs.begin(), removeJobs.end(),
+            std::sort(removeJobData.begin(), removeJobData.end(),
                 [&](JobHandle& a, JobHandle& b) {
-                    return sparse[a.jobId] > sparse[b.jobId]; // removeIndex の大きい順
+                    return sparse[getJobIndex(a.jobId)] > sparse[getJobIndex(b.jobId)]; // removeIndex の大きい順
                 });
 
-            for (auto& removeHandle : removeJobs) {
+            for (auto& removeHandle : removeJobData) {
                 removeJob(removeHandle.jobId);
             }
 
-            removeJobs.clear();
+            removeJobData.clear();
         }
 
         JobEntry& getJobEntry(const JobId id){
@@ -178,7 +208,7 @@ namespace ECS::JobSystem{
         //JobIdのリスト
         std::vector<JobId>jobIds;
 
-        std::vector<JobHandle>removeJobs;
+        std::vector<JobHandle>removeJobData;
 
         JobIndex nextIndex{ 0 };
         std::vector<JobId> freeIds;
@@ -342,10 +372,6 @@ public:
         localLogBuffer.clear();
     }
 
-    auto& getJobEntry(const JobId jobId){
-        return jobStorage.getJobEntry(jobId);
-    }
-
     bool containsJob(const JobId jobId) const{
         return jobStorage.containsJob(jobId);
     }
@@ -369,7 +395,7 @@ public:
 
         auto&entry = getJobEntry(jobHadnle.jobId);
         //すでにスケジュール済み
-        ASSERT(!entry.func,"this job is scheduled");
+        ASSERT(entry.status != JobStatus::Scheduled,"this job is scheduled");
 
         //いずれ、自動でtaskCategoryを算出できるようにする
 
@@ -379,10 +405,14 @@ public:
             enqueue(jobHadnle);
         }
 
+        entry.status = JobStatus::Scheduled;
         return std::move(TaskFuture<T>(jobHadnle));
     }
 
     void scheduleDependentHandle(JobHandle childHandle){
+        auto& entry = getJobEntry(childHandle.jobId);
+        //まだスケジュールしていない
+        ASSERT(entry.status == JobStatus::Scheduled, "this job is not schedule");
         enqueue(childHandle);
     }
 
@@ -407,35 +437,25 @@ public:
         }
     }
 
+    /// <summary>
+   /// Jobにコマンド形式で関数ポインターを渡していく
+   /// job.AddRequest(jobHandle,([&capture](JobClass& t) {
+   ///     t.temp = capture;
+   /// }));
+   /// </summary>
+   /// <returns></returns>
     template<typename JobT>
     void addCommand(const JobHandle&handle, std::function<void(JobT&)>&&cmd){
-        auto* job = getJobEntry(handle.jobId).data;
+        JobT* job = static_cast<JobT>(getJobEntry(handle.jobId).data);
         job->AddRequeset(std::move(cmd));
     }
 
-    //帰り値はJobID
-    //template<typename IJobClass>
-    //EntityID createJob(){return 0;}
-
-    ////帰り値はJobResultID
-    //template<typename JobResult>
-    //EntityID createJobResult(){return 0;}
-
     bool checkRanAllJobInJobQueues();
 
-    IRecorder* getRecorder(){
-        if(recorder){
-            return recorder.get();
-        }
+    void addRemoveJob(JobHandle& handle);
 
-        return nullptr;
-    }
+    void removeJobsOnLastFrame();
 
-    //TaskPtr pushJobWaitQueue(Job&& job,int degree,JobCategory cat);
-
-    //フレーム始めに計算した処理数のBGを各ワーカーごとのBGQueueに割り振る。
-    //計算は以下パラメータを使用する。
-    //パラメータ(目標FPSms時間、ワンフレームでどのくらいBGを処理するかの比率、1ジョブの平均実行ms時間)
     void popGlobalBackGroundQueue();
 
     const size_t getThreadSize() const{ return threadSize;}
@@ -461,6 +481,10 @@ private:
     size_t getNextQueueIndex();
 
     size_t calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime);
+
+    JobEntry& getJobEntry(const JobId jobId) {
+        return jobStorage.getJobEntry(jobId);
+    }
 
 private:
     double avg_JobTimeMs = 1.0f;
@@ -523,17 +547,6 @@ struct TaskFuture {
 
     explicit TaskFuture(JobHandle h) : handle(h) {}
 
-    /// <summary>
-    /// Jobにコマンド形式で関数ポインターを渡していく
-    /// job.AddRequest(([&capture](JobClass& t) {
-    ///     t.temp = capture;
-    /// }));
-    /// </summary>
-    /// <returns></returns>
-    void AddRequest(std::function<void(Derived_t&)> cmd) {
-        JobManager::Instance().template addCommand<Derived_t>(handle.jobIndex, std::move(cmd));
-    }
-
     //その場で実行。
     void ExecuteJob(){
         while(true){
@@ -548,7 +561,7 @@ struct TaskFuture {
         auto& job = jm.getJobEntry(handle.jobIndex);
 
         //実行可否
-        return !job.func;
+        return job.status == JobStatus::Completed;
     }
 
     //基本はisDoneで確認して取り出す形にする。
@@ -558,7 +571,7 @@ struct TaskFuture {
         auto& jm = JobManager::Instance();
         auto& job = jm.getJobEntry(handle.jobIndex);
 
-        if(job.func) return false;
+        if(job.status != JobStatus::Completed) return false;
 
         //結果を返す
         type* job = static_cast<type>(job.data);

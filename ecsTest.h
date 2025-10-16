@@ -155,36 +155,46 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 
+	std::vector<ECS::JobSystem::JobHandle>handles;
+
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
-		auto job = jm.createJob<TestJob>();
+		handles.push_back(jm.createJob<TestJob>());
 		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
 			t.connecter.value = check;
 			}));*/
 
-		auto future = jm.scheduleJobHandle<TestJob>(job);
+		auto future = jm.scheduleJobHandle<TestJob>(handles.back());
 
 		//job.wait_and_get();
 		// 少しずつずらしてスケジューリング
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+
+
+	std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+
+	jm.removeJobsOnLastFrame();
+
+	for (int i = 0; i < check; ++i) {
+
+		auto future = jm.scheduleJobHandle<TestJob>(handles[i]);
+	}
 
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+
+	jm.removeJobsOnLastFrame();
 
 	auto globalEnd = ECS::JobSystem::now();
 
 	std::printf("realTime job %zu finished!! \n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 	//jm.popGlobalBackGroundQueue();
 
-	// 4) すべてのジョブ完了を待機
-	//jm.waitForAll();
-
 	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");
-
-	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 	std::cout << "Total duration: "
@@ -203,7 +213,7 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 
 	auto globalStart = ECS::JobSystem::now();
 
-	std::vector<ECS::JobSystem::TaskPtr> jobAHandles;
+	//std::vector<ECS::JobSystem::TaskPtr> jobAHandles;
 
 	auto job = std::make_shared<TestJob>();
 
@@ -252,8 +262,6 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
-
-	auto& dataMap = js.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
