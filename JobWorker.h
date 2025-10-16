@@ -170,21 +170,11 @@ public:
 
     virtual ~IWorker() = default;
 
-    virtual TaskPtr schedule(JobCategory cat,
-        Job&& job,
-        int degree) = 0;
-
-    virtual TaskPtr schedule(JobCategory cat,
-        Job&& job,
-        int degree,
-        std::vector<TaskPtr>& deps) = 0;
-
-    virtual TaskPtr schedule(JobCategory cat,
-        TaskPtr&&task) = 0;
-
     virtual void enqueue(const JobHandle handle) = 0;
 
     virtual void flush(const JobCategory cat) = 0;
+
+    virtual bool clearTaskStorage(const JobCategory cat) = 0;
 };
 
 template<
@@ -206,12 +196,6 @@ public:
     //残っているtaskの処理
     ~Worker() override;
 
-    TaskPtr schedule(JobCategory cat, Job&& job, int degree) override;
-
-    TaskPtr schedule(JobCategory cat,Job&& job, int degree, std::vector<TaskPtr>&deps) override;
-
-    TaskPtr schedule(JobCategory cat,TaskPtr&&task) override;
-
     //仮組
     static constexpr size_t rangeJobCap = 16;
     static constexpr size_t capa = WorkerPolicy::realTimeCap;
@@ -221,6 +205,8 @@ public:
     void enqueue(const JobHandle handle) override;
 
     void flush(const JobCategory cat) override;
+
+    bool clearTaskStorage(const JobCategory cat) override;
 
 private:
     //localQueueのpop、stealを行う。
@@ -252,8 +238,7 @@ private:
     size_t stealQueueSize;
 
     std::thread     thread_;
-}
-
+};
 
 template<typename LocalQueue,typename WorkerPolicy>
 inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobBarrier&barrier) : workerId(id),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true), 
@@ -275,55 +260,6 @@ inline Worker<LocalQueue,WorkerPolicy>::~Worker()
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy>
-inline TaskPtr Worker<LocalQueue,WorkerPolicy>::schedule(JobCategory cat, Job&& job, int degree)
-{
-
-    //カウント
-    /*stats_.onEnqueued(cat,1);
-
-    switch (cat)
-    {
-    case JobCategory::RealTime:
-        return realTimeTaskStorage->pushOrAppendRangeTask(std::move(job), degree, cat);
-    case JobCategory::BackGround:
-        return backGroundTaskStorage->pushOrAppendRangeTask(std::move(job), degree, cat);
-    }*/
-
-    return nullptr;
-}
-
-template<typename LocalQueue,typename WorkerPolicy>
-inline TaskPtr Worker<LocalQueue,WorkerPolicy>::schedule(JobCategory cat,Job&& job, int degree, std::vector<TaskPtr>&deps)
-{
-    //deps処理
-
-   
-    /*switch (cat)
-    {
-        case JobCategory::RealTime:
-            return realTimeTaskStorage->pushOrAppendRangeTask(std::move(job),degree,cat);
-        case JobCategory::BackGround:
-            return backGroundTaskStorage->pushOrAppendRangeTask(std::move(job), degree, cat);
-    }*/
-
-    return nullptr;
-}
-
-template<typename LocalQueue,typename WorkerPolicy>
-inline TaskPtr Worker<LocalQueue,WorkerPolicy>::schedule(JobCategory cat, TaskPtr&& task)
-{
-    /*switch (cat)
-    {
-    case JobCategory::RealTime:
-        return realTimeTaskStorage->pushOne(std::move(task));
-    case JobCategory::BackGround:
-        return backGroundTaskStorage->pushOne(std::move(task));
-    }*/
-
-    return nullptr;
-}
-
 template<typename LocalQueue, typename WorkerPolicy>
 inline void Worker<LocalQueue, WorkerPolicy>::enqueue(const JobHandle handle)
 {
@@ -333,7 +269,7 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(const JobHandle handle)
         realTimeTaskStorage->enqueue(handle.taskCategory,handle);
         break;
     case ECS::JobSystem::JobCategory::BackGround:
-        ASSERT(false,"not work backGround");
+        realTimeTaskStorage->enqueue(handle.taskCategory, handle);
         return;
         break;
     default:
@@ -386,6 +322,23 @@ inline void Worker<LocalQueue, WorkerPolicy>::flush(const JobCategory cat)
         return;
         break;
     }
+}
+
+template<typename LocalQueue, typename WorkerPolicy>
+inline bool Worker<LocalQueue, WorkerPolicy>::clearTaskStorage(const JobCategory cat)
+{
+    switch (cat)
+    {
+    case ECS::JobSystem::JobCategory::RealTime:
+        return realTimeTaskStorage->clearAllJobHandles();
+    case ECS::JobSystem::JobCategory::BackGround:
+        ASSERT(false, "not work backGround");
+        break;
+    default:
+        break;
+    }
+
+    return false;
 }
 
 //template<typename ChunkAllocator, typename WorkerPolicy>

@@ -10,16 +10,12 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* ha
 
     JobManager& jm = JobManager::Instance();
     auto& jobEntry = jm.getJobEntry(handle->jobId);
-    //ASSERT(job.func,"job is executed");
+    ASSERT(jobEntry.status == JobStatus::Scheduled, "job is executed");
 
     jobEntry.func(jobEntry.data);
-    jobEntry.func = nullptr;
+    jobEntry.status = JobStatus::Completed;
 
-    //依存ジョブがある場合
-    //if (job->nextDependent != std::nullopt) {
-    //    //依存カウンタをリンク順にたどって減算していく。
-    //    processDependents(job);
-    //}
+    processDependents(jobEntry.data);
 
     jm.stats_.onJobFinish(handle->jobCategory,1);
 }
@@ -36,9 +32,12 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*be
         ASSERT(jm.containsJob(it->jobId), "job not contains");
         auto& job = jm.getJobEntry(it->jobId);
 
-        ASSERT(job.inner->load(), "job is executed");
+        ASSERT(job.status == JobStatus::Scheduled, "job is executed");
 
         job.func(job.data);
+        job.status = JobStatus::Completed;
+
+        processDependents(job.data);
     }
 
     jm.stats_.onJobFinish(jobCategory, size);
@@ -56,10 +55,12 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
         ASSERT(jm.containsJob(it->jobId),"job not contains");
         auto& job = jm.getJobEntry(it->jobId);
 
-        ASSERT(job.func,"job is executed");
+        ASSERT(job.status == JobStatus::Scheduled, "job is executed");
 
         job.func(job.data);
-        job.func = nullptr;
+        job.status = JobStatus::Completed;
+        //依存関係の解決
+        processDependents(job.data);
     }
 
     jm.stats_.onJobFinish(jobCategory, size);
@@ -123,6 +124,12 @@ bool JobManager::checkRanAllJobInJobQueues()
     return true;
 }
 
+void JobManager::addRemoveJob(JobHandle& handle)
+{
+    jobStorage.addRemoveJob(handle);
+    handle.jobId = NULL_JOB_ID;
+}
+
 //TaskPtr JobManager::pushJobWaitQueue(Job&& job, int degree, JobCategory cat)
 //{
 //    auto task = new Task(job, 0, cat);
@@ -149,6 +156,20 @@ void JobManager::setStartFrameTime()
 std::chrono::steady_clock::time_point JobManager::getStartFrameTime() const
 {
     return frameStart;
+}
+
+void JobManager::removeJobsOnLastFrame()
+{
+    for(auto&x:workers){
+        //falseならまだ未処理のタスクが残っている
+        if(!x->clearTaskStorage(JobCategory::RealTime)){
+            ASSERT(false,"Some Job can not executed");
+            return;
+        }
+    }
+
+    //削除予定のjobDataをここで一斉に削除
+    jobStorage.removeJobs();
 }
 
 void JobManager::popGlobalBackGroundQueue() {
