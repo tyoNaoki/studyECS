@@ -278,8 +278,6 @@ class JobManager;
 
 struct JobHandle {
     uint64_t jobId;
-    TaskCategory taskCategory;
-    JobCategory jobCategory;
 };
 
 struct IJobBase {

@@ -3,15 +3,15 @@
 
 namespace ECS::JobSystem{
 
-TaskArena::TaskArena(uint8_t maxSlotWorkCap, size_t maxTasks, size_t chunkSize) : maxWorkloadOfOneSlot(maxSlotWorkCap), chunkMaxSize(chunkSize), maxTaskCapacity(maxTasks) {
+TaskArena::TaskArena(JobCategory category,uint8_t maxSlotWorkCap, size_t maxTasks, size_t chunkSize) : 
+jobCategory(category),maxWorkloadOfOneSlot(maxSlotWorkCap), chunkMaxSize(chunkSize), maxTaskCapacity(maxTasks),currentChunk(jobCategory) {
+
     data.reserve(maxTasks);
 
     for (int i = 0; i < static_cast<int>(TaskCategory::Num); i++) {
         auto cat = static_cast<TaskCategory>(i);
         currentSlots[cat].reserve(maxWorkloadOfOneSlot / getWorkload(cat));
     }
-
-    currentChunk = ChunkMeta();
 }
 
 void TaskArena::flushIncomplete(){
@@ -28,7 +28,7 @@ void TaskArena::flushIncomplete(){
     if (!currentChunk.isEmpty()) {
         pushChunk(std::move(currentChunk));
 
-        currentChunk = ChunkMeta();
+        currentChunk = ChunkMeta(jobCategory);
     }
 }
 
