@@ -202,21 +202,67 @@ namespace ECS::JobSystem{
 struct ChunkMeta {
     JobHandle* begin = nullptr;
     JobHandle* end = nullptr;
-    size_t slotNum = 0;
+    std::atomic<size_t> slotNum = 0;
+    std::vector<ChunkMeta*> dependents;
+    std::atomic<uint32_t>inDegree = 0;
 
     size_t size() const {return end - begin;}
 
     bool isEmpty(){
-        return slotNum == 0;
+        return slotNum.load(std::memory_order_relaxed) == 0;
     }
+
+    JobCategory getJobCategory() const {return jobCategory;}
+
+    ChunkMeta() = default; //デフォルト
+    ChunkMeta(JobCategory category) : jobCategory(category) {}
+
+    ChunkMeta(const ChunkMeta&) = delete;            // コピー禁止
+    ChunkMeta& operator=(const ChunkMeta&) = delete; // コピー禁止
+
+    ChunkMeta(ChunkMeta&& other) noexcept
+        : begin(other.begin),
+        end(other.end),
+        dependents(std::move(other.dependents)),
+        jobCategory(other.getJobCategory()),
+        inDegree(other.inDegree.load(std::memory_order_relaxed))
+    {
+        other.begin = nullptr;
+        other.end = nullptr;
+        other.inDegree.store(0, std::memory_order_relaxed);
+        slotNum.store(other.slotNum.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
+    ChunkMeta& operator=(ChunkMeta&& other) noexcept {
+        if (this != &other) {
+            begin = other.begin;
+            end = other.end;
+            dependents = std::move(other.dependents);
+            jobCategory = other.getJobCategory();
+            slotNum.store(other.slotNum.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+            inDegree.store(other.inDegree.load(std::memory_order_relaxed),
+                std::memory_order_relaxed);
+
+            other.begin = nullptr;
+            other.end = nullptr;
+            other.inDegree.store(0, std::memory_order_relaxed);
+        }
+        return *this;
+    }
+
+    private:
+        JobCategory jobCategory;
 };
 
+//Chunkはリストのブロック
 class TaskArena {
     std::vector<JobHandle> data;
     std::deque<ChunkMeta> chunks;
 
     std::unordered_map<TaskCategory,std::vector<JobHandle>>currentSlots;
     ChunkMeta currentChunk;
+    std::atomic<size_t>position;
 
     std::mutex lock;
 
@@ -225,8 +271,10 @@ class TaskArena {
     const uint8_t maxWorkloadOfOneSlot;
     size_t maxTaskCapacity = 0;
 
+    const JobCategory jobCategory;
+
 public:
-    TaskArena(uint8_t maxSlotWorkCap,size_t maxTasks, size_t chunkSize);
+    TaskArena(JobCategory category,uint8_t maxSlotWorkCap,size_t maxTasks, size_t chunkSize);
 
     void flushIncomplete();
 
@@ -240,7 +288,7 @@ public:
 
     //chunkが一つもない
     bool isEmptyChunks() const noexcept{
-        return chunks.size() == 0;
+        return chunks.size() == 0||chunks.size() == position.load(std::memory_order_relaxed);
     }
 
     bool clearAllJobHandles(){
@@ -249,7 +297,9 @@ public:
         {
             std::lock_guard<std::mutex> guard(lock);
 
+            //flushしても空なら、全て実行済みなので消去
             if(isEmptyChunks()){
+                chunks.clear();
                 data.clear();
                 return true;
             }
@@ -259,23 +309,24 @@ public:
     }
 
     //一つchunkPop
-    bool popOne(ChunkMeta&meta) {
+    bool popOne(ChunkMeta* chunk) {
         std::lock_guard lk(lock);
         
         if(isEmptyChunks()){
             return false;
         }
         
-        meta = std::move(chunks.front());
-        chunks.pop_front();
+        size_t popPosition = position.fetch_add(1, std::memory_order_relaxed);
+        chunk = &chunks[popPosition];
+
         return true;
     }
 
     //chunkをpop
-    void popMany(size_t maxCount,std::vector<ChunkMeta>&out){
+    void popMany(size_t maxCount,std::vector<ChunkMeta*>&out){
 
         //取得スロットが空
-        if(maxCount <= 0)return;
+        if(maxCount <= 0) return;
 
         //現在の満タンのchunkがない場合、代わりに未完成のchunkを積む
         if (isEmptyChunks()) {
@@ -290,9 +341,9 @@ public:
             std::lock_guard<std::mutex> guard(lock);
 
             while (!isEmptyChunks() && budget > 0) {
-                out.push_back(std::move(chunks.front()));
+                size_t popPosition = position.fetch_add(1, std::memory_order_relaxed);
+                out.push_back(&chunks[popPosition]);
                 budget --;
-                chunks.pop_front();
             }
         }
     }
@@ -316,7 +367,7 @@ private:
         if (isFullCurrentChunk()) {
             pushChunk(std::move(currentChunk));
 
-            currentChunk = ChunkMeta();
+            currentChunk = ChunkMeta(jobCategory);
         }
     }
 
@@ -334,7 +385,7 @@ private:
         if (isFullCurrentChunk()) {
             pushChunk(std::move(currentChunk));
 
-            currentChunk = ChunkMeta();
+            currentChunk = ChunkMeta(jobCategory);
         }
     }
 

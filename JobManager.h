@@ -43,6 +43,9 @@ namespace ECS::JobSystem{
         //null時:未作成
         IJobBase* data = nullptr;
 
+        JobCategory jobCategory;
+        TaskCategory taskCategory;
+
         std::atomic<JobStatus> status{JobStatus::UnSchedule};
 
         JobEntry() = default;
@@ -293,7 +296,7 @@ class JobManager
     using TaskPtr = intrusive_ptr<Task>;
 
     //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
-    using JobQueue = JobDeque<ChunkMeta>;
+    using JobQueue = JobDeque;
 
     using StealResult = JobQueue::StealResult;
 
@@ -316,6 +319,16 @@ class JobManager
     static constexpr double bgRatioMin = 0.10;
     static constexpr double bgRatioMax = 0.50;
 
+    //TaskQueueパラメータ設定
+    static constexpr size_t realTimeCap = 180'000;
+    static constexpr size_t backGroundCap = 1'000;
+
+    //512
+    static constexpr size_t realTimeChunkSize = 64;
+    static constexpr size_t backGroundChunkSize = 512;
+
+    static constexpr size_t slotWorkCapacity = 32;
+
     JobManager() = default;
 
     JobManager(JobManager&&) = delete;
@@ -328,7 +341,7 @@ class JobManager
 
         void runSlot(size_t workerId, JobHandle* begin, JobHandle* end);
 
-        void runChunk(size_t workerId, ChunkMeta&& chunk);
+        void runChunk(size_t workerId, ChunkMeta* chunk);
 
     private:
         void processDependents(IJobBase* parentJob);
@@ -379,41 +392,90 @@ public:
     //ここに
     template<
         typename T,
-        TaskCategory TC = TaskCategory::Easy,
-        JobCategory JC = JobCategory::RealTime,
         typename... Args
     >
-    JobHandle createJob(Args&&... args){
+    TaskFuture<T> createJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime,Args&&... args){
         JobId id = jobStorage.emplaceJobData<T>(std::forward<Args>(args)...);
         jobStorage.createJobFunction<T>(id);
-        JobHandle h{ id, TC,JC};
-        return h;
+
+        auto&entry = jobStorage.getJobEntry(id);
+        entry.jobCategory = JC;
+        entry.taskCategory = TC;
+
+        return TaskFuture<T>(id);
     }
 
-    template<typename T>
-    TaskFuture<T>&& scheduleJobHandle(const JobHandle& jobHadnle) {
+    //job = JobHandle.dependents(handle1,handle2);
 
-        auto&entry = getJobEntry(jobHadnle.jobId);
+    template<typename T>
+    JobHandle scheduleJobHandle(TaskFuture<T>&future) {
+
+        auto&entry = getJobEntry(future.Id);
         //すでにスケジュール済み
         ASSERT(entry.status != JobStatus::Scheduled,"this job is scheduled");
 
         //いずれ、自動でtaskCategoryを算出できるようにする
 
-        stats_.onScheduled(jobHadnle.jobCategory,1);
+        stats_.onScheduled(entry.jobCategory,1);
+        JobHandle jobHandle{ future.Id };
 
         if(entry.data->inDegree.load(std::memory_order_acquire) == 0){
-            enqueue(jobHadnle);
+            enqueue(entry.taskCategory,jobHandle);
         }
 
         entry.status = JobStatus::Scheduled;
-        return std::move(TaskFuture<T>(jobHadnle));
+
+        return jobHandle;
+    }
+
+    JobHandle scheduleJobHandle(JobId jobId) {
+
+        auto& entry = getJobEntry(jobId);
+        //すでにスケジュール済み
+        ASSERT(entry.status != JobStatus::Scheduled, "this job is scheduled");
+
+        //いずれ、自動でtaskCategoryを算出できるようにする
+
+        stats_.onScheduled(entry.jobCategory, 1);
+        JobHandle handle{jobId };
+
+        if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+            enqueue(entry.taskCategory,std::move(handle));
+        }
+
+        entry.status = JobStatus::Scheduled;
+
+        return handle;
+    }
+
+    std::vector<JobHandle>&& scheduleJobHandles(std::vector<JobId>&&jobs) {
+
+        ////すでにスケジュール済み
+        //ASSERT(entry.status != JobStatus::Scheduled, "this job is scheduled");
+
+        //いずれ、自動でtaskCategoryを算出できるようにする
+        stats_.onScheduled(getJobEntry(jobs[0]).jobCategory, jobs.size());
+        std::vector<JobHandle>handles;
+        handles.reserve(jobs.size());
+
+        for(int i = 0;i< handles.size();i++){
+            auto&entry = getJobEntry(jobs[i]);
+            handles[i].jobId = jobs[i];
+            entry.status = JobStatus::Scheduled;
+        }
+
+        /*if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+            enqueue(jobHandle);
+        }*/
+
+        return std::move(handles);
     }
 
     void scheduleDependentHandle(JobHandle childHandle){
-        auto& entry = getJobEntry(childHandle.jobId);
-        //まだスケジュールしていない
-        ASSERT(entry.status == JobStatus::Scheduled, "this job is not schedule");
-        enqueue(childHandle);
+        //auto& entry = getJobEntry(childHandle.jobId);
+        ////まだスケジュールしていない
+        //ASSERT(entry.status == JobStatus::Scheduled, "this job is not schedule");
+        //enqueue(childHandle);
     }
 
     //依存関係追加
@@ -437,7 +499,7 @@ public:
         }
     }
 
-    /// <summary>
+   /// <summary>
    /// Jobにコマンド形式で関数ポインターを渡していく
    /// job.AddRequest(jobHandle,([&capture](JobClass& t) {
    ///     t.temp = capture;
@@ -459,11 +521,6 @@ public:
     void popGlobalBackGroundQueue();
 
     const size_t getThreadSize() const{ return threadSize;}
-
-    void setStartFrameTime();
-
-    std::chrono::steady_clock::time_point getStartFrameTime() const;
-
 public:
     void allFlushJob(const JobCategory category);
 
@@ -472,7 +529,9 @@ public:
     }
 
 private:
-    void enqueue(JobHandle handle);
+    void enqueue(TaskCategory taskCategory,JobHandle handle);
+
+    void popChunk();
 
     bool allQueuesEmpty() const;
 
@@ -486,32 +545,26 @@ private:
         return jobStorage.getJobEntry(jobId);
     }
 
+    bool clearTaskStorage(JobCategory category);
+
 private:
     double avg_JobTimeMs = 1.0f;
     double avg_ExecuteJobTime = 0.1;
 
     JobStats stats_;
 
-    // 時刻
-    std::chrono::steady_clock::time_point frameStart;
-
     size_t threadSize;
-    bool initFlag;
-
+    
+    //ログ出力
     std::mutex logMutex_;
     inline static thread_local std::ostringstream localLogBuffer;
 
-    std::vector<TaskPtr>globalBackGroudQueue;
-    std::mutex backGroundMutex;
-
     std::vector<std::unique_ptr<JobQueue>> localQueues;
 
-    std::vector<std::unique_ptr<IWorker>> workers;
+    std::unique_ptr<TaskArena> taskStorage;
 
     JobStorage jobStorage;
 
-    std::atomic<bool> stopFlag;
-    
     //現ジョブの総数
     std::atomic<size_t> outstanding{ 0 };
 
@@ -520,32 +573,32 @@ private:
     std::mutex            wakeMutex;
     std::condition_variable wakeCv;
 
-    std::mutex            realTimeJob_Mutex;
-    std::condition_variable realTimeJob_WaitCv;
-
-    std::mutex            backGroundJob_Mutex;
-    std::condition_variable backGroundJob_WaitCv;
+    std::mutex            finishMutex;
+    std::condition_variable finishCv;
 
     std::atomic<size_t>      nextQueue{ 0 };
     std::condition_variable condition;
-    std::mutex        finishMutex;
-    std::condition_variable finishCv;
 
     std::unique_ptr<TimelineRecorder> recorder;
 
     JobBarrier barrier;
 
+    //初期化、終了、停止フラグ
+    bool initFlag;
+    std::atomic<bool> stopFlag;
     std::atomic<bool> abortFlag{ false };
+
+    std::vector<std::unique_ptr<IWorker>> workers;
 };
 
 template<typename Derived_t>
 struct TaskFuture {
-    JobHandle handle;
+    const JobId Id;
 
     using type = Derived_t;
     using Return_t = typename type::Return_t;
 
-    explicit TaskFuture(JobHandle h) : handle(h) {}
+    explicit TaskFuture(JobId id) : Id(id) {}
 
     //その場で実行。
     void ExecuteJob(){
@@ -558,7 +611,7 @@ struct TaskFuture {
         typename = std::enable_if_t<std::is_void_v<T>>>
     bool isComplete() const{
         auto&jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(handle.jobIndex);
+        auto& job = jm.getJobEntry(Id);
 
         //実行可否
         return job.status == JobStatus::Completed;
@@ -569,7 +622,7 @@ struct TaskFuture {
         typename = std::enable_if_t<std::is_void_v<T>>>
     bool isCompleteAndGet(T* out) const {
         auto& jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(handle.jobIndex);
+        auto& job = jm.getJobEntry(Id);
 
         if(job.status != JobStatus::Completed) return false;
 

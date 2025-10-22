@@ -17,7 +17,7 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* ha
 
     processDependents(jobEntry.data);
 
-    jm.stats_.onJobFinish(handle->jobCategory,1);
+    jm.stats_.onJobFinish(jobEntry.jobCategory,1);
 }
 
 void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*begin,JobHandle*end)
@@ -25,7 +25,7 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*be
     if (begin == end) return;
     JobManager& jm = JobManager::Instance();
 
-    auto jobCategory = begin->jobCategory;
+    auto jobCategory = jm.getJobEntry(begin->jobId).jobCategory;
     size_t size = end - begin;
 
     for (JobHandle* it = begin; it != end; ++it) {
@@ -43,15 +43,15 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*be
     jm.stats_.onJobFinish(jobCategory, size);
 }
 
-void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
+void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta* chunk)
 {
-    if(chunk.begin == chunk.end) return;
+    if(chunk->begin == chunk->end) return;
+
     JobManager& jm = JobManager::Instance();
 
-    auto jobCategory = chunk.begin->jobCategory;
-    size_t size = chunk.size();
+    size_t size = chunk->size();
 
-    for (JobHandle* it = chunk.begin; it != chunk.end; ++it) {
+    for (JobHandle* it = chunk->begin; it != chunk->end; ++it) {
         ASSERT(jm.containsJob(it->jobId),"job not contains");
         auto& job = jm.getJobEntry(it->jobId);
 
@@ -63,7 +63,7 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
         processDependents(job.data);
     }
 
-    jm.stats_.onJobFinish(jobCategory, size);
+    jm.stats_.onJobFinish(chunk->getJobCategory(), size);
 }
 
 void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parentJob)
@@ -101,9 +101,11 @@ void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique
     localQueues.reserve(threadCount);
     workers.reserve(threadCount);
     for (size_t i = 0; i < threadCount; ++i) {
-        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueMaxChunk, i));
+        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueCapacity, i));
         workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(),barrier));
     }
+
+    taskStorage = std::make_unique<TaskArena>(JobCategory::RealTime, slotWorkCapacity, realTimeCap, realTimeChunkSize);
 
     jobStorage.reserveJobs(reserveJobNum);
 }
@@ -148,46 +150,32 @@ void JobManager::addRemoveJob(JobHandle& handle)
 //    }
 //}
 
-void JobManager::setStartFrameTime()
-{
-    frameStart = std::chrono::steady_clock::now();
-}
-
-std::chrono::steady_clock::time_point JobManager::getStartFrameTime() const
-{
-    return frameStart;
-}
-
+//frame最後の同期ポイントで必ず行う
 void JobManager::removeJobsOnLastFrame()
 {
-    for(auto&x:workers){
-        //falseならまだ未処理のタスクが残っている
-        if(!x->clearTaskStorage(JobCategory::RealTime)){
-            ASSERT(false,"Some Job can not executed");
-            return;
-        }
-    }
+    ASSERT(!clearTaskStorage(JobCategory::RealTime), "Some Job can not executed");
 
     //削除予定のjobDataをここで一斉に削除
     jobStorage.removeJobs();
 }
 
 void JobManager::popGlobalBackGroundQueue() {
-    if (globalBackGroudQueue.empty()) return; // グローバルキューが空の場合終了
+    //if (globalBackGroudQueue.empty()) return; // グローバルキューが空の場合終了
 
-    auto startTime = getStartFrameTime();
-    auto elapsed_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - startTime).count();
+    //auto startTime = getStartFrameTime();
+    /*auto elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - startTime).count();*/
 
     auto chunkClamp = std::make_pair(1,100);
+
     //処理する全て
-    size_t popBGNum = calculatePOPBGJobs(frameTimeMs, elapsed_ms,avg_ExecuteJobTime);
+    //size_t popBGNum = calculatePOPBGJobs(frameTimeMs, elapsed_ms,avg_ExecuteJobTime);
 
-    if(popBGNum <= 0) return;// 処理時間が残っていない
+    //if(popBGNum <= 0) return;// 処理時間が残っていない
 
-    ASSERT(popBGNum <= globalBackGroudQueue.size(), "do not upper than globalQueue.Size()");
+    //ASSERT(popBGNum <= globalBackGroudQueue.size(), "do not upper than globalQueue.Size()");
 
-    size_t rawJobs = popBGNum / getThreadSize(); //一つのワーカーの処理するジョブ数
+    //size_t rawJobs = popBGNum / getThreadSize(); //一つのワーカーの処理するジョブ数
 
     //backGroundCounter.fetch_add(popBGNum, std::memory_order_acq_rel);
 
@@ -227,15 +215,29 @@ void JobManager::popGlobalBackGroundQueue() {
 
 void JobManager::allFlushJob(const JobCategory category){
     //全フラッシュ
-    for (int i = 0; i < workers.size(); i++) {
-        workers[i]->flush(category);
-    }
+    //全てのJobをchunkにつめていく
+    taskStorage->flushIncomplete();
+
+    popChunk();
 }
 
-void JobManager::enqueue(JobHandle handle){
-    size_t next = getNextQueueIndex();
+void JobManager::enqueue(TaskCategory taskCategory,JobHandle handle){
+    taskStorage->enqueue(taskCategory,std::move(handle));
 
-    workers[next]->enqueue(handle);
+    popChunk();
+}
+
+void JobManager::popChunk()
+{
+    if(taskStorage->isEmptyChunks()) return;
+
+    ChunkMeta* chunkMeta;
+
+    //空になるまでqueueに割り振る
+    while(taskStorage->popOne(chunkMeta)){
+        size_t queueIndex = getNextQueueIndex();
+        workers[queueIndex]->enqueue(chunkMeta);
+    }
 }
 
 bool JobManager::allQueuesEmpty() const
@@ -266,7 +268,23 @@ size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double
     double remaining_ms = target_ms - elapsed_ms;
     if (remaining_ms <= safetyMarginMs||remaining_ms <= avgJobTime) return 0.0; // 十分な残り時間がない場合終了
 
-    return static_cast<size_t>(std::min(std::floor(remaining_ms / avgJobTime), static_cast<double>(globalBackGroudQueue.size())));
+    /*return static_cast<size_t>(std::min(std::floor(remaining_ms / avgJobTime), static_cast<double>(globalBackGroudQueue.size())));*/
+
+    return 0;
+}
+
+bool JobManager::clearTaskStorage(JobCategory category)
+{
+    //いずれ各カテゴリー毎に実装
+    switch (category)
+    {
+    case JobCategory::RealTime:
+        return taskStorage->clearAllJobHandles();
+    default:
+        break;
+    }
+
+    return false;
 }
 
 void JobStats::onJobFinish(const JobCategory cat, size_t count) noexcept

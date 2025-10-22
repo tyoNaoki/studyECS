@@ -143,7 +143,6 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.Initialize(check,7,std::move(recorder));
-	jm.setStartFrameTime();
 
 	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSystem::JobCategory::BackGround);
@@ -155,17 +154,15 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 
-	std::vector<ECS::JobSystem::JobHandle>handles;
-
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
-		handles.push_back(jm.createJob<TestJob>());
+		auto future = jm.createJob<TestJob>();
 		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
 			t.connecter.value = check;
 			}));*/
 
-		auto future = jm.scheduleJobHandle<TestJob>(handles.back());
+		auto handle = jm.scheduleJobHandle<TestJob>(future);
 
 		//job.wait_and_get();
 		// 少しずつずらしてスケジューリング
@@ -174,24 +171,9 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
-
 	std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 
-	jm.removeJobsOnLastFrame();
-
-	for (int i = 0; i < check; ++i) {
-
-		auto future = jm.scheduleJobHandle<TestJob>(handles[i]);
-	}
-
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
-
-	jm.removeJobsOnLastFrame();
-
 	auto globalEnd = ECS::JobSystem::now();
-
-	std::printf("realTime job %zu finished!! \n",jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
-	//jm.popGlobalBackGroundQueue();
 
 	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");
@@ -206,59 +188,88 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 }
 
 TEST_CASE_PRIORITY(test_particalJobSystem){
+	int check = 3'0000;
+	int check2 = 3'0000;
+	int check3 = 3'0000;
+
+	int allCheckNum = check + check2 + check3;
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
-	auto& js = ECS::JobSystem::JobManager::Instance();
-	js.Initialize(100,4, std::move(recorder));
+	auto& jm = ECS::JobSystem::JobManager::Instance();
+	jm.Initialize(allCheckNum,7, std::move(recorder));
 
+	std::printf("RealTimeJob Start is %zu\n", check);
 	auto globalStart = ECS::JobSystem::now();
+	jm.start();
 
-	//std::vector<ECS::JobSystem::TaskPtr> jobAHandles;
+	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
 
-	auto job = std::make_shared<TestJob>();
+	//単一依存
+	/*A → B
+	B は A 完了後に実行されることを確認。*/
+	{
+		auto future = jm.createJob<TestJob>();
+		//jobAHandles.push_back();
 
-	// 3) 20 個のジョブをスケジュール
-	for (int i = 0; i < 4; ++i) {
-		// ジョブ名を 'A'～ に割り当て
-		char name = 'A';
-
-		//auto handle = job->schedule();
-
-		//jobAHandles.push_back(handle.first);
-
-		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
-	}
-
-	// 3) 20 個のジョブをスケジュール
-	for (int i = 0; i < 4; ++i) {
-		// ジョブ名を 'A'～ に割り当て
-		char name = 'B';
-
-		//job->schedule(jobAHandles);
+		auto jobHandle = jm.scheduleJobHandle<TestJob>(future);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}
 
-	for (int i = 0; i < 4; ++i) {
-		// ジョブ名を 'A'～ に割り当て
-		char name = 'C';
+	{
 
-		//auto handle = job->schedule();
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	/*複数依存(fan - in)
+		A, B → C
+		C は A と B が両方終わるまで実行されないことを確認。*/
+	{
+
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	/*複数子依存 (fan-out)
+		A → B, C
+		B と C が A 完了後に並列で実行されることを確認。*/
+	{
+
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	/*深い依存チェーン
+		A → B → C → D
+		順序通りに実行されることを確認。*/
+	{
+
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
+	}
+
+	/*依存統合 (CombineDependencies 相当)
+		A, B, C をまとめて barrier にして D を依存させる。*/
+	{
+
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}
 
 	// 4) すべてのジョブ完了を待機
-	js.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	auto globalEnd = ECS::JobSystem::now();
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 
-	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
-	assertTrue(!js.isAbort(), "JobSystem Work Test");
+	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
+	assertTrue(!jm.isAbort(), "JobSystem Work Test");
 	
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
