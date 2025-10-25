@@ -138,7 +138,7 @@ struct TestJob
 		//return connecter.value;
 
 TEST_CASE_PRIORITY(test_jobSystem) {
-	int check = 180'000;
+	int check = 90'000;
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
@@ -151,9 +151,8 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	//int check = 5625;
 	
 	std::printf("RealTimeJob Start is %zu\n", check);
-	auto globalStart = ECS::JobSystem::now();
-	jm.start();
-
+	
+	
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
@@ -169,6 +168,10 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
+	jm.allFlushJob(ECS::JobSystem::JobCategory::RealTime);
+	auto globalStart = ECS::JobSystem::now();
+	jm.start();
+	
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));

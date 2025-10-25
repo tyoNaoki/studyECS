@@ -140,6 +140,7 @@ public:
                 destroy_fn(buf);
                 destroy_fn = nullptr;
             }
+
             invoke_fn = nullptr;
         }
     }
@@ -277,15 +278,15 @@ struct DummyBuffer {};
 class JobManager;
 
 struct JobHandle {
-    uint64_t jobId;
+    JobId jobId;
+
+    std::mutex dependentLock;
+    std::vector<JobHandle> nextDependent;
+    std::atomic<int> inDegree{ 0 }; // –¢‰ğŒˆˆË‘¶”
 };
 
 struct IJobBase {
     virtual ~IJobBase() = default;
-
-    std::mutex dependentLock;
-    std::optional<JobHandle> nextDependent = std::nullopt;
-    std::atomic<int> inDegree{ 0 }; // –¢‰ğŒˆˆË‘¶”
 };
 
 // Œ‹‰Ê‚ğ‚Âê‡
@@ -308,7 +309,6 @@ struct IJob<Derived,void> : IJobBase {
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
 public:
-
     IJob() = default;
 
     ~IJob() = default;

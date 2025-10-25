@@ -3,15 +3,24 @@
 
 namespace ECS::JobSystem{
 
-TaskArena::TaskArena(JobCategory category,uint8_t maxSlotWorkCap, size_t maxTasks, size_t chunkSize) : 
-jobCategory(category),maxWorkloadOfOneSlot(maxSlotWorkCap), chunkMaxSize(chunkSize), maxTaskCapacity(maxTasks),currentChunk(jobCategory) {
+void TaskArena::Initialize(JobCategory category,uint8_t maxSlotWorkCap, size_t maxTasks, size_t chunkSize)
+{
+    jobCategory = category;
+    maxWorkloadOfOneSlot = maxSlotWorkCap;
+    chunkMaxSize = chunkSize;
+    maxTaskCapacity = maxTasks;
+    currentChunk = jobCategory;
 
     data.reserve(maxTasks);
+    //仮90
+    chunks.reserve(90);
 
     for (int i = 0; i < static_cast<int>(TaskCategory::Num); i++) {
         auto cat = static_cast<TaskCategory>(i);
         currentSlots[cat].reserve(maxWorkloadOfOneSlot / getWorkload(cat));
     }
+
+    initFlag = true;
 }
 
 void TaskArena::flushIncomplete(){
@@ -37,7 +46,7 @@ void TaskArena::enqueue(TaskCategory cat,JobHandle handle){
 
     std::lock_guard<std::mutex> guard(lock);
 
-    //一つのスロット上限値を追加前から超えていたら、そのままdataにpush
+  //一つのスロット上限値を追加前から超えていたら、そのままdataにpush
     if (workload >= maxWorkloadOfOneSlot) {
         pushJob(cat, std::move(handle));
         return;
@@ -53,11 +62,11 @@ void TaskArena::enqueue(TaskCategory cat,JobHandle handle){
 
             //その場で実行
             auto& jm = JobManager::Instance();
-#ifdef DEBUG
+        #ifdef DEBUG
             ASSERT(false, "Job capacity exceeded!");
-#else
+        #else
             jm.executor().runSlot(99, &*currentSlots[cat].begin(), &*currentSlots[cat].end());
-#endif
+        #endif
 
         }
         pushJobs(cat, std::move(currentSlots[cat]));

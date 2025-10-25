@@ -28,6 +28,7 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*be
     auto jobCategory = jm.getJobEntry(begin->jobId).jobCategory;
     size_t size = end - begin;
 
+    //slot実行
     for (JobHandle* it = begin; it != end; ++it) {
         ASSERT(jm.containsJob(it->jobId), "job not contains");
         auto& job = jm.getJobEntry(it->jobId);
@@ -40,6 +41,7 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*be
         processDependents(job.data);
     }
 
+    //カウント減算
     jm.stats_.onJobFinish(jobCategory, size);
 }
 
@@ -51,6 +53,7 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta* 
 
     size_t size = chunk->size();
 
+    //chunk実行
     for (JobHandle* it = chunk->begin; it != chunk->end; ++it) {
         ASSERT(jm.containsJob(it->jobId),"job not contains");
         auto& job = jm.getJobEntry(it->jobId);
@@ -63,6 +66,7 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta* 
         processDependents(job.data);
     }
 
+    //カウント減算
     jm.stats_.onJobFinish(chunk->getJobCategory(), size);
 }
 
@@ -105,7 +109,7 @@ void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique
         workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(),barrier));
     }
 
-    taskStorage = std::make_unique<TaskArena>(JobCategory::RealTime, slotWorkCapacity, realTimeCap, realTimeChunkSize);
+    taskStorage.Initialize(JobCategory::RealTime, slotWorkCapacity, realTimeCap, realTimeChunkSize);
 
     jobStorage.reserveJobs(reserveJobNum);
 }
@@ -216,28 +220,43 @@ void JobManager::popGlobalBackGroundQueue() {
 void JobManager::allFlushJob(const JobCategory category){
     //全フラッシュ
     //全てのJobをchunkにつめていく
-    taskStorage->flushIncomplete();
+    taskStorage.flushIncomplete();
 
     popChunk();
 }
 
-void JobManager::enqueue(TaskCategory taskCategory,JobHandle handle){
-    taskStorage->enqueue(taskCategory,std::move(handle));
+void JobManager::getFlushChunk(const JobCategory category, ChunkMeta*& chunk)
+{
+    taskStorage.flushIncomplete();
 
+    popChunk(chunk);
+}
+
+void JobManager::enqueue(TaskCategory taskCategory,JobHandle handle){
+    taskStorage.enqueue(taskCategory,std::move(handle));
+
+    //満タンのchunkのみワーカーに配る
     popChunk();
 }
 
 void JobManager::popChunk()
 {
-    if(taskStorage->isEmptyChunks()) return;
+    if(taskStorage.isEmptyChunks()) return;
 
-    ChunkMeta* chunkMeta;
+    ChunkMeta* chunkMeta = nullptr;
 
     //空になるまでqueueに割り振る
-    while(taskStorage->popOne(chunkMeta)){
+    while(taskStorage.popOne(chunkMeta)){
         size_t queueIndex = getNextQueueIndex();
         workers[queueIndex]->enqueue(chunkMeta);
     }
+}
+
+void JobManager::popChunk(ChunkMeta*& chunk)
+{
+    if (taskStorage.isEmptyChunks()) return;
+
+    taskStorage.popOne(chunk);
 }
 
 bool JobManager::allQueuesEmpty() const
@@ -279,7 +298,7 @@ bool JobManager::clearTaskStorage(JobCategory category)
     switch (category)
     {
     case JobCategory::RealTime:
-        return taskStorage->clearAllJobHandles();
+        return taskStorage.clearAllJobHandles();
     default:
         break;
     }

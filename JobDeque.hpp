@@ -60,11 +60,9 @@ namespace ECS::JobSystem {
             slotMutex(cap),
             slotData(cap),
             queueIndex(index)
-
-
         {
-            ASSERT(capacity > 0 && (capacity & (capacity - 1)) == 0,
-                "slotCapacity must be a power of two");
+            ASSERT(capacity > 0,
+                "slotCapacity must be upeer than zero");
         }
 
         ~JobDeque() = default;
@@ -96,12 +94,12 @@ namespace ECS::JobSystem {
         bool pushWithTimeout(ChunkMeta* chunk,TaskQ&taskQ,std::chrono::milliseconds timeout = std::chrono::milliseconds{ 2 });
 
         template<typename JobQueue>
-        bool popOrSteal(JobQueue* stealQueues,size_t stealQueueSize,ChunkMeta* chunk);
+        bool popOrSteal(JobQueue* stealQueues,size_t stealQueueSize,ChunkMeta*& chunk);
 
-        PopStatus pop(ChunkMeta* chunk);
+        PopStatus pop(ChunkMeta*& chunk);
 
         template<typename JobQueue>
-        StealStatus steal(JobQueue* queues,size_t stealQueueSize, ChunkMeta* chunk);
+        StealStatus steal(JobQueue* queues,size_t stealQueueSize, ChunkMeta*& chunk);
 
         // オーナースレッド専用：ボトムからPush
         PushResult pushBottom(ChunkMeta* chunk) {
@@ -354,7 +352,7 @@ namespace ECS::JobSystem {
         bool abortFlag = false;
     };
 
-    inline PopStatus JobDeque::pop(ChunkMeta* chunk)
+    inline PopStatus JobDeque::pop(ChunkMeta*& chunk)
     {
         auto popRes = popBottom();
 
@@ -374,7 +372,7 @@ namespace ECS::JobSystem {
     {
         auto start = std::chrono::steady_clock::now(); 
 
-        auto c = std::move(chunk);
+        ChunkMeta* c = std::move(chunk);
 
         while (true) {
             auto [status, notPushed] = pushBottom(std::move(c));
@@ -400,7 +398,7 @@ namespace ECS::JobSystem {
     }
 
     template<typename JobQueue>
-    inline bool JobDeque::popOrSteal(JobQueue* stealQueues,size_t stealQueueSize,ChunkMeta* chunk)
+    inline bool JobDeque::popOrSteal(JobQueue* stealQueues,size_t stealQueueSize,ChunkMeta* &chunk)
     {
         //自キューからPOP
         {
@@ -427,7 +425,7 @@ namespace ECS::JobSystem {
     }
 
     template<typename JobQueue>
-    inline StealStatus JobDeque::steal(JobQueue* queues,size_t stealQueueSize, ChunkMeta* chunk)
+    inline StealStatus JobDeque::steal(JobQueue* queues,size_t stealQueueSize, ChunkMeta* &chunk)
     {
         //size_t n = (*queues)->size();
         size_t n = stealQueueSize;

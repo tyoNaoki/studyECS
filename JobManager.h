@@ -110,7 +110,6 @@ namespace ECS::JobSystem{
                 sparse.back() = NULL_JOB_ID;
             }
 
-
             ASSERT(sparse[getJobIndex(newId)] == NULL_JOB_ID,"valid sparse slot do not use");
 
             auto* p = new DerivedJob(std::forward<Args>(args)...);
@@ -257,6 +256,8 @@ namespace ECS::JobSystem{
         void waitForAll(const JobCategory cat);
 
         size_t scheduledJobCount(const JobCategory cat) const noexcept{
+            ASSERT(size_t(cat) < size_t(JobCategory::Num),"JobCategroy is falid num");
+
             return scheduled[size_t(cat)].load(std::memory_order_acquire);
         }
 
@@ -415,7 +416,6 @@ public:
         ASSERT(entry.status != JobStatus::Scheduled,"this job is scheduled");
 
         //‚¢‚¸‚êAŽ©“®‚ÅtaskCategory‚ðŽZo‚Å‚«‚é‚æ‚¤‚É‚·‚é
-
         stats_.onScheduled(entry.jobCategory,1);
         JobHandle jobHandle{ future.Id };
 
@@ -524,6 +524,8 @@ public:
 public:
     void allFlushJob(const JobCategory category);
 
+    void getFlushChunk(const JobCategory category,ChunkMeta*&chunk);
+
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
     }
@@ -532,6 +534,8 @@ private:
     void enqueue(TaskCategory taskCategory,JobHandle handle);
 
     void popChunk();
+
+    void popChunk(ChunkMeta*&chunk);
 
     bool allQueuesEmpty() const;
 
@@ -561,7 +565,7 @@ private:
 
     std::vector<std::unique_ptr<JobQueue>> localQueues;
 
-    std::unique_ptr<TaskArena> taskStorage;
+    TaskArena taskStorage;
 
     JobStorage jobStorage;
 
