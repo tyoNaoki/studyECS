@@ -29,7 +29,7 @@ public:
     }
 
     // 要素の取り出し（非ブロッキング版）
-    bool try_pop(T* value) {
+    bool try_pop(T*& value) {
         std::lock_guard<std::mutex> lock(mutex);
 
         if (queue.empty()) {
@@ -41,17 +41,16 @@ public:
         return true;
     }
 
-    bool try_manyPop(size_t maxPopCount,std::vector<T*>values){
-
-        if(empty()||maxPopCount <= 0){
+    bool try_manyPop(size_t maxPopCount,std::vector<T*>&values){
+        std::lock_guard<std::mutex> lock(mutex);
+        if(queue.empty()||maxPopCount <= 0){
             return false;
         }
 
-        values.reserve(std::min(maxPopCount,size()));
+        size_t popCount = std::min(maxPopCount, queue.size());
+        values.reserve(popCount);
 
-        std::lock_guard<std::mutex>lock(mutex);
-
-        for(size_t count = 0;count <= maxPopCount;count++){
+        for(size_t count = 0;count < popCount;count++){
             T* value = std::move(queue.front());
             queue.pop();
             values.push_back(value);

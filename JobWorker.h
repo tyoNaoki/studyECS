@@ -35,8 +35,6 @@ struct RealTimePolicy{
 
         auto& manager = JobManager::Instance();
 
-        ChunkMeta* chunkHandle;
-
         size_t takeNum = (*localQ)->emptyNum();
 
         // 空きスロットがある
@@ -45,9 +43,10 @@ struct RealTimePolicy{
             std::vector<ChunkMeta*> chunks;
 
             // RealTime待機キューから取得
-            if(!taskQueue.try_manyPop(takeNum,chunks)) return true;
+            taskQueue.try_manyPop(takeNum,chunks);
 
             while (!chunks.empty()) {
+
                 ChunkMeta* chunk = std::move(chunks.back());
 
                 chunks.pop_back();
@@ -58,14 +57,36 @@ struct RealTimePolicy{
         }
         
         auto& stats = manager.getStats();
+
         // realTimeJob処理
-        if (stats.scheduledJobCount(JobCategory::RealTime) >  0 && (*localQ)->popOrSteal(stealQs, queueSize,chunkHandle)){
-            //chunk実行
-            manager.executor().runChunk(workerId,std::move(chunkHandle));
-            executeCategory = JobCategory::RealTime;
+        if (stats.scheduledJobCount(JobCategory::RealTime) >  0){
+
+            ChunkMeta* chunkHandle = nullptr;
+            if((*localQ)->popOrSteal(stealQs, queueSize, chunkHandle)){
+
+                //取得失敗
+                if (!chunkHandle) return false;
+
+                //chunk実行
+                manager.executor().runChunk(workerId, std::move(chunkHandle));
+                executeCategory = JobCategory::RealTime;
+
+                return true;
+            }else{
+                //未完成のchunkを一つ取得する
+                manager.getFlushChunk(JobCategory::RealTime,chunkHandle);
+
+                if(chunkHandle){
+                    //chunk実行
+                    manager.executor().runChunk(workerId, std::move(chunkHandle));
+                    executeCategory = JobCategory::RealTime;
+
+                    return true;
+                }
+            }
         }
 
-        return true;
+        return false;
 
         //takeNum = (*localQ)->emptyNum();
 
@@ -193,6 +214,7 @@ private:
     const size_t workerId;
     WorkerPolicy policy_;
 
+    TaskArena taskQueue;
     ThreadSafeQueue<ChunkMeta> chunkQueue;
 
     LocalQPtr localQueue;
@@ -309,6 +331,8 @@ inline void Worker<LocalQueue,WorkerPolicy>::run()
     while (running.load(std::memory_order_relaxed)) {
 
         if(policy_(category,workerId,localQueue,stealQueues, stealQueueSize,chunkQueue)){
+            ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
+
             //ログ出力
             DebugLog(category);
         }
@@ -326,8 +350,8 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
 
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
         if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize,chunkQueue)) {
+            ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
             //ログ出力
-            
             DebugLog(category);
         }
     }
@@ -339,18 +363,20 @@ inline void Worker<LocalQueue,WorkerPolicy>::DebugLog(JobCategory cat)
     auto&jm = JobManager::Instance();
 
     const auto& stats = jm.getStats();
+
+    ASSERT(size_t(cat) < size_t(JobCategory::Num), "JobCategroy is falid num");
     auto notCompletedCount = stats.scheduledJobCount(cat);
 
     test::saveLog("[FINISH] queue=%zu outstanding=%zu", workerId, notCompletedCount);
     //Logger::log("[FINISH] queue =",workerId,", outstanding =",notCompletedCount);
 
-    //std::printf("[FINISH] queue=%zu outstanding=%zu \n", workerId, notCompletedCount);
+    std::printf("[FINISH] queue=%zu outstanding=%zu \n", workerId, notCompletedCount);
 
     if(notCompletedCount == 0){
         test::saveLog("All FINISH : %s", jobCategoryToString(cat).c_str());
         //Logger::log("All FINISH : ", jobCategoryToString(cat).c_str());
 
-        //std::printf("All FINISH : %s\n", jobCategoryToString(cat).c_str());
+        std::printf("All FINISH : %s\n", jobCategoryToString(cat).c_str());
     }
 }
 
