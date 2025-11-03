@@ -40,14 +40,14 @@ struct RealTimePolicy{
         // 空きスロットがある
         if((*localQ)->emptyNum() != 0){
             // 待機キューから取得
-            std::vector<ChunkMeta*> chunks;
+            std::vector<ChunkMeta> chunks;
 
             // RealTime待機キューから取得
-            taskQueue.try_manyPop(takeNum,chunks);
+            taskQueue.pop(chunks);
 
             while (!chunks.empty()) {
 
-                ChunkMeta* chunk = std::move(chunks.back());
+                ChunkMeta chunk = std::move(chunks.back());
 
                 chunks.pop_back();
                 // localQueueにpushする。
@@ -61,11 +61,12 @@ struct RealTimePolicy{
         // realTimeJob処理
         if (stats.scheduledJobCount(JobCategory::RealTime) >  0){
 
-            ChunkMeta* chunkHandle = nullptr;
+            ChunkMeta chunkHandle;
+
             if((*localQ)->popOrSteal(stealQs, queueSize, chunkHandle)){
 
                 //取得失敗
-                if (!chunkHandle) return false;
+                if (chunkHandle.isEmpty()) return false;
 
                 //chunk実行
                 manager.executor().runChunk(workerId, std::move(chunkHandle));
@@ -73,10 +74,11 @@ struct RealTimePolicy{
 
                 return true;
             }else{
-                //未完成のchunkを一つ取得する
+
+                //未完成のchunkを一つ取得、実行
                 manager.getFlushChunk(JobCategory::RealTime,chunkHandle);
 
-                if(chunkHandle){
+                if(!chunkHandle.isEmpty()){
                     //chunk実行
                     manager.executor().runChunk(workerId, std::move(chunkHandle));
                     executeCategory = JobCategory::RealTime;
@@ -117,7 +119,7 @@ struct RealTimePolicy{
         //}
     }
 
-    static constexpr size_t localQueueCap = 20;
+    static constexpr size_t localQueueCap = 32;
 };
 
 //struct BackGroundPolicy {
@@ -169,10 +171,9 @@ struct JobEntry;
 
 class IWorker {
 public:
-
     virtual ~IWorker() = default;
 
-    virtual void enqueue(ChunkMeta* chunkMeta) = 0;
+    virtual void enqueue(JobCategory jobCategory, ChunkMeta&& chunk) = 0;
 };
 
 template<
@@ -187,6 +188,15 @@ class Worker : public IWorker{
 public:
     static constexpr size_t localQueueCapacity = WorkerPolicy::localQueueCap;
 
+    //static constexpr size_t realTimeCap = 20'000;
+    //static constexpr size_t backGroundCap = 1'000;
+
+    ////512
+    //static constexpr size_t realTimeChunkSize = 64;
+    //static constexpr size_t backGroundChunkSize = 512;
+
+    //static constexpr size_t slotWorkCapacity = 32;
+
     //localQやtaskQの初期化処理など
     Worker(size_t id,LocalQPtr queues,size_t queueSize,JobBarrier& barrier);
 
@@ -194,7 +204,7 @@ public:
     ~Worker() override;
    
     //BackGround未完成
-    void enqueue(ChunkMeta* chunk) override;
+    void enqueue(JobCategory jobCategory,ChunkMeta&& chunk) override;
 
 private:
     //localQueueのpop、stealを行う。
@@ -214,8 +224,7 @@ private:
     const size_t workerId;
     WorkerPolicy policy_;
 
-    TaskArena taskQueue;
-    ThreadSafeQueue<ChunkMeta> chunkQueue;
+    ThreadSafeQueue taskQueue;
 
     LocalQPtr localQueue;
 
@@ -245,12 +254,12 @@ inline Worker<LocalQueue,WorkerPolicy>::~Worker()
 }
 
 template<typename LocalQueue, typename WorkerPolicy>
-inline void Worker<LocalQueue, WorkerPolicy>::enqueue(ChunkMeta* chunk)
+inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, ChunkMeta&& chunk)
 {
-    switch (chunk->getJobCategory())
+    switch (jobCategory)
     {
     case ECS::JobSystem::JobCategory::RealTime:
-        chunkQueue.push(chunk);
+        taskQueue.push(std::move(chunk));
         break;
     case ECS::JobSystem::JobCategory::BackGround:
         ASSERT(false,"not work");
@@ -260,35 +269,26 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(ChunkMeta* chunk)
         return;
         break;
     }
-
-    ////RangeTaskStorageが空か現在のRangeTaskが満タン
-    //if (taskStore.empty() || taskStore[taskStore.size() - 1].isFull()) {
-
-    //    //RangeTask作成
-    //    taskStore.emplace_back();
-    //    taskStore[taskStore.size() - 1].push(handle);
-
-    //    //空
-    //    if (testSliceDeque.empty()) {
-    //        testSliceDeque.emplace_front(0, 0, &taskStore);
-    //    }
-
-    //    //満タン
-    //    if (testSliceDeque.front().isFull()) {
-    //        size_t newStart = testSliceDeque.front().start + testSliceDeque.front().count;
-    //        testSliceDeque.emplace_front(newStart, 0, &taskStore);
-    //    }
-
-    //    testSliceDeque.front().count++;
-
-    //    return;
-    //}
-
-    ////現在のRangeTaskに追加
-    //taskStore[taskStore.size() - 1].push(handle);
-
-    //stats_.onStart(JobCategory::RealTime, 1);
 }
+
+//template<typename LocalQueue, typename WorkerPolicy>
+//inline void Worker<LocalQueue, WorkerPolicy>::enqueue(ChunkMeta* chunk)
+//{
+//    switch (chunk->getJobCategory())
+//    {
+//    case ECS::JobSystem::JobCategory::RealTime:
+//        chunkQueue.push(chunk);
+//        break;
+//    case ECS::JobSystem::JobCategory::BackGround:
+//        ASSERT(false,"not work");
+//        return;
+//        break;
+//    default:
+//        return;
+//        break;
+//    }
+//
+//}
 
 //template<typename ChunkAllocator, typename WorkerPolicy>
 //inline bool Worker<ChunkAllocator, WorkerPolicy>::popOrSteal(ChunkHandle* chunkHandle)
@@ -329,11 +329,11 @@ inline void Worker<LocalQueue,WorkerPolicy>::run()
 {
     JobCategory category;
     while (running.load(std::memory_order_relaxed)) {
-
-        if(policy_(category,workerId,localQueue,stealQueues, stealQueueSize,chunkQueue)){
+        if(policy_(category,workerId,localQueue,stealQueues, stealQueueSize, taskQueue)){
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
 
             //ログ出力
+
             DebugLog(category);
         }
     }
@@ -345,11 +345,12 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
     running.store(false, std::memory_order_relaxed);
 
     JobCategory category;
+
     auto& stats = JobManager::Instance().getStats();
     while(stats.scheduledJobCount(JobCategory::RealTime) > 0 && stats.scheduledJobCount(JobCategory::BackGround) > 0){
 
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
-        if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize,chunkQueue)) {
+        if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize,taskQueue)) {
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
             //ログ出力
             DebugLog(category);

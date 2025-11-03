@@ -55,6 +55,8 @@ namespace ECS::JobSystem{
         JobEntry(JobEntry&& other) noexcept {
             func = other.func;
             data = other.data;
+            jobCategory = other.jobCategory;
+            taskCategory = other.taskCategory;
             status.store(other.status.load(std::memory_order_relaxed),
                 std::memory_order_relaxed);
         }
@@ -63,6 +65,8 @@ namespace ECS::JobSystem{
             if (this != &other) {
                 func = other.func;
                 data = other.data;
+                jobCategory = other.jobCategory;
+                taskCategory = other.taskCategory;
                 status.store(other.status.load(std::memory_order_relaxed),
                     std::memory_order_relaxed);
             }
@@ -72,6 +76,8 @@ namespace ECS::JobSystem{
         void swap(JobEntry& other) noexcept {
             std::swap(func, other.func);
             std::swap(data, other.data);
+            jobCategory = other.jobCategory;
+            taskCategory = other.taskCategory;
             // atomic は直接 swap できないので load/store 経由
             auto s1 = status.load(std::memory_order_relaxed);
             auto s2 = other.status.load(std::memory_order_relaxed);
@@ -154,6 +160,14 @@ namespace ECS::JobSystem{
 
         JobEntry& getJobEntry(const JobId id){
             return jobData[sparse[getJobIndex(id)]];
+        }
+
+        JobEntry& getDense(const size_t denseIndex) {
+            return jobData[denseIndex];
+        }
+
+        size_t getDenseIndex(const JobId id){
+            return sparse[getJobIndex(id)];
         }
 
         bool containsJob(const JobId id) const{
@@ -318,10 +332,11 @@ class JobManager
     static constexpr double safetyMarginMs = 1.5;
 
     static constexpr double bgRatioMin = 0.10;
+
     static constexpr double bgRatioMax = 0.50;
 
     //TaskQueueパラメータ設定
-    static constexpr size_t realTimeCap = 180'000;
+    static constexpr size_t realTimeCap = 100'000;
     static constexpr size_t backGroundCap = 1'000;
 
     //512
@@ -342,10 +357,10 @@ class JobManager
 
         void runSlot(size_t workerId, JobHandle* begin, JobHandle* end);
 
-        void runChunk(size_t workerId, ChunkMeta* chunk);
+        void runChunk(size_t workerId, ChunkMeta&& chunk);
 
     private:
-        void processDependents(IJobBase* parentJob);
+        void processDependents(IJobBase* parent);
     };
 
 public:
@@ -379,7 +394,6 @@ public:
 
     // フレーム終端や waitForAll で呼ぶ
     void flushLogs() {
-
         std::lock_guard<std::mutex> lk(logMutex_);
         std::cout << localLogBuffer.str();
         localLogBuffer.str("");
@@ -417,10 +431,10 @@ public:
 
         //いずれ、自動でtaskCategoryを算出できるようにする
         stats_.onScheduled(entry.jobCategory,1);
-        JobHandle jobHandle{ future.Id };
+        JobHandle jobHandle{ future.Id ,jobStorage.getDenseIndex(future.Id)};
 
         if(entry.data->inDegree.load(std::memory_order_acquire) == 0){
-            enqueue(entry.taskCategory,jobHandle);
+            enqueue(entry.taskCategory, entry.jobCategory, jobHandle);
         }
 
         entry.status = JobStatus::Scheduled;
@@ -431,17 +445,20 @@ public:
     JobHandle scheduleJobHandle(JobId jobId) {
 
         auto& entry = getJobEntry(jobId);
+
         //すでにスケジュール済み
         ASSERT(entry.status != JobStatus::Scheduled, "this job is scheduled");
 
         //いずれ、自動でtaskCategoryを算出できるようにする
 
         stats_.onScheduled(entry.jobCategory, 1);
-        JobHandle handle{jobId };
+        JobHandle handle;
+        handle.jobId = jobId;
 
-        if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-            enqueue(entry.taskCategory,std::move(handle));
-        }
+        enqueue(entry.taskCategory,entry.jobCategory, handle);
+
+        /*if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+        }*/
 
         entry.status = JobStatus::Scheduled;
 
@@ -455,6 +472,7 @@ public:
 
         //いずれ、自動でtaskCategoryを算出できるようにする
         stats_.onScheduled(getJobEntry(jobs[0]).jobCategory, jobs.size());
+
         std::vector<JobHandle>handles;
         handles.reserve(jobs.size());
 
@@ -472,31 +490,32 @@ public:
     }
 
     void scheduleDependentHandle(JobHandle childHandle){
-        //auto& entry = getJobEntry(childHandle.jobId);
+        auto& entry = getJobEntry(childHandle.jobId);
         ////まだスケジュールしていない
-        //ASSERT(entry.status == JobStatus::Scheduled, "this job is not schedule");
+        ASSERT(entry.status == JobStatus::Scheduled, "this job is not schedule");
         //enqueue(childHandle);
     }
 
     //依存関係追加
     template<typename T>
-    void addDependent(JobId& childId, JobId& parentId) {
+    void addDependent(JobHandle& child, JobHandle& parent) {
         auto& jm = JobManager::Instance();
 
-        ASSERT(childId != parentId,"addDependent() do not use childJob and childJob");
+        ASSERT(child.jobId!= parent.jobId,"addDependent() do not use childJob and childJob");
 
-        auto& child =jm.getJobEntry(childId);
-        auto& parent = jm.getJobEntry(parentId);
+        auto& childJob =jm.getJobEntry(child.jobId);
+        auto& parentJob = jm.getJobEntry(parent.jobId);
 
-        std::lock_guard<std::mutex> lk(parent.data->dependentLock);
-        if (parent.func) { // まだ実行されていない
-            // childを親のnextDependentに差し込む
-            child.data->nextDependent = parent.data->nextDependent;
-            parent.data->nextDependent = childId;
+        std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
+        //if (parentJob.status != JobStatus::Completed) { // まだ実行されていない
+        //    // childを親のnextDependentに差し込む
+        //   /* child.data->nextDependent = parent.nextDependent;
+        //    parent.data->nextDependent = childId;*/
+        //    parentJob.data->nextDependent.push_back(parentJob.data);
 
-            // 子ジョブの未解決依存数を増やす
-            child->inDegree.fetch_add(1);
-        }
+        //    // 子ジョブの未解決依存数を増やす
+        //    childJob.data->inDegree.fetch_add(1);
+        //}
     }
 
    /// <summary>
@@ -524,18 +543,18 @@ public:
 public:
     void allFlushJob(const JobCategory category);
 
-    void getFlushChunk(const JobCategory category,ChunkMeta*&chunk);
+    void getFlushChunk(const JobCategory category,ChunkMeta&chunk);
 
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
     }
 
 private:
-    void enqueue(TaskCategory taskCategory,JobHandle handle);
+    void enqueue(TaskCategory taskCategory,JobCategory jobCategory,JobHandle handle);
 
-    void popChunk();
+    void popChunks();
 
-    void popChunk(ChunkMeta*&chunk);
+    void popChunk(ChunkMeta&chunk);
 
     bool allQueuesEmpty() const;
 
@@ -547,6 +566,10 @@ private:
 
     JobEntry& getJobEntry(const JobId jobId) {
         return jobStorage.getJobEntry(jobId);
+    }
+
+    JobEntry& getDense(const size_t dense) {
+        return jobStorage.getDense(dense);
     }
 
     bool clearTaskStorage(JobCategory category);
@@ -604,27 +627,18 @@ struct TaskFuture {
 
     explicit TaskFuture(JobId id) : Id(id) {}
 
-    //その場で実行。
-    void ExecuteJob(){
-        while(true){
-            return;
-        }
-    }
 
-    template<typename T = Return_t,
-        typename = std::enable_if_t<std::is_void_v<T>>>
-    bool isComplete() const{
-        auto&jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(Id);
-
-        //実行可否
-        return job.status == JobStatus::Completed;
-    }
+    ////その場で実行。
+    //void ExecuteJob(){
+    //    while(true){
+    //        return;
+    //    }
+    //}
 
     //基本はisDoneで確認して取り出す形にする。
     template<typename T = Return_t,
         typename = std::enable_if_t<std::is_void_v<T>>>
-    bool isCompleteAndGet(T* out) const {
+    bool  GetResult(T* out) const {
         auto& jm = JobManager::Instance();
         auto& job = jm.getJobEntry(Id);
 
@@ -633,6 +647,19 @@ struct TaskFuture {
         //結果を返す
         type* job = static_cast<type>(job.data);
         *out = job->result;
+        return true;
+    }
+
+    template<typename T = Return_t,
+        typename = std::enable_if_t<std::is_void_v<T>>>
+    void  GetJob(T* out) const {
+        auto& jm = JobManager::Instance();
+        auto& job = jm.getJobEntry(Id);
+
+        if (job.status != JobStatus::Completed) return false;
+
+        //Jobを返す
+        type* out = static_cast<type>(job.data);
         return true;
     }
 };
