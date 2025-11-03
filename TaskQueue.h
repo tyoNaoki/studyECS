@@ -203,13 +203,11 @@ struct ChunkMeta {
     JobHandle* begin = nullptr;
     JobHandle* end = nullptr;
     std::atomic<size_t> slotNum = 0;
-    std::vector<ChunkMeta*> dependents;
-    std::atomic<uint32_t>inDegree = 0;
 
     size_t size() const {return end - begin;}
 
     bool isEmpty(){
-        return slotNum.load(std::memory_order_relaxed) == 0;
+        return slotNum == 0;
     }
 
     JobCategory getJobCategory() const {return jobCategory;}
@@ -223,13 +221,10 @@ struct ChunkMeta {
     ChunkMeta(ChunkMeta&& other) noexcept
         : begin(other.begin),
         end(other.end),
-        dependents(std::move(other.dependents)),
-        jobCategory(other.jobCategory),
-        inDegree(other.inDegree.load(std::memory_order_relaxed))
+        jobCategory(other.jobCategory)
     {
         other.begin = nullptr;
         other.end = nullptr;
-        other.inDegree.store(0, std::memory_order_relaxed);
         slotNum.store(other.slotNum.load(std::memory_order_relaxed), std::memory_order_relaxed);
     }
 
@@ -237,16 +232,11 @@ struct ChunkMeta {
         if (this != &other) {
             begin = other.begin;
             end = other.end;
-            dependents = std::move(other.dependents);
             jobCategory = other.jobCategory;
             slotNum.store(other.slotNum.load(std::memory_order_relaxed), std::memory_order_relaxed);
 
-            inDegree.store(other.inDegree.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
-
             other.begin = nullptr;
             other.end = nullptr;
-            other.inDegree.store(0, std::memory_order_relaxed);
         }
         return *this;
     }
@@ -258,11 +248,10 @@ struct ChunkMeta {
 //Chunkはリストのブロック
 class TaskArena {
     std::vector<JobHandle> data;
-    std::vector<ChunkMeta> chunks;
+    std::deque<ChunkMeta> chunks;
 
     std::unordered_map<TaskCategory,std::vector<JobHandle>>currentSlots;
     ChunkMeta currentChunk;
-    std::atomic<size_t>position;
 
     std::mutex lock;
 
@@ -274,6 +263,8 @@ class TaskArena {
     JobCategory jobCategory;
 
     bool initFlag = false;
+
+    bool emptyFlag = false;
 
 public:
     TaskArena() = default;
@@ -292,7 +283,8 @@ public:
 
     //chunkが一つもない
     bool isEmptyChunks() const noexcept{
-        return chunks.size() == 0||chunks.size() == position.load(std::memory_order_relaxed);
+        return 
+            chunks.size() == 0;
     }
 
     bool clearAllJobHandles(){
@@ -313,24 +305,24 @@ public:
     }
 
     //一つchunkPop
-    bool popOne(ChunkMeta*& chunk) {
+    bool popOne(ChunkMeta& chunk) {
         std::lock_guard lk(lock);
         
         if(isEmptyChunks()){
             return false;
         }
         
-        size_t popPosition = position.fetch_add(1, std::memory_order_relaxed);
-        chunk = &chunks[popPosition];
+        chunk = std::move(chunks.front());
+        chunks.pop_front();
 
         return true;
     }
 
     //chunkをpop
-    void popMany(size_t maxCount,std::vector<ChunkMeta*>&out){
+    void popMany(size_t maxCount,std::vector<ChunkMeta>&out){
 
-        //取得スロットが空
-        if(maxCount == 0) return;
+        //取得スロットが空かchunksが空
+        if(maxCount == 0||emptyFlag) return;
 
         //現在の満タンのchunkがない場合、代わりに未完成のchunkを積む
         if (isEmptyChunks()) {
@@ -345,14 +337,10 @@ public:
             std::lock_guard<std::mutex> guard(lock);
 
             while (!isEmptyChunks() && budget > 0) {
-                size_t popPosition = position.fetch_add(1, std::memory_order_relaxed);
-                if (popPosition < chunks.size()) {
-                    out.push_back(&chunks[popPosition]);
-                    budget--;
-                }else{
-                    break;
-                }
-                
+
+                out.push_back(std::move(chunks.front()));
+                chunks.pop_front();
+                budget--;
             }
         }
     }
@@ -378,6 +366,8 @@ private:
 
             currentChunk = ChunkMeta(jobCategory);
         }
+
+        emptyFlag = false;
     }
 
     void pushJobs(TaskCategory cat, std::vector<JobHandle>&& jobs) {
@@ -396,6 +386,7 @@ private:
 
             currentChunk = ChunkMeta(jobCategory);
         }
+        emptyFlag = false;
     }
 
     bool isFullCurrentChunk(){

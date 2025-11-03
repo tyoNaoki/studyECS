@@ -12,8 +12,6 @@ void TaskArena::Initialize(JobCategory category,uint8_t maxSlotWorkCap, size_t m
     currentChunk = jobCategory;
 
     data.reserve(maxTasks);
-    //‰¼90
-    chunks.reserve(90);
 
     for (int i = 0; i < static_cast<int>(TaskCategory::Num); i++) {
         auto cat = static_cast<TaskCategory>(i);
@@ -24,6 +22,8 @@ void TaskArena::Initialize(JobCategory category,uint8_t maxSlotWorkCap, size_t m
 }
 
 void TaskArena::flushIncomplete(){
+    if(emptyFlag) return;
+
     std::lock_guard<std::mutex> guard(lock);
     //Œ»İ‚Ì–¢Š®¬ƒXƒƒbƒg‚·‚×‚ÄÏ‚Ş
     for (auto& [cat, slot] : currentSlots) {
@@ -39,6 +39,8 @@ void TaskArena::flushIncomplete(){
 
         currentChunk = ChunkMeta(jobCategory);
     }
+
+    emptyFlag = true;
 }
 
 void TaskArena::enqueue(TaskCategory cat,JobHandle handle){

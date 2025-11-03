@@ -150,9 +150,6 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	//int check = 5625;
 	
-	std::printf("RealTimeJob Start is %zu\n", check);
-	
-	
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
@@ -168,15 +165,16 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 		//busyWait(std::chrono::milliseconds(2));
 	}
 
-	jm.allFlushJob(ECS::JobSystem::JobCategory::RealTime);
+	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 	
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
-	std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
-
 	auto globalEnd = ECS::JobSystem::now();
+
+	std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 
 	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");

@@ -279,14 +279,37 @@ class JobManager;
 
 struct JobHandle {
     JobId jobId;
+    size_t denseIndex;
 
-    std::mutex dependentLock;
-    std::vector<JobHandle> nextDependent;
-    std::atomic<int> inDegree{ 0 }; // 未解決依存数
+    // デフォルトコンストラクタ
+    JobHandle() = default;
+
+    bool isComplete() const {
+        //auto& jm = JobManager::Instance();
+        //auto& job = jm.getJobEntry(jobId);
+
+        ////実行可否
+        //return job.status == JobStatus::Completed;
+        return true;
+    }
+
+    void Complete() const {
+        //auto& jm = JobManager::Instance();
+        //auto& job = jm.getJobEntry(jobId);
+
+        ////実行完了するまで待機
+        //while(job.status != JobStatus::Completed){
+        //
+        //}
+    }
 };
 
 struct IJobBase {
     virtual ~IJobBase() = default;
+
+    std::mutex dependentLock;
+    std::vector<JobHandle> nextDependent;
+    std::atomic<int> inDegree{ 0 }; // 未解決依存数
 };
 
 // 結果を持つ場合
