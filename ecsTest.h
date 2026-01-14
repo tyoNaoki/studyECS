@@ -108,6 +108,17 @@ struct TestNormalJobConnector
 	TestNormalJobConnector() = default;
 };
 
+struct TestEmptyJob
+{
+
+	TestNormalJobConnector connecter;
+
+	void Execute() {
+		connecter.value = connecter.value * connecter.value;
+		//return connecter.value;
+	}
+};
+
 struct TestJob
 	: public ECS::JobSystem::IJob<TestJob,void>
 {
@@ -124,6 +135,26 @@ struct TestJob
 	void Execute() {
 		connecter.value = connecter.value * connecter.value;
 		//return connecter.value;
+	}
+};
+
+struct TestParticalJob
+	: public ECS::JobSystem::IJob<TestJob, void>
+{
+	using Base = IJob<TestJob, void>;
+	using Base::Base;
+
+	std::string name;
+
+	/*static void Execute(TestJob*job) {
+		job->connecter.value = job->connecter.value * job->connecter.value;
+
+	}*/
+
+	TestParticalJob(std::string jobName) : name(jobName){}
+
+	void Execute() {
+		std::printf("%s particalJob executed \n",name.c_str());
 	}
 };
 
@@ -150,6 +181,8 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	//int check = 5625;
 	
+	
+
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		//job->schedule();
@@ -158,7 +191,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 			t.connecter.value = check;
 			}));*/
 
-		auto handle = jm.scheduleJobHandle<TestJob>(future);
+		auto handle = future.schedule();
 
 		//job.wait_and_get();
 		// 少しずつずらしてスケジューリング
@@ -169,12 +202,12 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
-	
+
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	auto globalEnd = ECS::JobSystem::now();
 
-	std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+	//std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
 
 	assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	assertTrue(!jm.isAbort(),"JobSystem Work Test");
@@ -188,7 +221,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
 
-TEST_CASE_PRIORITY(test_particalJobSystem){
+TEST_CASE_PRIORITY(test_chainJobSystem){
 	int check = 3'0000;
 	int check2 = 3'0000;
 	int check3 = 3'0000;
@@ -209,17 +242,18 @@ TEST_CASE_PRIORITY(test_particalJobSystem){
 	/*A → B
 	B は A 完了後に実行されることを確認。*/
 	{
-		auto future = jm.createJob<TestJob>();
-		//jobAHandles.push_back();
+		auto futureA = jm.createJob<TestJob>();
+		auto jobHandleA = futureA.schedule();
 
-		auto jobHandle = jm.scheduleJobHandle<TestJob>(future);
+		auto futureB = jm.createJob<TestJob>();
+		auto jobHandleB = futureB.schedule(jobHandleA);
+		jobHandleB.Complete();
 
-		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
+		auto value = futureB.getJob()->connecter.value;
+		assertTrue(value == 4,"futureB.value == 4, one chain job Test");
 	}
 
 	{
-
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}

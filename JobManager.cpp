@@ -5,40 +5,42 @@
 
 namespace ECS::JobSystem{
 
-void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobHandle* handle) {
-    ASSERT(handle, "task is invoked in JobQueue!!");
+void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobId* Id) {
+    ASSERT(*Id, "task is invoked in JobQueue!!");
 
     JobManager& jm = JobManager::Instance();
-    auto& jobEntry = jm.getJobEntry(handle->jobId);
-    ASSERT(jobEntry.status == JobStatus::Scheduled, "job is executed");
+    auto& jobEntry = jm.getJobEntry(*Id);        
+    ASSERT(!jobEntry.inner->ready, "this job is executed");
 
     jobEntry.func(jobEntry.data);
-    jobEntry.status = JobStatus::Completed;
+    jobEntry.inner->ready = true;
 
     //processDependents(jobEntry.data);
 
     jm.stats_.onJobFinish(jobEntry.jobCategory,1);
+    jobEntry.inner.reset();
 }
 
-void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*begin,JobHandle*end)
+void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin, JobId*end)
 {
     if (begin == end) return;
     JobManager& jm = JobManager::Instance();
 
-    auto jobCategory = jm.getJobEntry(begin->jobId).jobCategory;
+    auto jobCategory = jm.getJobEntry(*begin).jobCategory;
     size_t size = end - begin;
 
     //slot実行
-    for (JobHandle* it = begin; it != end; ++it) {
-        ASSERT(jm.containsJob(it->jobId), "job not contains");
-        auto& job = jm.getJobEntry(it->jobId);
+    for (JobId* it = begin; it != end; ++it) {
+        ASSERT(jm.containsJob(*it), "job not contains");
+        auto& job = jm.getJobEntry(*it);
 
-        ASSERT(job.status == JobStatus::Scheduled, "job is executed");
+        ASSERT(!job.inner->ready, "this job is executed");
 
         job.func(job.data);
-        job.status = JobStatus::Completed;
+        job.inner->ready = true;
 
         //processDependents(job.data);
+        job.inner.reset();
     }
 
     //カウント減算
@@ -47,7 +49,6 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobHandle*be
 
 void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
 {
-
     if(chunk.begin == chunk.end) return;
 
     JobManager& jm = JobManager::Instance();
@@ -55,17 +56,18 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
     size_t size = chunk.size();
 
     //chunk実行
-    for (JobHandle* it = chunk.begin; it != chunk.end; ++it) {
-        ASSERT(jm.containsJob(it->jobId),"job not contains");
-        auto& job = jm.getDense(it->denseIndex);
+    for (JobId* it = chunk.begin; it != chunk.end; ++it) {
+        ASSERT(jm.containsJob(*it),"job not contains");
+        auto& job = jm.getJobEntry(*it);
 
-        ASSERT(job.status == JobStatus::Scheduled, "job is executed");
+        ASSERT(!job.inner->ready, "this job is executed");
 
         job.func(job.data);
-        job.status = JobStatus::Completed;
+        job.inner->ready = true;
 
         //依存関係の解決
-        //processDependents(job.data);
+        processDependents(job.data);
+        job.inner.reset();
     }
 
     //カウント減算
@@ -76,14 +78,14 @@ void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parent)
 {
     auto& jm = JobManager::Instance();
 
-    for(auto child:parent->nextDependent){
-        auto& childJobEntry = jm.getJobEntry(child.jobId);
+    for(auto& child : parent->nextDependent){
+        auto& childJobEntry = jm.getJobEntry(child);
 
         auto* childJob = childJobEntry.data;
 
         if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             //スケジュール済み
-            if (childJobEntry.status == JobStatus::Scheduled) {
+            if (childJobEntry.inner) {
                 jm.scheduleDependentHandle(child);
             }
         }
@@ -249,8 +251,8 @@ void JobManager::getFlushChunk(const JobCategory category, ChunkMeta& chunk)
     popChunk(chunk);
 }
 
-void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory,JobHandle handle){
-    taskStorage.enqueue(taskCategory,handle);
+void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, JobId jobId){
+    taskStorage.enqueue(taskCategory, jobId);
 
     popChunks();
 }
@@ -307,6 +309,26 @@ size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double
     /*return static_cast<size_t>(std::min(std::floor(remaining_ms / avgJobTime), static_cast<double>(globalBackGroudQueue.size())));*/
 
     return 0;
+}
+
+void JobManager::addDependent(const JobId& child,const JobId& parent)
+{
+    auto& jm = JobManager::Instance();
+
+    ASSERT(child != parent, "addDependent() do not use childJob and childJob");
+
+    auto& childJob = jm.getJobEntry(child);
+    auto& parentJob = jm.getJobEntry(parent);
+
+    std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
+
+    if (!parentJob.inner->ready) { // まだ実行されていない
+        //childを親のnextDependentに差し込む
+        parentJob.data->nextDependent.push_back(child);
+
+        //子ジョブの未解決依存数を増やす
+        childJob.data->inDegree.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool JobManager::clearTaskStorage(JobCategory category)

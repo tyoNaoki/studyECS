@@ -200,8 +200,8 @@ namespace ECS::JobSystem{
 //};
 
 struct ChunkMeta {
-    JobHandle* begin = nullptr;
-    JobHandle* end = nullptr;
+    JobId* begin = nullptr;
+    JobId* end = nullptr;
     std::atomic<size_t> slotNum = 0;
 
     size_t size() const {return end - begin;}
@@ -247,10 +247,10 @@ struct ChunkMeta {
 
 //Chunkはリストのブロック
 class TaskArena {
-    std::vector<JobHandle> data;
+    std::vector<JobId> data;
     std::deque<ChunkMeta> chunks;
 
-    std::unordered_map<TaskCategory,std::vector<JobHandle>>currentSlots;
+    std::unordered_map<TaskCategory,std::vector<JobId>>currentSlots;
     ChunkMeta currentChunk;
 
     std::mutex lock;
@@ -273,7 +273,9 @@ public:
 
     void flushIncomplete();
 
-    void enqueue(TaskCategory cat,JobHandle handle);
+    void enqueue(TaskCategory cat,JobId jobId);
+
+    void enqueue(TaskCategory cat,std::vector<JobId>&&jobIds);
 
     void enqueue(ChunkMeta&& chunk) {
         std::lock_guard<std::mutex> guard(lock);
@@ -351,7 +353,7 @@ private:
         return (workload * static_cast<uint8_t>(currentSlots[cat].size())) >= maxWorkloadOfOneSlot;
     }
 
-    void pushJob(TaskCategory cat, JobHandle&& job) {
+    void pushJob(TaskCategory cat, JobId&& job) {
         size_t offset = data.size();
         data.push_back(std::move(job));
 
@@ -370,7 +372,7 @@ private:
         emptyFlag = false;
     }
 
-    void pushJobs(TaskCategory cat, std::vector<JobHandle>&& jobs) {
+    void pushJobs(TaskCategory cat, std::vector<JobId>&& jobs) {
         auto it = data.insert(data.end(),
             std::make_move_iterator(jobs.begin()),
             std::make_move_iterator(jobs.end()));

@@ -40,16 +40,17 @@ namespace ECS::JobSystem{
         using Invoker = void(*)(IJobBase*);
 
         Invoker func = nullptr;
+
         //null時:未作成
         IJobBase* data = nullptr;
 
         JobCategory jobCategory;
         TaskCategory taskCategory;
 
-        std::atomic<JobStatus> status{JobStatus::UnSchedule};
+        std::shared_ptr<Inner>inner;
 
         JobEntry() = default;
-        JobEntry(Invoker f, IJobBase* d) : func(f), data(d),status(JobStatus::UnSchedule) {}
+        JobEntry(Invoker f, IJobBase* d) : func(f), data(d) {}
 
         // ムーブ可能にする
         JobEntry(JobEntry&& other) noexcept {
@@ -57,8 +58,7 @@ namespace ECS::JobSystem{
             data = other.data;
             jobCategory = other.jobCategory;
             taskCategory = other.taskCategory;
-            status.store(other.status.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
+            inner = std::move(other.inner);
         }
 
         JobEntry& operator=(JobEntry&& other) noexcept {
@@ -67,23 +67,21 @@ namespace ECS::JobSystem{
                 data = other.data;
                 jobCategory = other.jobCategory;
                 taskCategory = other.taskCategory;
-                status.store(other.status.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
+                inner = other.inner;
             }
+
             return *this;
         }
 
         void swap(JobEntry& other) noexcept {
-            std::swap(func, other.func);
-            std::swap(data, other.data);
-            jobCategory = other.jobCategory;
-            taskCategory = other.taskCategory;
-            // atomic は直接 swap できないので load/store 経由
-            auto s1 = status.load(std::memory_order_relaxed);
-            auto s2 = other.status.load(std::memory_order_relaxed);
-            status.store(s2, std::memory_order_relaxed);
-            other.status.store(s1, std::memory_order_relaxed);
+            using std::swap;
+            swap(func, other.func);
+            swap(data, other.data);
+            swap(jobCategory, other.jobCategory);
+            swap(taskCategory, other.taskCategory);
+            other.inner->swap(std::move(other.inner));
         }
+
     };
 
     struct JobStorage {
@@ -111,7 +109,7 @@ namespace ECS::JobSystem{
 
             JobId newId = allocateJobId();
 
-            if(sparse.size()<=newId){
+            if(sparse.size() <= newId){
                 sparse.emplace_back();
                 sparse.back() = NULL_JOB_ID;
             }
@@ -241,9 +239,7 @@ namespace ECS::JobSystem{
     class JobStats {
         friend class JobManager;
 
-        void onScheduled(const JobCategory cat, size_t count) noexcept{
-            scheduled[size_t(cat)].fetch_add(count, std::memory_order_release);
-        }
+        
 
         // pending の増減
         //void onEnqueued(const JobCategory cat, size_t count) noexcept {
@@ -266,6 +262,10 @@ namespace ECS::JobSystem{
         void onJobFinish(const JobCategory cat, size_t count) noexcept;
 
     public:
+        void onScheduled(const JobCategory cat, size_t count) noexcept {
+            scheduled[size_t(cat)].fetch_add(count, std::memory_order_release);
+        }
+
         // フレーム終端で指定カテゴリがすべて完了するまで待つ
         void waitForAll(const JobCategory cat);
 
@@ -334,7 +334,6 @@ class JobManager
     static constexpr double bgRatioMin = 0.10;
 
     static constexpr double bgRatioMax = 0.50;
-
     //TaskQueueパラメータ設定
     static constexpr size_t realTimeCap = 100'000;
     static constexpr size_t backGroundCap = 1'000;
@@ -353,12 +352,11 @@ class JobManager
     JobManager& operator=(const JobManager&) = delete;
 
     struct Executor {
-        void runJob(size_t workerId, JobHandle* handle);
+        void runJob(size_t workerId, JobId* Id);
 
-        void runSlot(size_t workerId, JobHandle* begin, JobHandle* end);
+        void runSlot(size_t workerId, JobId* begin, JobId* end);
 
         void runChunk(size_t workerId, ChunkMeta&& chunk);
-
     private:
         void processDependents(IJobBase* parent);
     };
@@ -369,6 +367,7 @@ public:
         return manager;
     }
 
+    //実行用
     Executor& executor() {
         static Executor exec;
         return exec;
@@ -426,96 +425,90 @@ public:
     JobHandle scheduleJobHandle(TaskFuture<T>&future) {
 
         auto&entry = getJobEntry(future.Id);
-        //すでにスケジュール済み
-        ASSERT(entry.status != JobStatus::Scheduled,"this job is scheduled");
+
+        ASSERT(!entry.inner||entry.inner->ready, "this job is scheduled");
 
         //いずれ、自動でtaskCategoryを算出できるようにする
         stats_.onScheduled(entry.jobCategory,1);
-        JobHandle jobHandle{ future.Id ,jobStorage.getDenseIndex(future.Id)};
+        entry.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ future.Id,entry.inner };
 
         if(entry.data->inDegree.load(std::memory_order_acquire) == 0){
-            enqueue(entry.taskCategory, entry.jobCategory, jobHandle);
+            enqueue(entry.taskCategory, entry.jobCategory, future.Id);
         }
-
-        entry.status = JobStatus::Scheduled;
 
         return jobHandle;
     }
 
-    JobHandle scheduleJobHandle(JobId jobId) {
+    template<typename T>
+    JobHandle scheduleJobHandle(TaskFuture<T>& future, JobHandle& handle) {
 
-        auto& entry = getJobEntry(jobId);
+        auto& entry = getJobEntry(future.Id);
 
-        //すでにスケジュール済み
-        ASSERT(entry.status != JobStatus::Scheduled, "this job is scheduled");
+        ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
 
         //いずれ、自動でtaskCategoryを算出できるようにする
-
         stats_.onScheduled(entry.jobCategory, 1);
-        JobHandle handle;
-        handle.jobId = jobId;
+        entry.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ future.Id,entry.inner };
 
-        enqueue(entry.taskCategory,entry.jobCategory, handle);
+        addDependent(future.Id, handle.jobId);
 
-        /*if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-        }*/
-
-        entry.status = JobStatus::Scheduled;
-
-        return handle;
-    }
-
-    std::vector<JobHandle>&& scheduleJobHandles(std::vector<JobId>&&jobs) {
-
-        ////すでにスケジュール済み
-        //ASSERT(entry.status != JobStatus::Scheduled, "this job is scheduled");
-
-        //いずれ、自動でtaskCategoryを算出できるようにする
-        stats_.onScheduled(getJobEntry(jobs[0]).jobCategory, jobs.size());
-
-        std::vector<JobHandle>handles;
-        handles.reserve(jobs.size());
-
-        for(int i = 0;i< handles.size();i++){
-            auto&entry = getJobEntry(jobs[i]);
-            handles[i].jobId = jobs[i];
-            entry.status = JobStatus::Scheduled;
+        if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+            enqueue(entry.taskCategory, entry.jobCategory, future.Id);
         }
 
-        /*if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-            enqueue(jobHandle);
-        }*/
-
-        return std::move(handles);
+        return jobHandle;
     }
 
-    void scheduleDependentHandle(JobHandle childHandle){
-        auto& entry = getJobEntry(childHandle.jobId);
-        ////まだスケジュールしていない
-        ASSERT(entry.status == JobStatus::Scheduled, "this job is not schedule");
-        //enqueue(childHandle);
-    }
-
-    //依存関係追加
     template<typename T>
-    void addDependent(JobHandle& child, JobHandle& parent) {
-        auto& jm = JobManager::Instance();
+    JobHandle scheduleJobHandle(TaskFuture<T>& future,std::vector<JobHandle>&&jobHandles) {
 
-        ASSERT(child.jobId!= parent.jobId,"addDependent() do not use childJob and childJob");
+        auto& entry = getJobEntry(future.Id);
 
-        auto& childJob =jm.getJobEntry(child.jobId);
-        auto& parentJob = jm.getJobEntry(parent.jobId);
+        ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
 
-        std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
-        //if (parentJob.status != JobStatus::Completed) { // まだ実行されていない
-        //    // childを親のnextDependentに差し込む
-        //   /* child.data->nextDependent = parent.nextDependent;
-        //    parent.data->nextDependent = childId;*/
-        //    parentJob.data->nextDependent.push_back(parentJob.data);
+        //いずれ、自動でtaskCategoryを算出できるようにする
+        stats_.onScheduled(entry.jobCategory, 1);
+        entry.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ future.Id,entry.inner};
 
-        //    // 子ジョブの未解決依存数を増やす
-        //    childJob.data->inDegree.fetch_add(1);
-        //}
+        for(auto&parent : jobHandles){
+            addDependent(future.Id,parent.jobId);
+        }
+
+        if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+            enqueue(entry.taskCategory, entry.jobCategory, jobHandle);
+        }
+
+        return jobHandle;
+    }
+
+    void scheduleDependentHandles(std::vector<JobId>&&jobs) {
+
+#ifdef DEBUG
+        //jobsのスケジュール済みかどうかチェック
+        ASSERT(!jobs.empty(),"jobs is empty");
+
+        for(size_t i = 0;i<jobs.size();i++){
+            auto& entry = getJobEntry(jobs[i].jobId);
+            ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+        }
+
+#endif // DEBUG
+
+        auto&entry = getJobEntry(jobs[0]);
+
+        taskStorage.enqueue(entry.taskCategory, std::move(jobs));
+
+        popChunks();
+    }
+
+    void scheduleDependentHandle(JobId childId){
+        auto& entry = getJobEntry(childId);
+        ASSERT(!entry.inner->ready, "this job is executed");
+
+        enqueue(entry.taskCategory, entry.jobCategory, childId);
     }
 
    /// <summary>
@@ -540,6 +533,7 @@ public:
     void popGlobalBackGroundQueue();
 
     const size_t getThreadSize() const{ return threadSize;}
+
 public:
     void allFlushJob(const JobCategory category);
 
@@ -549,8 +543,12 @@ public:
         return abortFlag.load(std::memory_order_acquire);
     }
 
+    JobEntry& getJobEntry(const JobId jobId) {
+        return jobStorage.getJobEntry(jobId);
+    }
+
 private:
-    void enqueue(TaskCategory taskCategory,JobCategory jobCategory,JobHandle handle);
+    void enqueue(TaskCategory taskCategory,JobCategory jobCategory,JobId jobId);
 
     void popChunks();
 
@@ -564,9 +562,8 @@ private:
 
     size_t calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime);
 
-    JobEntry& getJobEntry(const JobId jobId) {
-        return jobStorage.getJobEntry(jobId);
-    }
+    //依存関係追加
+    void addDependent(const JobId& child,const JobId& parent);
 
     JobEntry& getDense(const size_t dense) {
         return jobStorage.getDense(dense);
@@ -627,40 +624,151 @@ struct TaskFuture {
 
     explicit TaskFuture(JobId id) : Id(id) {}
 
-
     ////その場で実行。
     //void ExecuteJob(){
+    // 
     //    while(true){
     //        return;
     //    }
     //}
 
-    //基本はisDoneで確認して取り出す形にする。
-    template<typename T = Return_t,
-        typename = std::enable_if_t<std::is_void_v<T>>>
-    bool  GetResult(T* out) const {
+    JobHandle schedule() {
         auto& jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(Id);
+        return jm.scheduleJobHandle(*this);
+        //auto& job = jm.getJobEntry(Id);
 
-        if(job.status != JobStatus::Completed) return false;
+        ////auto* derived = static_cast<Derived_t*>(job.data);
 
-        //結果を返す
-        type* job = static_cast<type>(job.data);
-        *out = job->result;
-        return true;
+        //jm.getStats().onScheduled(job.jobCategory, 1);
+        //job.inner = std::make_shared<Inner>();
+        //JobHandle jobHandle{ Id,job.inner };
+
+        //jm.enqueue(job.taskCategory, job.jobCategory, Id);
+
+        //return jobHandle;
     }
 
-    template<typename T = Return_t,
-        typename = std::enable_if_t<std::is_void_v<T>>>
-    void  GetJob(T* out) const {
+    JobHandle schedule(std::vector<std::function<void(Derived_t&)>>&& commands) {
         auto& jm = JobManager::Instance();
         auto& job = jm.getJobEntry(Id);
 
-        if (job.status != JobStatus::Completed) return false;
+        auto* derived = static_cast<Derived_t*>(job.data);
+        derived->AddRequest(std::move(commands));
+
+        return jm.scheduleJobHandle(*this);
+        /*auto& job = jm.getJobEntry(Id);
+
+        auto* derived = static_cast<Derived_t*>(job.data);
+        derived->AddRequest(std::move(commands));
+
+        jm.getStats().onScheduled(job.jobCategory, 1);
+        job.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ Id,job.inner };
+
+        jm.enqueue(job.taskCategory, job.jobCategory, Id);
+
+        return jobHandle;*/
+    }
+
+    JobHandle schedule(JobHandle&handle) {
+        auto& jm = JobManager::Instance();
+        return jm.scheduleJobHandle(*this,handle);
+
+        /*jm.getStats().onScheduled(job.jobCategory, 1);
+        job.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ Id,job.inner };
+
+        jm.addDependent(jobHandle, handle);
+
+        if (job.data->inDegree.load(std::memory_order_acquire) == 0) {
+            jm.enqueue(job.taskCategory, job.jobCategory, Id);
+        }
+
+        return jobHandle;*/
+    }
+
+    JobHandle schedule(std::vector<std::function<void(Derived_t&)>>&& commands,JobHandle& handle) {
+        auto& jm = JobManager::Instance();
+        auto& job = jm.getJobEntry(Id);
+
+        auto* derived = static_cast<Derived_t*>(job.data);
+        derived->AddRequest(std::move(commands));
+
+        return jm.scheduleJobHandle(*this, handle);
+        /*auto& job = jm.getJobEntry(Id);
+
+        auto* derived = static_cast<Derived_t*>(job.data);
+        derived->AddRequest(std::move(commands));
+        jm.getStats().onScheduled(job.jobCategory, 1);
+        job.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ Id,job.inner };
+
+        jm.addDependent(jobHandle, handle);
+
+        if (job.data->inDegree.load(std::memory_order_acquire) == 0) {
+            jm.enqueue(job.taskCategory, job.jobCategory, Id);
+        }
+
+        return jobHandle;*/
+    }
+
+    JobHandle schedule(std::vector<JobHandle>&& dependents) {
+        auto& jm = JobManager::Instance();
+        return jm.scheduleJobHandle(*this, std::move(dependents));
+
+       /* auto& job = jm.getJobEntry(Id);
+
+        job.inner = std::make_shared<Inner>();
+
+        jm.getStats().onScheduled(job.jobCategory, 1);
+        JobHandle jobHandle{ Id,job.inner };
+
+        for (auto& parent : dependents) {
+            jm.addDependent(jobHandle, parent);
+        }
+
+        if (job.data->inDegree.load(std::memory_order_acquire) == 0) {
+            jm.enqueue(job.taskCategory, job.jobCategory, Id);
+        }
+
+        return jobHandle;*/
+    }
+
+    JobHandle schedule(std::vector<std::function<void(Derived_t&)>>&&commands,std::vector<JobHandle>&&dependents){
+        auto&jm = JobManager::Instance();
+        auto& job = jm.getJobEntry(Id);
+
+        auto* derived = static_cast<Derived_t*>(job.data);
+        derived->AddRequest(std::move(commands));
+
+        return jm.scheduleJobHandle(*this, std::move(dependents));
+
+        /*auto& job = jm.getJobEntry(Id);
+
+        auto* derived = static_cast<Derived_t*>(job.data);
+        derived->AddRequest(std::move(commands));
+        jm.getStats().onScheduled(job.jobCategory, 1);
+
+        job.inner = std::make_shared<Inner>();
+        JobHandle jobHandle{ Id,job.inner };
+
+        for (auto& parent : dependents) {
+            jm.addDependent(jobHandle, parent);
+        }
+
+        if (job.data->inDegree.load(std::memory_order_acquire) == 0) {
+            jm.enqueue(job.taskCategory, job.jobCategory, Id);
+        }
+
+        return jobHandle;*/
+    }
+
+    type* getJob() const {
+        auto& jm = JobManager::Instance();
+        auto& job = jm.getJobEntry(Id);
 
         //Jobを返す
-        type* out = static_cast<type>(job.data);
-        return true;
+        return static_cast<type*>(job.data);
     }
 };
 
