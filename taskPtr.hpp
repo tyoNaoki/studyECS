@@ -277,12 +277,31 @@ struct DummyBuffer {};
 
 class JobManager;
 
+struct Inner {
+    std::atomic<bool>ready = false;
+
+    Inner& operator=(Inner&& other) noexcept {
+        ready.store(other.ready.load(std::memory_order_relaxed));
+
+        return *this;
+    }
+
+    void swap(std::shared_ptr<Inner>&& inner) {
+        auto r = inner->ready.load(std::memory_order_relaxed);
+        auto r2 = ready.load(std::memory_order_relaxed);
+
+        ready.store(r, std::memory_order_relaxed);
+        inner->ready.store(r2, std::memory_order_relaxed);
+    }
+};
+
 struct JobHandle {
     JobId jobId;
-    size_t denseIndex;
+    std::shared_ptr<Inner>inner;
+    //size_t denseIndex;
 
     // デフォルトコンストラクタ
-    JobHandle() = default;
+    JobHandle() = delete;
 
     bool isComplete() const {
         //auto& jm = JobManager::Instance();
@@ -290,7 +309,7 @@ struct JobHandle {
 
         ////実行可否
         //return job.status == JobStatus::Completed;
-        return true;
+        return inner->ready;
     }
 
     void Complete() const {
@@ -298,9 +317,9 @@ struct JobHandle {
         //auto& job = jm.getJobEntry(jobId);
 
         ////実行完了するまで待機
-        //while(job.status != JobStatus::Completed){
-        //
-        //}
+        while(!inner->ready) {
+        
+        }
     }
 };
 
@@ -308,7 +327,7 @@ struct IJobBase {
     virtual ~IJobBase() = default;
 
     std::mutex dependentLock;
-    std::vector<JobHandle> nextDependent;
+    std::vector<JobId> nextDependent;
     std::atomic<int> inDegree{ 0 }; // 未解決依存数
 };
 
@@ -336,8 +355,12 @@ public:
 
     ~IJob() = default;
 
-    void AddRequeset(std::function<void(Derived&)>&& fn) {
+    void AddRequest(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
+    }
+
+    void AddRequest(std::vector<std::function<void(Derived&)>>&& fns) {
+        std::swap(commands,fns);
     }
 
 protected:
@@ -376,7 +399,6 @@ struct IJob
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
 public:
-
     IJob() = default;
 
     ~IJob() = default;

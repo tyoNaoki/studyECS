@@ -89,34 +89,6 @@ struct RealTimePolicy{
         }
 
         return false;
-
-        //takeNum = (*localQ)->emptyNum();
-
-        ////空きスロットがある
-        //if ((*localQ)->emptyNum() != 0) {
-        //    std::vector<ChunkMeta*> chunks;
-
-        //    // BackGround待機キューから取得
-        //    bg->popMany(takeNum,chunks);
-
-        //    while (!chunks.empty()) {
-        //        ChunkMeta* chunk = std::move(chunks.back());
-
-        //        chunks.pop_back();
-
-        //        (*localQ)->pushWithTimeout(std::move(chunk), bg);
-        //    }
-        //}
-        //
-        ////backGroundJob処理
-        //if (stats.scheduledJobCount(JobCategory::BackGround) <= 0) return false;
-
-        //if((*localQ)->popOrSteal(stealQs,queueSize,chunkHandle)){
-        //    manager.executor().runChunk(workerId, std::move(chunkHandle));
-
-        //    executeCategory = JobCategory::BackGround;
-        //    return true;
-        //}
     }
 
     static constexpr size_t localQueueCap = 32;
