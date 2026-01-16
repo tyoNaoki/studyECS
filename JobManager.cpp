@@ -148,10 +148,10 @@ bool JobManager::checkRanAllJobInJobQueues()
     return true;
 }
 
-void JobManager::addRemoveJob(JobHandle& handle)
+void JobManager::addRemoveJob(JobId& jobId)
 {
-    jobStorage.addRemoveJob(handle);
-    handle.jobId = NULL_JOB_ID;
+    jobStorage.addRemoveJob(jobId);
+    jobId = NULL_JOB_ID;
 }
 
 //TaskPtr JobManager::pushJobWaitQueue(Job&& job, int degree, JobCategory cat)
@@ -244,6 +244,20 @@ void JobManager::allFlushJob(const JobCategory category){
     popChunks();
 }
 
+bool JobManager::stealChunk(const JobCategory category, ChunkMeta& chunk)
+{
+    for(auto& localQ : localQueues){
+        auto result = localQ->stealTop(99);
+
+        if(result.first == StealStatus::Success){
+            chunk = std::move(*result.second);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 void JobManager::getFlushChunk(const JobCategory category, ChunkMeta& chunk)
 {
     taskStorage.flushIncomplete();
@@ -319,6 +333,26 @@ void JobManager::addDependent(const JobId& child,const JobId& parent)
 
     auto& childJob = jm.getJobEntry(child);
     auto& parentJob = jm.getJobEntry(parent);
+
+    std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
+
+    if (!parentJob.inner->ready) { // まだ実行されていない
+        //childを親のnextDependentに差し込む
+        parentJob.data->nextDependent.push_back(child);
+
+        //子ジョブの未解決依存数を増やす
+        childJob.data->inDegree.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+void JobManager::addDependent(const JobId& child, JobHandle& parent)
+{
+    auto& jm = JobManager::Instance();
+
+    ASSERT(child != parent.jobId, "addDependent() do not use childJob and childJob");
+
+    auto& childJob = jm.getJobEntry(child);
+    auto& parentJob = jm.getJobEntry(parent.jobId);
 
     std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
 

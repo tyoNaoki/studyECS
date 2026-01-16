@@ -7,6 +7,8 @@
 
 namespace ECS::JobSystem{
 
+class JobManager;
+
     struct Logger {
         inline static thread_local std::ostringstream localLogBuffer;
         inline static std::mutex outMutex;
@@ -74,7 +76,6 @@ struct RealTimePolicy{
 
                 return true;
             }else{
-
                 //–¢Š®¬‚Ìchunk‚ğˆê‚Âæ“¾AÀs
                 manager.getFlushChunk(JobCategory::RealTime,chunkHandle);
 

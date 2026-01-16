@@ -65,126 +65,126 @@ enum class JobCategory { RealTime, BackGround, Num };
   static constexpr auto field_ptrs()                                \
   { return std::make_tuple(__VA_ARGS__); }
 
-struct Job {
-
-private:
-    // 最大キャプチャ領域
-    static constexpr size_t BufferSize = 32;
-
-    // 呼び出し時の関数ポインタ型
-    using Invoker = void(*)(void*);
-    using Destroyer = void(*)(void*);
-
-    // 実データ格納＋呼び出し子
-    alignas(void*) char  buf[BufferSize];
-    Invoker invoke_fn = nullptr;
-    Destroyer  destroy_fn = nullptr;
-
-public:
-    Job() = default;
-
-    Job(Job&& o) noexcept {
-        invoke_fn = o.invoke_fn;
-        destroy_fn = o.destroy_fn;
-        memcpy(buf, o.buf, BufferSize);
-        o.invoke_fn = nullptr;
-        o.destroy_fn = nullptr;
-    }
-
-    // 任意の小さいラムダ／関数オブジェクトをムーブキャプチャ
-    template<typename F>
-    Job(F&& f) noexcept {
-        static_assert(sizeof(F) <= BufferSize,
-            "Job function over BufferSize");
-        new (buf) F(std::move(f));
-        invoke_fn = [](void* p) {
-            auto fp = static_cast<F*>(p);
-            (*fp)();
-        };
-
-        destroy_fn = [](void* p) {
-            static_cast<F*>(p)->~F();
-        };
-    }
-
-    //デストラクター
-    ~Job() {
-        if (destroy_fn) {
-            destroy_fn(buf);
-        }
-    }
-
-    //ここで必要になるのがムーブ代入演算子
-    Job& operator=(Job&& o) noexcept {
-        if (this != &o) {
-            // 1) 既存のキャプチャを破棄
-            if (destroy_fn) destroy_fn(buf);
-
-            // 2) データをムーブ
-            invoke_fn = o.invoke_fn;
-            destroy_fn = o.destroy_fn;
-            std::memcpy(buf, o.buf, BufferSize);
-
-            // 3) ムーブ元をクリア
-            o.invoke_fn = nullptr;
-            o.destroy_fn = nullptr;
-        }
-        return *this;
-    }
-
-    // 一度きりの実行
-    void invoke() noexcept {
-        if (invoke_fn) {
-            invoke_fn(buf);
-            if (destroy_fn) {
-                destroy_fn(buf);
-                destroy_fn = nullptr;
-            }
-
-            invoke_fn = nullptr;
-        }
-    }
-
-    bool valid() const noexcept {
-        return invoke_fn != nullptr;
-    }
-
-    // 暗黙の bool 変換は禁止
-    explicit operator bool() const noexcept = delete;
-};
-
-struct Task {
-    Job job;
-    std::atomic<int>   inDegree{ 0 };
-    intrusive_ptr<Task> nextDependent;
-    std::mutex taskMutex;
-    JobCategory category;
-    std::atomic<uint32_t> refCount;
-
-    Task(Job jb, int degree,JobCategory category)
-        : refCount(0)
-        , job(std::move(jb))
-        , inDegree(degree)
-        , nextDependent(nullptr)
-        ,category(category)
-    {}
-
-    void add_ref() { refCount.fetch_add(1, std::memory_order_relaxed); }
-
-    void release() {
-        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-
-           delete this;
-        }
-    }
-
-    void addDependent(Task* parent) {
-        // 自身を親の先頭に差し込む
-        nextDependent = parent->nextDependent;
-        parent->nextDependent = this;
-        inDegree.fetch_add(1);
-    }
-};
+//struct Job {
+//
+//private:
+//    // 最大キャプチャ領域
+//    static constexpr size_t BufferSize = 32;
+//
+//    // 呼び出し時の関数ポインタ型
+//    using Invoker = void(*)(void*);
+//    using Destroyer = void(*)(void*);
+//
+//    // 実データ格納＋呼び出し子
+//    alignas(void*) char  buf[BufferSize];
+//    Invoker invoke_fn = nullptr;
+//    Destroyer  destroy_fn = nullptr;
+//
+//public:
+//    Job() = default;
+//
+//    Job(Job&& o) noexcept {
+//        invoke_fn = o.invoke_fn;
+//        destroy_fn = o.destroy_fn;
+//        memcpy(buf, o.buf, BufferSize);
+//        o.invoke_fn = nullptr;
+//        o.destroy_fn = nullptr;
+//    }
+//
+//    // 任意の小さいラムダ／関数オブジェクトをムーブキャプチャ
+//    template<typename F>
+//    Job(F&& f) noexcept {
+//        static_assert(sizeof(F) <= BufferSize,
+//            "Job function over BufferSize");
+//        new (buf) F(std::move(f));
+//        invoke_fn = [](void* p) {
+//            auto fp = static_cast<F*>(p);
+//            (*fp)();
+//        };
+//
+//        destroy_fn = [](void* p) {
+//            static_cast<F*>(p)->~F();
+//        };
+//    }
+//
+//    //デストラクター
+//    ~Job() {
+//        if (destroy_fn) {
+//            destroy_fn(buf);
+//        }
+//    }
+//
+//    //ここで必要になるのがムーブ代入演算子
+//    Job& operator=(Job&& o) noexcept {
+//        if (this != &o) {
+//            // 1) 既存のキャプチャを破棄
+//            if (destroy_fn) destroy_fn(buf);
+//
+//            // 2) データをムーブ
+//            invoke_fn = o.invoke_fn;
+//            destroy_fn = o.destroy_fn;
+//            std::memcpy(buf, o.buf, BufferSize);
+//
+//            // 3) ムーブ元をクリア
+//            o.invoke_fn = nullptr;
+//            o.destroy_fn = nullptr;
+//        }
+//        return *this;
+//    }
+//
+//    // 一度きりの実行
+//    void invoke() noexcept {
+//        if (invoke_fn) {
+//            invoke_fn(buf);
+//            if (destroy_fn) {
+//                destroy_fn(buf);
+//                destroy_fn = nullptr;
+//            }
+//
+//            invoke_fn = nullptr;
+//        }
+//    }
+//
+//    bool valid() const noexcept {
+//        return invoke_fn != nullptr;
+//    }
+//
+//    // 暗黙の bool 変換は禁止
+//    explicit operator bool() const noexcept = delete;
+//};
+//
+//struct Task {
+//    Job job;
+//    std::atomic<int>   inDegree{ 0 };
+//    intrusive_ptr<Task> nextDependent;
+//    std::mutex taskMutex;
+//    JobCategory category;
+//    std::atomic<uint32_t> refCount;
+//
+//    Task(Job jb, int degree,JobCategory category)
+//        : refCount(0)
+//        , job(std::move(jb))
+//        , inDegree(degree)
+//        , nextDependent(nullptr)
+//        ,category(category)
+//    {}
+//
+//    void add_ref() { refCount.fetch_add(1, std::memory_order_relaxed); }
+//
+//    void release() {
+//        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+//
+//           delete this;
+//        }
+//    }
+//
+//    void addDependent(Task* parent) {
+//        // 自身を親の先頭に差し込む
+//        nextDependent = parent->nextDependent;
+//        parent->nextDependent = this;
+//        inDegree.fetch_add(1);
+//    }
+//};
 
 //template<typename T>
 //struct SettableParallelJobFuture {
@@ -274,54 +274,6 @@ struct Task {
 //};
 
 struct DummyBuffer {};
-
-class JobManager;
-
-struct Inner {
-    std::atomic<bool>ready = false;
-
-    Inner& operator=(Inner&& other) noexcept {
-        ready.store(other.ready.load(std::memory_order_relaxed));
-
-        return *this;
-    }
-
-    void swap(std::shared_ptr<Inner>&& inner) {
-        auto r = inner->ready.load(std::memory_order_relaxed);
-        auto r2 = ready.load(std::memory_order_relaxed);
-
-        ready.store(r, std::memory_order_relaxed);
-        inner->ready.store(r2, std::memory_order_relaxed);
-    }
-};
-
-struct JobHandle {
-    JobId jobId;
-    std::shared_ptr<Inner>inner;
-    //size_t denseIndex;
-
-    // デフォルトコンストラクタ
-    JobHandle() = delete;
-
-    bool isComplete() const {
-        //auto& jm = JobManager::Instance();
-        //auto& job = jm.getJobEntry(jobId);
-
-        ////実行可否
-        //return job.status == JobStatus::Completed;
-        return inner->ready;
-    }
-
-    void Complete() const {
-        //auto& jm = JobManager::Instance();
-        //auto& job = jm.getJobEntry(jobId);
-
-        ////実行完了するまで待機
-        while(!inner->ready) {
-        
-        }
-    }
-};
 
 struct IJobBase {
     virtual ~IJobBase() = default;

@@ -177,6 +177,10 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSystem::JobCategory::BackGround);
+
+		job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
+			t.connecter.value = check;
+			}));
 	}*/
 
 	//int check = 5625;
@@ -185,17 +189,9 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
-		//job->schedule();
 		auto future = jm.createJob<TestJob>();
-		/*job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
-			t.connecter.value = check;
-			}));*/
 
 		auto handle = future.schedule();
-
-		//job.wait_and_get();
-		// 少しずつずらしてスケジューリング
-		//busyWait(std::chrono::milliseconds(2));
 	}
 
 	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
