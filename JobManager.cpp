@@ -55,6 +55,26 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
 
     size_t size = chunk.size();
 
+    ////int value = 2;
+    ////auto func = [&value]{int temp = value * value;};
+
+    //for (size_t i = 0;i<size;i++) {
+    //    func();
+    //    bool isReady = true;
+
+    //    //ASSERT(jm.containsJob(*it), "job not contains");
+    //    //auto& job = jm.getJobEntry(*it);
+
+    //    //ASSERT(!job.inner->ready, "this job is executed");
+
+    //    //job.func(job.data);
+    //    //job.inner->ready = true;
+
+    //    //依存関係の解決
+    //    //processDependents(job.data);
+    //    //job.inner.reset();
+    //}
+
     //chunk実行
     for (JobId* it = chunk.begin; it != chunk.end; ++it) {
         ASSERT(jm.containsJob(*it),"job not contains");
@@ -135,6 +155,63 @@ void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique
 JobManager::~JobManager()
 {
     if (!initFlag)return;
+}
+
+JobHandle JobManager::scheduleJobHandle(JobId jobId)
+{
+    auto& entry = getJobEntry(jobId);
+
+    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+
+    //いずれ、自動でtaskCategoryを算出できるようにする
+    stats_.onScheduled(entry.jobCategory, 1);
+    entry.inner = std::make_shared<Inner>();
+
+    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+    }
+
+    return JobHandle::createHandle(jobId, entry.inner);
+}
+
+JobHandle JobManager::scheduleJobHandle(JobId jobId, JobHandle& handle)
+{
+    auto& entry = getJobEntry(jobId);
+
+    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+
+    //いずれ、自動でtaskCategoryを算出できるようにする
+    stats_.onScheduled(entry.jobCategory, 1);
+    entry.inner = std::make_shared<Inner>();
+
+    addDependent(jobId, handle);
+
+    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+    }
+
+    return JobHandle::createHandle(jobId, entry.inner);
+}
+
+JobHandle JobManager::scheduleJobHandle(JobId jobId, std::vector<JobHandle>&& jobHandles)
+{
+    auto& entry = getJobEntry(jobId);
+
+    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+
+    //いずれ、自動でtaskCategoryを算出できるようにする
+    stats_.onScheduled(entry.jobCategory, 1);
+    entry.inner = std::make_shared<Inner>();
+
+    for (auto& parent : jobHandles) {
+        addDependent(jobId, parent.jobId);
+    }
+
+    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+    }
+
+    return JobHandle::createHandle(jobId, entry.inner);
 }
 
 bool JobManager::checkRanAllJobInJobQueues()
@@ -405,6 +482,40 @@ void JobStats::waitForAll(const JobCategory cat)
         }
 
         cv_.wait(lk);
+    }
+}
+
+bool JobHandle::isComplete() const
+{
+    ////実行可否
+    return inner->ready;
+}
+
+void JobHandle::Complete() const
+{
+    auto& jm = JobManager::Instance();
+    auto& job = jm.getJobEntry(jobId);
+
+    ////実行完了するまでChunkをフラッシュしてChunk実行し続ける
+    while (!inner->ready) {
+
+        ChunkMeta chunk;
+
+        //ワーカースレッドからstealする
+        if (!jm.stealChunk(job.jobCategory, chunk)) {
+            //グローバルキューにあるjobをフラッシュする
+            jm.getFlushChunk(job.jobCategory, chunk);
+        }
+
+        //chunkが空ではない
+        if (!chunk.isEmpty()) {
+            //chunk実行
+            jm.executor().runChunk(99, std::move(chunk));
+            continue;
+        }
+
+        //何も取れない
+        std::this_thread::yield();
     }
 }
 

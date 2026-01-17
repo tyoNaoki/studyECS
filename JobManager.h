@@ -326,7 +326,7 @@ namespace ECS::JobSystem{
         std::condition_variable cv_;
     };
 
-    struct JobHandle;
+struct JobHandle;
 
 class JobManager
 {
@@ -441,68 +441,11 @@ public:
 
     //job = JobHandle.dependents(handle1,handle2);
 
-    template<typename T>
-    JobHandle scheduleJobHandle(TaskFuture<T>&future) {
+    JobHandle scheduleJobHandle(JobId jobId) ;
 
-        auto&entry = getJobEntry(future.Id);
+    JobHandle scheduleJobHandle(JobId jobId, JobHandle& handle);
 
-        ASSERT(!entry.inner||entry.inner->ready, "this job is scheduled");
-
-        //いずれ、自動でtaskCategoryを算出できるようにする
-        stats_.onScheduled(entry.jobCategory,1);
-        entry.inner = std::make_shared<Inner>();
-        JobHandle jobHandle{ future.Id,entry.inner };
-
-        if(entry.data->inDegree.load(std::memory_order_acquire) == 0){
-            enqueue(entry.taskCategory, entry.jobCategory, future.Id);
-        }
-
-        return jobHandle;
-    }
-
-    template<typename T>
-    JobHandle scheduleJobHandle(TaskFuture<T>& future, JobHandle& handle) {
-
-        auto& entry = getJobEntry(future.Id);
-
-        ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-
-        //いずれ、自動でtaskCategoryを算出できるようにする
-        stats_.onScheduled(entry.jobCategory, 1);
-        entry.inner = std::make_shared<Inner>();
-        JobHandle jobHandle{ future.Id,entry.inner };
-
-        addDependent(future.Id, handle);
-
-        if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-            enqueue(entry.taskCategory, entry.jobCategory, future.Id);
-        }
-
-        return jobHandle;
-    }
-
-    template<typename T>
-    JobHandle scheduleJobHandle(TaskFuture<T>& future,std::vector<JobHandle>&&jobHandles) {
-
-        auto& entry = getJobEntry(future.Id);
-
-        ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-
-        //いずれ、自動でtaskCategoryを算出できるようにする
-        stats_.onScheduled(entry.jobCategory, 1);
-        entry.inner = std::make_shared<Inner>();
-        JobHandle jobHandle{ future.Id,entry.inner};
-
-        for(auto&parent : jobHandles){
-            addDependent(future.Id,parent.jobId);
-        }
-
-        if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-            enqueue(entry.taskCategory, entry.jobCategory, jobHandle);
-        }
-
-        return jobHandle;
-    }
+    JobHandle scheduleJobHandle(JobId jobId,std::vector<JobHandle>&&jobHandles);
 
     void scheduleDependentHandles(std::vector<JobId>&&jobs) {
 
@@ -544,32 +487,43 @@ public:
         job->AddRequeset(std::move(cmd));
     }
 
+    //すべてのワーカーが順調に稼働しているかチェックする
     bool checkRanAllJobInJobQueues();
 
+    //削除予定リストに追加、jobIdをNULLIDに変更
     void addRemoveJob(JobId& jobId);
 
+    //1フレームの最後に実行させること
+    //最後のフレームで削除予定のジョブをすべて削除して、ストレージをソートする
     void removeJobsOnLastFrame();
 
+    //バックグラウンドで動かすJobを詰めたストレージからchunkをpopする
     void popGlobalBackGroundQueue();
 
+    //ワーカーの数取得
     const size_t getThreadSize() const{ return threadSize;}
 
 public:
+    //すべてのchunk化されていないjobも含めて、すべてのワーカーのローカルキューに順番に詰めていく。
     void allFlushJob(const JobCategory category);
 
+    //chunkをワーカーから盗む（メインスレッド専用）
     bool stealChunk(const JobCategory category,ChunkMeta&chunk);
 
+    //chunkとして完成していないchunkも含めて、一つchunk化されたJob群を取得する
     void getFlushChunk(const JobCategory category,ChunkMeta&chunk);
 
+    //緊急停止フラグがたっているか
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
     }
 
-    JobEntry& getJobEntry(const JobId jobId) {
+    JobEntry& getJobEntry(const JobId& jobId) {
         return jobStorage.getJobEntry(jobId);
     }
 
 private:
+    //タスクストレージにジョブを追加する
     void enqueue(TaskCategory taskCategory,JobCategory jobCategory,JobId jobId);
 
     void popChunks();
@@ -587,6 +541,7 @@ private:
     //依存関係追加
     void addDependent(const JobId& child,const JobId& parent);
 
+    //依存関係追加
     void addDependent(const JobId& child, JobHandle& parent);
 
     JobEntry& getDense(const size_t dense) {
@@ -640,52 +595,33 @@ private:
 };
 
 struct JobHandle {
+    bool isComplete() const;
+
+    void Complete() const;
+
+private:
     JobId jobId;
     std::shared_ptr<Inner>inner;
 
     // デフォルトコンストラクタ
-    JobHandle() = delete;
+    JobHandle() = default;
 
-    bool isComplete() const {
+    friend class JobManager;
 
-        ////実行可否
-        return inner->ready;
-    }
-
-    void Complete() const {
-        auto& jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(jobId);
-
-        ////実行完了するまでChunkをフラッシュしてChunk実行し続ける
-        while (!inner->ready) {
-
-            ChunkMeta chunk;
-
-            //ワーカースレッドからstealする
-            if (!jm.stealChunk(job.jobCategory, chunk)) {
-                //グローバルキューにあるjobをフラッシュする
-                jm.getFlushChunk(job.jobCategory, chunk);
-            }
-
-            //chunkが空ではない
-            if (!chunk.isEmpty()) {
-                //chunk実行
-                jm.executor().runChunk(99, std::move(chunk));
-                continue;
-            }
-
-            //何も取れない
-            std::this_thread::yield();
-        }
+    // 外部には見せない
+    static JobHandle createHandle(JobId id, std::shared_ptr<Inner> inner) {
+        JobHandle h;
+        h.jobId = id;
+        h.inner = std::move(inner);
+        return h;
     }
 };
 
 template<typename Derived_t>
-struct TaskFuture {
+struct TaskFuture{
+    std::vector<std::function<void(Derived_t&)>>commands;
     JobId Id;
-
     using type = Derived_t;
-    using Return_t = typename type::Return_t;
 
     explicit TaskFuture(JobId id) : Id(id) {}
 
@@ -693,6 +629,11 @@ struct TaskFuture {
         auto&jm = JobManager::Instance();
 
         jm.addRemoveJob(Id);
+    }
+
+    template<typename F>
+    void addCommands(F&& f) {
+        commands.emplace_back(std::forward<F>(f));
     }
 
     ////その場で実行。
@@ -708,47 +649,32 @@ struct TaskFuture {
 
     JobHandle schedule() {
         auto& jm = JobManager::Instance();
-        return jm.scheduleJobHandle(*this);
+        auto& job = jm.getJobEntry(Id);
+
+        auto* derived = static_cast<Derived_t*>(job.data);
+        AddRequest(derived);
+
+        return jm.scheduleJobHandle(Id);
     }
 
-    JobHandle schedule(std::vector<std::function<void(Derived_t&)>>&& commands) {
+    JobHandle schedule(JobHandle& handle) {
         auto& jm = JobManager::Instance();
         auto& job = jm.getJobEntry(Id);
 
         auto* derived = static_cast<Derived_t*>(job.data);
-        derived->AddRequest(std::move(commands));
+        AddRequest(derived);
 
-        return jm.scheduleJobHandle(*this);
+        return jm.scheduleJobHandle(Id, handle);
     }
 
-    JobHandle schedule(JobHandle&handle) {
-        auto& jm = JobManager::Instance();
-        return jm.scheduleJobHandle(*this,handle);
-    }
-
-    JobHandle schedule(std::vector<std::function<void(Derived_t&)>>&& commands,JobHandle& handle) {
-        auto& jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(Id);
-
-        auto* derived = static_cast<Derived_t*>(job.data);
-        derived->AddRequest(std::move(commands));
-
-        return jm.scheduleJobHandle(*this, handle);
-    }
-
-    JobHandle schedule(std::vector<JobHandle>&& dependents) {
-        auto& jm = JobManager::Instance();
-        return jm.scheduleJobHandle(*this, std::move(dependents));
-    }
-
-    JobHandle schedule(std::vector<std::function<void(Derived_t&)>>&&commands,std::vector<JobHandle>&&dependents){
+    JobHandle schedule(std::vector<JobHandle>&&dependents){
         auto&jm = JobManager::Instance();
         auto& job = jm.getJobEntry(Id);
 
         auto* derived = static_cast<Derived_t*>(job.data);
-        derived->AddRequest(std::move(commands));
+        AddRequest(derived);
 
-        return jm.scheduleJobHandle(*this, std::move(dependents));
+        return jm.scheduleJobHandle(Id, std::move(dependents));
     }
 
     type* getJob() const {
@@ -757,6 +683,14 @@ struct TaskFuture {
 
         //Jobを返す
         return static_cast<type*>(job.data);
+    }
+
+private:
+    void AddRequest(Derived_t* derived){
+        if(commands.empty()) return;
+
+        derived->AddRequest(std::move(commands));
+        commands.clear();
     }
 };
 
