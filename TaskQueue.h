@@ -204,7 +204,9 @@ struct ChunkMeta {
     JobId* end = nullptr;
     std::atomic<size_t> slotNum = 0;
 
-    size_t size() const {return end - begin;}
+    size_t size() const {
+        return end - begin;
+    }
 
     bool isEmpty(){
         return slotNum == 0;
@@ -230,6 +232,7 @@ struct ChunkMeta {
 
     ChunkMeta& operator=(ChunkMeta&& other) noexcept {
         if (this != &other) {
+            
             begin = other.begin;
             end = other.end;
             jobCategory = other.jobCategory;
@@ -244,6 +247,8 @@ struct ChunkMeta {
     private:
         JobCategory jobCategory;
 };
+
+class JobManager;
 
 //Chunkはリストのブロック
 class TaskArena {
@@ -373,6 +378,7 @@ private:
     }
 
     void pushJobs(TaskCategory cat, std::vector<JobId>&& jobs) {
+
         auto it = data.insert(data.end(),
             std::make_move_iterator(jobs.begin()),
             std::make_move_iterator(jobs.end()));
@@ -381,6 +387,12 @@ private:
             currentChunk.begin = &*it;   // data 内の先頭を記録
         }
 
+       /* auto& jm = JobManager::Instance();
+        for(auto&id : jobs){
+            auto& j = jm.getJobEntry(id);
+            currentChunk.funcs.emplace_back(j.func);
+        }*/
+
         currentChunk.slotNum++;
 
         if (isFullCurrentChunk()) {
@@ -388,6 +400,7 @@ private:
 
             currentChunk = ChunkMeta(jobCategory);
         }
+
         emptyFlag = false;
     }
 
@@ -399,7 +412,6 @@ private:
         chunk.end = data.data() + data.size();
         chunks.push_back(std::move(chunk));
     }
-
 };
 
 }

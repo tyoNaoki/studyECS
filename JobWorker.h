@@ -80,6 +80,7 @@ struct RealTimePolicy{
                 manager.getFlushChunk(JobCategory::RealTime,chunkHandle);
 
                 if(!chunkHandle.isEmpty()){
+
                     //chunké¿çs
                     manager.executor().runChunk(workerId, std::move(chunkHandle));
                     executeCategory = JobCategory::RealTime;

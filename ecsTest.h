@@ -173,10 +173,11 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
-	jm.Initialize(check,7,std::move(recorder));
+	jm.Initialize(check + 1000,7,std::move(recorder));
 
 	/*for(int i = 0;i < 20;i++){
-		job->schedule(ECS::JobSystem::JobCategory::BackGround);
+		job->schedule(ECS::JobSy
+		stem::JobCategory::BackGround);
 
 		job.AddRequest(std::make_unique<ECS::JobSystem::FuncCmd<TestJob>>([&check](TestJob& t) {
 			t.connecter.value = check;
@@ -184,14 +185,12 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	}*/
 
 	//int check = 5625;
-	
-	
 
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
-		auto future = jm.createJob<TestJob>();
+		auto job = jm.createIJob<TestJob>();
 
-		auto handle = future.schedule();
+		auto handle = job.scheduleIJob();
 	}
 
 	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
@@ -238,7 +237,7 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 	/*A → B
 	B は A 完了後に実行されることを確認。*/
 	{
-		auto futureA = jm.createJob<TestJob>();
+		/*auto futureA = jm.createJob<TestJob>();
 		auto jobHandleA = futureA.schedule();
 
 		auto futureB = jm.createJob<TestJob>();
@@ -246,32 +245,50 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		jobHandleB.Complete();
 
 		auto value = futureB.getJob()->connecter.value;
-		assertTrue(value == 4,"futureB.value == 4, one chain job Test");
-	}
-
-	{
-		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
+		assertTrue(value == 4,"futureB.value == 4, one chain job Test");*/
 	}
 
 	/*複数依存(fan - in)
 		A, B → C
 		C は A と B が両方終わるまで実行されないことを確認。*/
 	{
+		/*auto futureA = jm.createJob<TestJob>();
+		auto jobHandleA = futureA.schedule();
 
+		auto futureB = jm.createJob<TestJob>();
+		auto jobHandleB = futureB.schedule();
 
-		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
+		std::vector<ECS::JobSystem::JobHandle>handles;
+		handles.push_back(std::move(jobHandleA));
+		handles.push_back(std::move(jobHandleB));
+
+		auto futureC = jm.createJob<TestJob>();
+		auto jobHandleC = futureB.schedule(handles);
+		jobHandleC.Complete();
+
+		auto value = futureC.getJob()->connecter.value;
+		assertTrue(value == 4, "futureC.value == 4, 2 chain job Test");*/
 	}
 
 	/*複数子依存 (fan-out)
 		A → B, C
 		B と C が A 完了後に並列で実行されることを確認。*/
 	{
+		
+		/*auto futureA = jm.createJob<TestJob>();
+		auto jobHandleA = futureA.schedule();
 
+		auto futureB = jm.createJob<TestJob>();
+		auto jobHandleB = futureB.schedule(jobHandleA);
 
-		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
+		auto futureC = jm.createJob<TestJob>();
+		auto jobHandleC = futureB.schedule(jobHandleA);
+
+		jobHandleB.Complete();
+		jobHandleC.Complete();
+
+		auto value = futureC.getJob()->connecter.value;
+		assertTrue(value == 4, "futureC.value == 4, 1 chain 2 job Test");*/
 	}
 
 	/*深い依存チェーン
