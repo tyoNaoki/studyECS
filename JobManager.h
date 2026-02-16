@@ -234,6 +234,7 @@ namespace ECS::JobSystem{
 
         //関数ポインター,IJobBase*dataが入っている
         std::vector<JobEntry>jobData;
+        std::vector<Job>jobs;
         //std::vector<std::mutex> dependentLocks;
 
         //JobIdのリスト
@@ -433,22 +434,24 @@ public:
         return TaskFuture<T>(id);
     }*/
 
-    template<
-        typename T,
-        typename... Args
-    >
-        T createIJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime, Args&&... args) {
-        JobId id = jobStorage.emplaceJobID();
-        //jobStorage.createJobFunction<T>(id);
+    //template<
+    //    typename T,
+    //    typename... Args
+    //>
+    //    T createIJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime, Args&&... args) {
+    // JobId id = jobStorage.emplaceJobID();
+    //    //jobStorage.createJobFunction<T>(id);
+    // auto& entry = jm.getJobEntry(id);
+    //entry.jobCategory = JC;
+    //entry.taskCategory = TC;
 
-        auto& entry = jobStorage.getJobEntry(id);
-        entry.jobCategory = JC;
-        entry.taskCategory = TC;
+    //    //T job(std::forward<Args>(args)...); 
 
-        T job(std::forward<Args>(args)...); 
-        job.id_ = id;
+    //    return job;
+    //}
 
-        return job;
+    JobId emplaceId(){
+        return jobStorage.emplaceJobID();
     }
 
     //job = JobHandle.dependents(handle1,handle2);

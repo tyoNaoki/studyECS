@@ -276,10 +276,12 @@ public:
 struct DummyBuffer {};
 
 struct IJobBase {
+
     virtual ~IJobBase() = default;
 
-    //JobId getId() const { return id_; }
+    JobId getId() const { return id_; }
 
+protected:
     JobId id_;
 };
 
@@ -374,6 +376,24 @@ public:
         auto& jm = JobManager::Instance();
 
         return jm.scheduleJobHandle(id_, std::move(job));
+    }
+
+    template<
+        typename Derived,
+        typename... Args
+    >
+        static Derived createIJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime, Args&&... args) {
+        auto& jm = JobManager::Instance();
+
+        auto id = jm.emplaceId();
+        auto& entry = jm.getJobEntry(id);
+        entry.jobCategory = JC;
+        entry.taskCategory = TC;
+
+        Derived job(std::forward<Args>(args)...);
+        job.id_ = id;
+
+        return job;
     }
 
 protected:

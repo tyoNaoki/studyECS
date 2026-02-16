@@ -135,11 +135,9 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-JobHandle JobManager::scheduleJobHandle(JobId jobId,Job&& job)
+JobHandle JobManager::scheduleJobHandle(JobId id,Job&& job)
 {
-    auto& entry = getJobEntry(jobId);
-
-    ASSERT(!entry.inner || entry.inner->isReady(), "this job is scheduled");
+    auto& entry = jobStorage.getJobEntry(id);
 
     //‚¢‚¸‚êA©“®‚ÅtaskCategory‚ğZo‚Å‚«‚é‚æ‚¤‚É‚·‚é
     stats_.onScheduled(entry.jobCategory, 1);
@@ -149,10 +147,10 @@ JobHandle JobManager::scheduleJobHandle(JobId jobId,Job&& job)
     entry.job = std::move(job);
 
     if (entry.inDegree.load(std::memory_order_acquire) == 0) {
-        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+        enqueue(entry.taskCategory, entry.jobCategory, id);
     }
 
-    auto handle = JobHandle::createHandle(jobId, std::move(inner));
+    auto handle = JobHandle::createHandle(id, std::move(inner));
     entry.inner = handle.inner;
 
     return handle;

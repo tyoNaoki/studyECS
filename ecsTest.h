@@ -185,10 +185,15 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	}*/
 
 	//int check = 5625;
+	///本実装では、scheduleIJobでJobIdを発行、dense配列に本体を突っ込む。するようにして、
+	/// schedule時に他のdenseIdを見つつ、denseIdをソートしてchunk化、連続実行できるように作る。
+	/// 
+	///JobHandleに、JobIdを設定して、実際にchunk化で入れられるのはdense側のId
+	//createIJobをなくし、継承先をIJobかどうかで作成は普通にTestJob job();
 
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
-		auto job = jm.createIJob<TestJob>();
+		auto job = ECS::JobSystem::IJob<TestJob, void>::createIJob<TestJob>();
 
 		auto handle = job.scheduleIJob();
 	}
@@ -211,7 +216,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
 
-	// 6) ログを取り出してスレッド別タイムラインを出力
+	//ログを取り出してスレッド別タイムラインを出力
 	//auto& dataMap = jm.getRecorder()->getDataMap();
 	//ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
 }
