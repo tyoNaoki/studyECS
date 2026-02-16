@@ -65,93 +65,93 @@ enum class JobCategory { RealTime, BackGround, Num };
   static constexpr auto field_ptrs()                                \
   { return std::make_tuple(__VA_ARGS__); }
 
-//struct Job {
-//
-//private:
-//    // 最大キャプチャ領域
-//    static constexpr size_t BufferSize = 32;
-//
-//    // 呼び出し時の関数ポインタ型
-//    using Invoker = void(*)(void*);
-//    using Destroyer = void(*)(void*);
-//
-//    // 実データ格納＋呼び出し子
-//    alignas(void*) char  buf[BufferSize];
-//    Invoker invoke_fn = nullptr;
-//    Destroyer  destroy_fn = nullptr;
-//
-//public:
-//    Job() = default;
-//
-//    Job(Job&& o) noexcept {
-//        invoke_fn = o.invoke_fn;
-//        destroy_fn = o.destroy_fn;
-//        memcpy(buf, o.buf, BufferSize);
-//        o.invoke_fn = nullptr;
-//        o.destroy_fn = nullptr;
-//    }
-//
-//    // 任意の小さいラムダ／関数オブジェクトをムーブキャプチャ
-//    template<typename F>
-//    Job(F&& f) noexcept {
-//        static_assert(sizeof(F) <= BufferSize,
-//            "Job function over BufferSize");
-//        new (buf) F(std::move(f));
-//        invoke_fn = [](void* p) {
-//            auto fp = static_cast<F*>(p);
-//            (*fp)();
-//        };
-//
-//        destroy_fn = [](void* p) {
-//            static_cast<F*>(p)->~F();
-//        };
-//    }
-//
-//    //デストラクター
-//    ~Job() {
-//        if (destroy_fn) {
-//            destroy_fn(buf);
-//        }
-//    }
-//
-//    //ここで必要になるのがムーブ代入演算子
-//    Job& operator=(Job&& o) noexcept {
-//        if (this != &o) {
-//            // 1) 既存のキャプチャを破棄
-//            if (destroy_fn) destroy_fn(buf);
-//
-//            // 2) データをムーブ
-//            invoke_fn = o.invoke_fn;
-//            destroy_fn = o.destroy_fn;
-//            std::memcpy(buf, o.buf, BufferSize);
-//
-//            // 3) ムーブ元をクリア
-//            o.invoke_fn = nullptr;
-//            o.destroy_fn = nullptr;
-//        }
-//        return *this;
-//    }
-//
-//    // 一度きりの実行
-//    void invoke() noexcept {
-//        if (invoke_fn) {
-//            invoke_fn(buf);
-//            if (destroy_fn) {
-//                destroy_fn(buf);
-//                destroy_fn = nullptr;
-//            }
-//
-//            invoke_fn = nullptr;
-//        }
-//    }
-//
-//    bool valid() const noexcept {
-//        return invoke_fn != nullptr;
-//    }
-//
-//    // 暗黙の bool 変換は禁止
-//    explicit operator bool() const noexcept = delete;
-//};
+struct Job {
+
+private:
+    // 最大キャプチャ領域
+    static constexpr size_t BufferSize = 32;
+
+    // 呼び出し時の関数ポインタ型
+    using Invoker = void(*)(void*);
+    using Destroyer = void(*)(void*);
+
+    // 実データ格納＋呼び出し子
+    alignas(void*) char  buf[BufferSize];
+    Invoker invoke_fn = nullptr;
+    Destroyer  destroy_fn = nullptr;
+
+public:
+    Job() = default;
+
+    Job(Job&& o) noexcept {
+        invoke_fn = o.invoke_fn;
+        destroy_fn = o.destroy_fn;
+        memcpy(buf, o.buf, BufferSize);
+        o.invoke_fn = nullptr;
+        o.destroy_fn = nullptr;
+    }
+
+    // 任意の小さいラムダ／関数オブジェクトをムーブキャプチャ
+    template<typename F>
+    Job(F&& f) noexcept {
+        static_assert(sizeof(F) <= BufferSize,
+            "Job function over BufferSize");
+        new (buf) F(std::move(f));
+        invoke_fn = [](void* p) {
+            auto fp = static_cast<F*>(p);
+            (*fp)();
+        };
+
+        destroy_fn = [](void* p) {
+            static_cast<F*>(p)->~F();
+        };
+    }
+
+    //デストラクター
+    ~Job() {
+        if (destroy_fn) {
+            destroy_fn(buf);
+        }
+    }
+
+    //ここで必要になるのがムーブ代入演算子
+    Job& operator=(Job&& o) noexcept {
+        if (this != &o) {
+            // 破棄
+            if (destroy_fn) destroy_fn(buf);
+
+            //move
+            invoke_fn = o.invoke_fn;
+            destroy_fn = o.destroy_fn;
+            std::memcpy(buf, o.buf, BufferSize);
+
+            //クリア
+            o.invoke_fn = nullptr;
+            o.destroy_fn = nullptr;
+        }
+        return *this;
+    }
+
+    // 一度きりの実行
+    void invoke() noexcept {
+        if (invoke_fn) {
+            invoke_fn(buf);
+            if (destroy_fn) {
+                destroy_fn(buf);
+                destroy_fn = nullptr;
+            }
+
+            invoke_fn = nullptr;
+        }
+    }
+
+    bool valid() const noexcept {
+        return invoke_fn != nullptr;
+    }
+
+    // 暗黙の bool 変換は禁止
+    explicit operator bool() const noexcept = delete;
+};
 //
 //struct Task {
 //    Job job;
@@ -276,11 +276,13 @@ enum class JobCategory { RealTime, BackGround, Num };
 struct DummyBuffer {};
 
 struct IJobBase {
+
     virtual ~IJobBase() = default;
 
-    std::mutex dependentLock;
-    std::vector<JobId> nextDependent;
-    std::atomic<int> inDegree{ 0 }; // 未解決依存数
+    JobId getId() const { return id_; }
+
+protected:
+    JobId id_;
 };
 
 // 結果を持つ場合
@@ -296,11 +298,62 @@ struct TaskFuture;
 template<typename,typename>
 struct IJob;
 
+class JobManager;
+
+struct Inner {
+    Inner() = default;
+
+    // コピー禁止
+    Inner(const Inner&) = delete;
+    Inner& operator=(const Inner&) = delete;
+
+    // ムーブ禁止
+    Inner(Inner&&) = delete;
+    Inner& operator=(Inner&&) = delete;
+
+    void setReady(bool r) {
+        ready.store(r, std::memory_order_release);
+    }
+
+    bool isReady() const {
+        return ready.load(std::memory_order_acquire);
+    }
+
+private:
+    std::atomic<bool> ready{ false };
+};
+
+
+struct JobHandle {
+    bool isComplete() const;
+
+    void Complete() const;
+
+    JobId getJobId() { return jobId; }
+
+private:
+    JobId jobId;
+    std::shared_ptr<Inner>inner;
+
+    // デフォルトコンストラクタ
+    JobHandle() = default;
+
+    friend class JobManager;
+
+    // 外部には見せない
+    static JobHandle createHandle(JobId id, std::shared_ptr<Inner>&& inner) {
+        JobHandle h;
+        h.jobId = id;
+        h.inner = std::move(inner);
+        return h;
+    }
+};
+
 template<typename Derived>
 struct IJob<Derived,void> : IJobBase {
     using Return_t = void;
 
-    using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+    //using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
 public:
     IJob() = default;
@@ -315,6 +368,34 @@ public:
         std::swap(commands,fns);
     }
 
+    JobHandle scheduleIJob() {
+        Derived* self = static_cast<Derived*>(this);
+        auto work = [self]() { ExecuteIJob(self); };
+        Job job(std::move(work));
+
+        auto& jm = JobManager::Instance();
+
+        return jm.scheduleJobHandle(id_, std::move(job));
+    }
+
+    template<
+        typename Derived,
+        typename... Args
+    >
+        static Derived createIJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime, Args&&... args) {
+        auto& jm = JobManager::Instance();
+
+        auto id = jm.emplaceId();
+        auto& entry = jm.getJobEntry(id);
+        entry.jobCategory = JC;
+        entry.taskCategory = TC;
+
+        Derived job(std::forward<Args>(args)...);
+        job.id_ = id;
+
+        return job;
+    }
+
 protected:
     void Execute() {
         // Derived の Execute() を呼び出し
@@ -323,6 +404,10 @@ protected:
     }
 
 private:
+    static void ExecuteIJob(Derived* self) {
+        self->Execute();
+    };
+
     void applyCommands() {
 
         if (commands.empty()) return;
@@ -335,15 +420,14 @@ private:
     }
 
 protected:
-    friend struct TaskFuture<Derived>;
-
+    friend class JobManager;
 private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
 };
 
 template<typename Derived,typename ReturnType>
-struct IJob 
+struct IJob
     : IJobBase
     , ResultHolder<ReturnType> {
     using Return_t = ReturnType;
@@ -359,14 +443,31 @@ public:
         commands.emplace_back(std::move(fn));
     }
 
+    void scheduleIJob(){
+        auto* self = static_cast<Derived*>(this);
+        auto work = [self]() { ExecuteIJob(self); };
+        Job job(std::move(work));
+
+        auto& jm = JobManager::Instance();
+        jm.scheduleJobHandle(id_, std::move(job));
+    }
+
+    JobId getId() const { return id_; }
+
 protected:
     void Execute() {
         // Derived の Execute() を呼び出し
         //static_cast<Derived*>(this)->Execute(index);
-        ASSERT(false, "Derived class not found Execute() member function!!");
+        //ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
 private:
+    static void ExecuteIJob(Derived* self) {
+        ASSERT(self, "self is nullptr");
+
+        self->Execute();
+    };
+
     void applyCommands() {
 
         if(commands.empty()) return;

@@ -10,15 +10,14 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobId* Id) {
 
     JobManager& jm = JobManager::Instance();
     auto& jobEntry = jm.getJobEntry(*Id);        
-    ASSERT(!jobEntry.inner->ready, "this job is executed");
+    ASSERT(jobEntry.job.valid(), "this job is executed");
 
-    jobEntry.func(jobEntry.data);
-    jobEntry.inner->ready = true;
+    jobEntry.job.invoke();
+    jobEntry.inner->setReady(true);
 
     //processDependents(jobEntry.data);
 
     jm.stats_.onJobFinish(jobEntry.jobCategory,1);
-    jobEntry.inner.reset();
 }
 
 void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin, JobId*end)
@@ -34,13 +33,12 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin,
         ASSERT(jm.containsJob(*it), "job not contains");
         auto& job = jm.getJobEntry(*it);
 
-        ASSERT(!job.inner->ready, "this job is executed");
+        ASSERT(job.job.valid(), "this job is executed");
 
-        job.func(job.data);
-        job.inner->ready = true;
+        job.job.invoke();
+        job.inner->setReady(true);
 
         //processDependents(job.data);
-        job.inner.reset();
     }
 
     //カウント減算
@@ -58,32 +56,32 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
     //chunk実行
     for (JobId* it = chunk.begin; it != chunk.end; ++it) {
         ASSERT(jm.containsJob(*it),"job not contains");
+        
         auto& job = jm.getJobEntry(*it);
-
-        ASSERT(!job.inner->ready, "this job is executed");
-
-        job.func(job.data);
-        job.inner->ready = true;
+        ASSERT(!job.inner->isReady(),"this job is executed");
+        ASSERT(job.job.valid(), "this job is executed");
+        
+        job.job.invoke();
+        job.inner->setReady(true);
 
         //依存関係の解決
-        processDependents(job.data);
-        job.inner.reset();
+        processDependents(job);
     }
 
     //カウント減算
     jm.stats_.onJobFinish(chunk.getJobCategory(), size);
 }
 
-void ECS::JobSystem::JobManager::Executor::processDependents(IJobBase* parent)
+void ECS::JobSystem::JobManager::Executor::processDependents(JobEntry& parent)
 {
     auto& jm = JobManager::Instance();
 
-    for(auto& child : parent->nextDependent){
+    for(auto& child : parent.dependents){
         auto& childJobEntry = jm.getJobEntry(child);
 
-        auto* childJob = childJobEntry.data;
+        //auto& childJob = childJobEntry.data;
 
-        if (childJob->inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        if (childJobEntry.inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             //スケジュール済み
             if (childJobEntry.inner) {
                 jm.scheduleDependentHandle(child);
@@ -136,6 +134,89 @@ JobManager::~JobManager()
 {
     if (!initFlag)return;
 }
+
+JobHandle JobManager::scheduleJobHandle(JobId id,Job&& job)
+{
+    auto& entry = jobStorage.getJobEntry(id);
+
+    //いずれ、自動でtaskCategoryを算出できるようにする
+    stats_.onScheduled(entry.jobCategory, 1);
+
+    //いずれ、これら二つの変数を詰め込んだjobだけをchunkにつめていく。
+    auto inner = std::make_shared<Inner>();
+    entry.job = std::move(job);
+
+    if (entry.inDegree.load(std::memory_order_acquire) == 0) {
+        enqueue(entry.taskCategory, entry.jobCategory, id);
+    }
+
+    auto handle = JobHandle::createHandle(id, std::move(inner));
+    entry.inner = handle.inner;
+
+    return handle;
+}
+
+//JobHandle JobManager::scheduleJobHandle(JobId jobId, JobHandle& handle)
+//{
+//    auto& entry = getJobEntry(jobId);
+//
+//    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+//
+//    //いずれ、自動でtaskCategoryを算出できるようにする
+//    stats_.onScheduled(entry.jobCategory, 1);
+//    entry.inner = std::make_shared<Inner>();
+//
+//    addDependent(jobId, handle);
+//
+//    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+//        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+//    }
+//
+//    return JobHandle::createHandle(jobId, entry.inner);
+//}
+
+//JobHandle JobManager::scheduleJobHandle(JobId jobId, std::vector<JobHandle>& jobHandles)
+//{
+//    auto& entry = getJobEntry(jobId);
+//
+//    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+//
+//    //いずれ、自動でtaskCategoryを算出できるようにする
+//    stats_.onScheduled(entry.jobCategory, 1);
+//    entry.inner = std::make_shared<Inner>();
+//
+//    for (auto& parent : jobHandles) {
+//        addDependent(jobId, parent.jobId);
+//    }
+//
+//    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+//        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+//    }
+//
+//    return JobHandle::createHandle(jobId, entry.inner);
+//}
+//
+//JobHandle JobManager::scheduleJobHandle(JobId jobId, Job&& job, std::vector<JobHandle>& jobHandles)
+//{
+//    auto& entry = getJobEntry(jobId);
+//
+//    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+//
+//    //いずれ、自動でtaskCategoryを算出できるようにする
+//    stats_.onScheduled(entry.jobCategory, 1);
+//    entry.inner = std::make_shared<Inner>();
+//    entry.job = std::move(job);
+//
+//    for (auto& parent : jobHandles) {
+//        addDependent(jobId, parent.jobId);
+//    }
+//
+//    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
+//        enqueue(entry.taskCategory, entry.jobCategory, jobId);
+//    }
+//
+//    return JobHandle::createHandle(jobId, entry.inner);
+//}
 
 bool JobManager::checkRanAllJobInJobQueues()
 {
@@ -262,6 +343,12 @@ void JobManager::getFlushChunk(const JobCategory category, ChunkMeta& chunk)
 {
     taskStorage.flushIncomplete();
 
+    if(!chunk.isEmpty()){
+        auto&job = getJobEntry(*chunk.begin);
+        if(job.inner->isReady()){
+            ASSERT(false,"inner is true");
+        }
+    }
     popChunk(chunk);
 }
 
@@ -280,6 +367,7 @@ void JobManager::popChunks()
     //空になるまでqueueに割り振る
     //各taskStorage毎に行う
     while(taskStorage.popOne(chunkMeta)){
+
         size_t queueIndex = getNextQueueIndex();
         workers[queueIndex]->enqueue(chunkMeta.getJobCategory(),std::move(chunkMeta));
     }
@@ -327,42 +415,16 @@ size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double
 
 void JobManager::addDependent(const JobId& child,const JobId& parent)
 {
-    auto& jm = JobManager::Instance();
-
     ASSERT(child != parent, "addDependent() do not use childJob and childJob");
 
-    auto& childJob = jm.getJobEntry(child);
-    auto& parentJob = jm.getJobEntry(parent);
-
-    std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
-
-    if (!parentJob.inner->ready) { // まだ実行されていない
-        //childを親のnextDependentに差し込む
-        parentJob.data->nextDependent.push_back(child);
-
-        //子ジョブの未解決依存数を増やす
-        childJob.data->inDegree.fetch_add(1, std::memory_order_relaxed);
-    }
+    jobStorage.addDependent(child,parent);
 }
 
 void JobManager::addDependent(const JobId& child, JobHandle& parent)
 {
-    auto& jm = JobManager::Instance();
+    ASSERT(child != parent.getJobId(), "addDependent() do not use childJob and childJob");
 
-    ASSERT(child != parent.jobId, "addDependent() do not use childJob and childJob");
-
-    auto& childJob = jm.getJobEntry(child);
-    auto& parentJob = jm.getJobEntry(parent.jobId);
-
-    std::lock_guard<std::mutex> lk(parentJob.data->dependentLock);
-
-    if (!parentJob.inner->ready) { // まだ実行されていない
-        //childを親のnextDependentに差し込む
-        parentJob.data->nextDependent.push_back(child);
-
-        //子ジョブの未解決依存数を増やす
-        childJob.data->inDegree.fetch_add(1, std::memory_order_relaxed);
-    }
+    jobStorage.addDependent(child, parent.getJobId());
 }
 
 bool JobManager::clearTaskStorage(JobCategory category)
@@ -405,6 +467,73 @@ void JobStats::waitForAll(const JobCategory cat)
         }
 
         cv_.wait(lk);
+    }
+}
+
+bool JobHandle::isComplete() const
+{
+    ////実行可否
+    return inner->isReady();
+}
+
+void JobHandle::Complete() const
+{
+    auto& jm = JobManager::Instance();
+    auto& job = jm.getJobEntry(jobId);
+
+    ////実行完了するまでChunkをフラッシュしてChunk実行し続ける
+    while (!inner->isReady()) {
+
+        ChunkMeta chunk;
+
+        //ワーカースレッドからstealする
+        if (!jm.stealChunk(job.jobCategory, chunk)) {
+            //グローバルキューにあるjobをフラッシュする
+            jm.getFlushChunk(job.jobCategory, chunk);
+        }
+
+        //chunkが空ではない
+        if (!chunk.isEmpty()) {
+            //chunk実行
+            jm.executor().runChunk(99, std::move(chunk));
+            continue;
+        }
+
+        //何も取れない
+        std::this_thread::yield();
+    }
+}
+
+bool CombineJobHandles::isComplete() const
+{
+    return inner->isReady();
+}
+
+void CombineJobHandles::Complete() const
+{
+    auto& jm = JobManager::Instance();
+    auto& job = jm.getJobEntry(jobIds[0]);
+
+    ////実行完了するまでChunkをフラッシュしてChunk実行し続ける
+    while (!inner->isReady()) {
+
+        ChunkMeta chunk;
+
+        //ワーカースレッドからstealする
+        if (!jm.stealChunk(job.jobCategory, chunk)) {
+            //グローバルキューにあるjobをフラッシュする
+            jm.getFlushChunk(job.jobCategory, chunk);
+        }
+
+        //chunkが空ではない
+        if (!chunk.isEmpty()) {
+            //chunk実行
+            jm.executor().runChunk(99, std::move(chunk));
+            continue;
+        }
+
+        //何も取れない
+        std::this_thread::yield();
     }
 }
 
