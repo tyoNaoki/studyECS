@@ -199,6 +199,15 @@ namespace ECS::JobSystem{
 //    std::condition_variable not_full_;
 //};
 
+//struct Chunk{
+//    std::vector<Job>jobs;
+//    //std::vector<IJobBase*>dependents;
+//    std::vector<std::shared_ptr<Inner>>inners;
+//
+//    std::atomic<size_t>head;
+//    std::atomic<size_t>tail;
+//};
+
 struct ChunkMeta {
     JobId* begin = nullptr;
     JobId* end = nullptr;
@@ -208,7 +217,7 @@ struct ChunkMeta {
         return end - begin;
     }
 
-    bool isEmpty(){
+    bool isEmpty() const{
         return slotNum == 0;
     }
 

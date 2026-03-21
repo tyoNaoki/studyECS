@@ -169,11 +169,11 @@ struct TestParticalJob
 		//return connecter.value;
 
 TEST_CASE_PRIORITY(test_jobSystem) {
-	int check = 90'000;
+	int check = 9'0000;
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
-	jm.Initialize(check + 1000,7,std::move(recorder));
+	jm.Initialize(9'0000,7,std::move(recorder));
 
 	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSy
@@ -193,7 +193,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
-		auto job = ECS::JobSystem::IJob<TestJob, void>::createIJob<TestJob>();
+		auto job = TestJob();
 
 		auto handle = job.scheduleIJob();
 	}

@@ -350,10 +350,17 @@ private:
 };
 
 template<typename Derived>
-struct IJob<Derived,void> : IJobBase {
-    using Return_t = void;
-
+struct IJob<Derived,void> : std::enable_shared_from_this<Derived>,IJobBase {
     //using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+
+    struct Context {
+        std::shared_ptr<Derived> self;
+        std::shared_ptr<Inner>setter;
+
+        Context(std::shared_ptr<Derived> s,
+            std::shared_ptr<Inner>set )
+            : self(s),setter(std::move(set)){}
+    };
 
 public:
     IJob() = default;
@@ -370,15 +377,22 @@ public:
 
     JobHandle scheduleIJob() {
         Derived* self = static_cast<Derived*>(this);
-        auto work = [self]() { ExecuteIJob(self); };
+        /*auto ctx = std::make_shared<Context>(
+            shared_this()
+            , std::move(settable)
+            );*/
+
+        auto work = [self]() { ExecuteIJob(self);};
         Job job(std::move(work));
 
         auto& jm = JobManager::Instance();
 
-        return jm.scheduleJobHandle(id_, std::move(job));
+        //inner = std::make_shared<Inner>();
+        //仮としてRealTime
+        return jm.scheduleJobHandle(TaskCategory::Easy,JobCategory::RealTime,std::move(job));
     }
 
-    template<
+   /* template<
         typename Derived,
         typename... Args
     >
@@ -394,7 +408,7 @@ public:
         job.id_ = id;
 
         return job;
-    }
+    }*/
 
 protected:
     void Execute() {
@@ -404,9 +418,14 @@ protected:
     }
 
 private:
-    static void ExecuteIJob(Derived* self) {
-        self->Execute();
+    static void ExecuteIJob(Derived* ctx) {
+        ctx->Execute();
+        //self->setInner();
     };
+
+    /*void setInner(){
+        inner->setReady(true);
+    }*/
 
     void applyCommands() {
 
@@ -424,6 +443,7 @@ protected:
 private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
+    //std::shared_ptr<Inner>inner;
 };
 
 template<typename Derived,typename ReturnType>
@@ -445,6 +465,8 @@ public:
 
     void scheduleIJob(){
         auto* self = static_cast<Derived*>(this);
+        
+
         auto work = [self]() { ExecuteIJob(self); };
         Job job(std::move(work));
 

@@ -95,6 +95,220 @@ struct RealTimePolicy{
 
     static constexpr size_t localQueueCap = 32;
 };
+//
+//struct TaskChunk {
+//    std::vector<Job>jobs;
+//    std::vector<std::vector<size_t>>dependents;
+//
+//    std::vector<std::shared_ptr<Inner>>inners;
+//};
+//
+//struct TaskStorage {
+//    void addDependent(size_t child, size_t parent) {
+//        auto& childJob = getJobInfo(child);
+//
+//        //std::lock_guard<std::mutex> lk(dependentLocks[sparse[getJobIndex(parent)]]);
+//
+//        if (getFunc(parent).valid()) { // まだ実行されていない
+//            //childを親のnextDependentに差し込む
+//            getDependents(parent).push_back(child);
+//
+//            //子ジョブの未解決依存数を増やす
+//            childJob.inDegree.fetch_add(1, std::memory_order_relaxed);
+//        }
+//    }
+//
+//    void reserveJobs(size_t reserveCount) {
+//        sparse.reserve(reserveCount);
+//        jobIds.reserve(reserveCount);
+//    }
+//
+//    void clearAll() {
+//        std::lock_guard<std::mutex> lk(lock);
+//
+//        sparse.clear();
+//        waitQueue.clear();
+//        dependents.clear();
+//        //dependentLocks.clear();
+//        jobIds.clear();
+//        freeIds.clear();
+//        removeJobData.clear();
+//        nextIndex = 0;
+//    }
+//
+//    //JobIDを返す
+//    JobId emplaceJobId() {
+//        std::lock_guard<std::mutex> lk(lock);
+//
+//        JobId newId = allocateJobId();
+//
+//        if (sparse.size() <= getJobIndex(newId)) {
+//            sparse.emplace_back();
+//            sparse.back() = NULL_JOB_ID;
+//        }
+//
+//        ASSERT(sparse[getJobIndex(newId)] == NULL_JOB_ID, "valid sparse slot do not use");
+//        jobIds.push_back(newId);
+//
+//        return newId;
+//    }
+//
+//    size_t emplaceJob(JobId newId) {
+//        ASSERT(containsJob(newId), "not contains job");
+//
+//        auto result = jobs.size();
+//
+//        jobInfos.emplace_back();
+//        jobs.emplace_back();
+//        dependents.emplace_back();
+//        inners.emplace_back(nullptr);
+//
+//        sparse[getJobIndex(newId)] = result;
+//
+//        return result;
+//    }
+//
+//    void pushBackWaitQueue(size_t jobIndex) {
+//        std::lock_guard<std::mutex> lk(lock);
+//
+//        waitQueue.push_back(jobIndex);
+//    }
+//
+//    size_t getDenseIndex(const JobId jobId) {
+//        ASSERT(containsJob(jobId), "not contains JobId");
+//
+//        return sparse[getJobIndex(jobId)];
+//    }
+//
+//    JobId& getWaitJob(const size_t jobIndex) {
+//        return waitQueue[jobIndex];
+//    }
+//
+//    JobEntry& getJobInfo(size_t index) {
+//        return jobInfos[index];
+//    }
+//
+//    Job& getFunc(size_t index) {
+//        return jobs[index];
+//    }
+//
+//    std::vector<JobId>& getDependents(size_t index) {
+//        return dependents[index];
+//    }
+//
+//    std::shared_ptr<Inner>& getInner(size_t index) {
+//        return inners[index];
+//    }
+//
+//    //schedule時に対応ジョブに関数ポインターを割り当てる
+//    /*template<class DerivedJob>
+//    void createJobFunction(const JobId& id){
+//        jobData[getJobIndex(id)].func = &Invoke<DerivedJob>;
+//    }*/
+//
+//    void addRemoveJob(JobId jodId) { removeJobData.push_back(jodId); }
+//
+//    void addRemoveJobs(std::vector<JobId>&& jobs) {
+//        removeJobData.insert(removeJobData.end(),
+//            std::move_iterator(jobs.begin()),
+//            std::move_iterator(jobs.end()));
+//    }
+//
+//    //GetJobEntry関数の参照が壊れるので、絶対にFrameの最後全てのジョブを処理か、処理をしていないタイミングで行うこと!!
+//    void removeJobs() {
+//        std::lock_guard<std::mutex> lk(lock);
+//
+//        std::sort(removeJobData.begin(), removeJobData.end(),
+//            [&](JobId& a, JobId& b) {
+//                return sparse[getJobIndex(a)] > sparse[getJobIndex(b)]; // removeIndex の大きい順
+//            });
+//
+//        for (auto& removeId : removeJobData) {
+//            //removeJob(removeId);
+//        }
+//
+//        removeJobData.clear();
+//    }
+//
+//    bool containsJob(const JobId id) const {
+//        JobIndex index = getJobIndex(id);
+//        return index < sparse.size() && jobIds[index] == id;
+//    }
+//
+//    //template<class T>
+//    //static void Invoke(IJobBase* raw) {
+//    //    //static_cast<T*>(raw)->Execute();
+//    //    //raw->Execute();
+//    //}
+//
+//    JobId allocateJobId() {
+//        if (!freeIds.empty()) {
+//            // removeの時以外でfreeIdsが使用されないので、ロックレスで問題なし
+//            JobId old = freeIds.back();
+//            freeIds.pop_back();
+//
+//            return composeJobId(getJobIndex(old), getJobVersion(old) + 1);
+//        }
+//
+//        return composeJobId(nextIndex++, 0u);
+//    }
+//
+//private:
+//    void removeWaitJob(size_t removeJobIndex) {
+//        /*auto& waitJob = waitJobs.back();
+//        auto rastJobIndex = getJobIndex(waitJob.jobId);
+//        auto swapId = waitJobs[removeJobIndex].jobId;
+//
+//        sparse[rastJobIndex] = removeJobIndex;
+//        sparse[swapId] = NULL_JOB_INDEX;
+//
+//        std::swap(waitJobs[removeJobIndex],waitJobs.back());
+//        waitJobs.pop_back();*/
+//    }
+//
+//    void swap(size_t job, size_t job2) {
+//        std::swap(jobInfos[job], jobInfos[job2]);
+//        std::swap(jobs[job], jobs[job2]);
+//        std::swap(dependents[job], dependents[job2]);
+//        std::swap(inners[job], inners[job2]);
+//    }
+//
+//    //void removeJob(JobId& id) {
+//    //    JobId removeId = jobIds[getJobIndex(id)];
+//    //    JobIndex removeIndex = getJobIndex(removeId);
+//
+//    //    std::lock_guard<std::mutex> lk(lock);
+//
+//    //    //すでに無効
+//    //    ASSERT(jobData.empty() || removeIndex >= jobData.size(),"this id is NULL");
+//
+//    //    jobIds.back() = removeId;
+//
+//    //    std::swap(jobData[removeIndex], jobData.back());
+//    //    std::swap(jobIds[removeIndex], jobIds.back());
+//
+//    //    jobData.pop_back();
+//    //    jobIds.pop_back();
+//    //    //dependentLocks.pop_back();
+//
+//    //    sparse[id] = NULL_JOB_INDEX;
+//    //    freeIds.push_back(id);
+//    //    id = NULL_JOB_ID;
+//    //}
+//
+//private:
+//    
+//    std::vector<size_t>readyQueue;
+//
+//    std::vector<JobEntry>jobInfos;
+//    std::vector<Job>jobs;
+//    std::vector<std::vector<size_t>>dependents;
+//
+//    std::vector<std::shared_ptr<Inner>>inners;
+//    //std::vector<std::mutex> dependentLocks;
+//
+//    std::mutex lock;
+//};
 
 //struct BackGroundPolicy {
 //

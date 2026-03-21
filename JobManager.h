@@ -40,57 +40,44 @@ namespace ECS::JobSystem{
     };
 
     struct JobEntry {
-        // 実行するジョブ
-        Job job;
-
         // 依存関係
         std::atomic<int> inDegree{ 0 };
-        std::vector<JobId> dependents;
 
         // カテゴリ
         JobCategory jobCategory{};
         TaskCategory taskCategory{};
 
-        // 完了通知用
-        std::shared_ptr<Inner> inner = nullptr;
-
         JobEntry() = default;
 
         // ムーブコンストラクタ
         JobEntry(JobEntry&& other) noexcept
-            : job(std::move(other.job))
-            , inDegree(other.inDegree.load())
-            , dependents(std::move(other.dependents))
+            : inDegree(other.inDegree.load())
             , jobCategory(other.jobCategory)
             , taskCategory(other.taskCategory)
-            , inner(other.inner)
         {
         }
 
         // ムーブ代入
         JobEntry& operator=(JobEntry&& other) noexcept {
             if (this != &other) {
-                job = std::move(other.job);
                 inDegree.store(other.inDegree.load());
-                dependents = std::move(other.dependents);
                 jobCategory = other.jobCategory;
                 taskCategory = other.taskCategory;
-                inner = other.inner;
             }
+
             return *this;
         }
     };
 
     struct JobStorage {
-        void addDependent(JobId child,JobId parent){
-            auto& childJob = getJobEntry(child);
-            auto& parentJob = getJobEntry(parent);
+        void addDependent(size_t child,size_t parent){
+            auto& childJob = getJobInfo(child);
 
             //std::lock_guard<std::mutex> lk(dependentLocks[sparse[getJobIndex(parent)]]);
 
-            if (!parentJob.inner->isReady()) { // まだ実行されていない
+            if (getFunc(parent).valid()) { // まだ実行されていない
                 //childを親のnextDependentに差し込む
-                parentJob.dependents.push_back(child);
+                getDependents(parent).push_back(child);
 
                 //子ジョブの未解決依存数を増やす
                 childJob.inDegree.fetch_add(1, std::memory_order_relaxed);
@@ -98,17 +85,14 @@ namespace ECS::JobSystem{
         }
 
         void reserveJobs(size_t reserveCount) {
-            sparse.reserve(reserveCount);
-            jobData.reserve(reserveCount);
             jobIds.reserve(reserveCount);
-            //dependentLocks.reserve(reserveCount);
         }
 
         void clearAll() {
             std::lock_guard<std::mutex> lk(lock);
 
-            sparse.clear();
-            jobData.clear();
+            waitQueue.clear();
+            dependents.clear();
             //dependentLocks.clear();
             jobIds.clear();
             freeIds.clear();
@@ -117,26 +101,55 @@ namespace ECS::JobSystem{
         }
 
         //JobIDを返す
-        JobId emplaceJobID() {
+        JobId emplaceJobId() {
             std::lock_guard<std::mutex> lk(lock);
 
             JobId newId = allocateJobId();
 
-            if(sparse.size() <= getJobIndex(newId)){
-                sparse.emplace_back();
-                sparse.back() = NULL_JOB_ID;
+            auto jobIndex = getJobIndex(newId);
+
+            if(jobIds.size() <= jobIndex){
+                emplaceTask();
             }
 
-            ASSERT(sparse[getJobIndex(newId)] == NULL_JOB_ID,"valid sparse slot do not use");
-
-            const size_t newIndex = jobData.size();
-            jobData.emplace_back();
-            //dependentLocks.emplace_back();
-            jobIds.push_back(newId);
-
-            sparse[getJobIndex(newId)] = newIndex;
-
+            ASSERT(jobIds.size()-1 <= jobIndex,"over jobIds %zu", getJobIndex(newId));
+            jobIds[jobIndex] = newId;
+            
             return newId;
+        }
+
+        void emplaceTask(){
+            jobInfos.emplace_back();
+            jobs.emplace_back();
+            dependents.emplace_back();
+            inners.emplace_back(nullptr);
+            jobIds.emplace_back();
+        }
+
+        void pushBackWaitQueue(size_t jobIndex) {
+            std::lock_guard<std::mutex> lk(lock);
+
+            waitQueue.push_back(jobIndex);
+        }
+
+        JobId& getWaitJob(const size_t jobIndex) {
+            return waitQueue[jobIndex];
+        }
+
+        JobEntry& getJobInfo(size_t index){
+            return jobInfos[index];
+        }
+
+        Job& getFunc(size_t index){
+            return jobs[index];
+        }
+
+        std::vector<JobId>& getDependents(size_t index) {
+            return dependents[index];
+        }
+
+        std::shared_ptr<Inner>& getInner(size_t index) {
+            return inners[index];
         }
 
         //schedule時に対応ジョブに関数ポインターを割り当てる
@@ -145,45 +158,25 @@ namespace ECS::JobSystem{
             jobData[getJobIndex(id)].func = &Invoke<DerivedJob>;
         }*/
 
-        void addRemoveJob(JobId jodId){removeJobData.push_back(jodId);}
-
-        void addRemoveJobs(std::vector<JobId>&& jobs) {
-            removeJobData.insert(removeJobData.end(),
-                std::move_iterator(jobs.begin()),
-                std::move_iterator(jobs.end()));
-        }
-
-        //GetJobEntry関数の参照が壊れるので、絶対にFrameの最後全てのジョブを処理か、処理をしていないタイミングで行うこと!!
-        void removeJobs() {
+        void removeJob(JobId jobId){
             std::lock_guard<std::mutex> lk(lock);
 
-            std::sort(removeJobData.begin(), removeJobData.end(),
-                [&](JobId& a, JobId& b) {
-                    return sparse[getJobIndex(a)] > sparse[getJobIndex(b)]; // removeIndex の大きい順
-                });
+            jobIds[getJobIndex(jobId)] = NULL_JOB_ID;
+            freeIds.push_back(jobId);
+        }
 
-            for (auto& removeId : removeJobData) {
-                removeJob(removeId);
+        void removeJobs(std::vector<JobId> jobs) {
+            std::lock_guard<std::mutex> lk(lock);
+
+            for(size_t i = 0;i<jobs.size();i++){
+                jobIds[getJobIndex(jobs[i])] = NULL_JOB_ID;
+                freeIds.push_back(jobs[i]);
             }
-
-            removeJobData.clear();
-        }
-
-        JobEntry& getJobEntry(const JobId id){
-            return jobData[sparse[getJobIndex(id)]];
-        }
-
-        JobEntry& getDense(const size_t denseIndex) {
-            return jobData[denseIndex];
-        }
-
-        size_t getDenseIndex(const JobId id){
-            return sparse[getJobIndex(id)];
         }
 
         bool containsJob(const JobId id) const{
             JobIndex index = getJobIndex(id);
-            return index < sparse.size() && sparse[index] < jobIds.size() && jobIds[sparse[index]] == id;
+            return index < jobIds.size() && jobIds[index] == id;
         }
 
         //template<class T>
@@ -205,36 +198,59 @@ namespace ECS::JobSystem{
         }
 
     private:
-        void removeJob(JobId& id) {
-            JobId removeId = jobIds[getJobIndex(id)];
-            JobIndex removeIndex = getJobIndex(removeId);
+        void removeWaitJob(size_t removeJobIndex){
+            /*auto& waitJob = waitJobs.back();
+            auto rastJobIndex = getJobIndex(waitJob.jobId);
+            auto swapId = waitJobs[removeJobIndex].jobId;
+            
+            sparse[rastJobIndex] = removeJobIndex;
+            sparse[swapId] = NULL_JOB_INDEX;
 
-            std::lock_guard<std::mutex> lk(lock);
-
-            //すでに無効
-            ASSERT(jobData.empty() || removeIndex >= jobData.size(),"this id is NULL");
-
-            jobIds.back() = removeId;
-
-            std::swap(jobData[removeIndex], jobData.back());
-            std::swap(jobIds[removeIndex], jobIds.back());
-
-            jobData.pop_back();
-            jobIds.pop_back();
-            //dependentLocks.pop_back();
-
-            sparse[id] = NULL_JOB_INDEX;
-            freeIds.push_back(id);
-            id = NULL_JOB_ID;
+            std::swap(waitJobs[removeJobIndex],waitJobs.back());
+            waitJobs.pop_back();*/
         }
 
-    private:
-        //内部に入っているのは、JobDataのIndex
-        std::vector<size_t>sparse;
+        void swap(size_t job,size_t job2){
+            std::swap(jobInfos[job],jobInfos[job2]);
+            std::swap(jobs[job], jobs[job2]);
+            std::swap(dependents[job], dependents[job2]);
+            std::swap(inners[job], inners[job2]);
+        }
 
+        //void removeJob(JobId& id) {
+        //    JobId removeId = jobIds[getJobIndex(id)];
+        //    JobIndex removeIndex = getJobIndex(removeId);
+
+        //    std::lock_guard<std::mutex> lk(lock);
+
+        //    //すでに無効
+        //    ASSERT(jobData.empty() || removeIndex >= jobData.size(),"this id is NULL");
+
+        //    jobIds.back() = removeId;
+
+        //    std::swap(jobData[removeIndex], jobData.back());
+        //    std::swap(jobIds[removeIndex], jobIds.back());
+
+        //    jobData.pop_back();
+        //    jobIds.pop_back();
+        //    //dependentLocks.pop_back();
+
+        //    sparse[id] = NULL_JOB_INDEX;
+        //    freeIds.push_back(id);
+        //    id = NULL_JOB_ID;
+        //}
+
+    private:
         //関数ポインター,IJobBase*dataが入っている
-        std::vector<JobEntry>jobData;
+        std::vector<size_t>waitQueue;
+
+        std::vector<size_t>readyQueue;
+
+        std::vector<JobEntry>jobInfos;
         std::vector<Job>jobs;
+        std::vector<std::vector<size_t>>dependents;
+
+        std::vector<std::shared_ptr<Inner>>inners;
         //std::vector<std::mutex> dependentLocks;
 
         //JobIdのリスト
@@ -256,8 +272,6 @@ namespace ECS::JobSystem{
     /// </summary>
     class JobStats {
         friend class JobManager;
-
-        
 
         // pending の増減
         //void onEnqueued(const JobCategory cat, size_t count) noexcept {
@@ -374,6 +388,7 @@ class JobManager
         void runChunk(size_t workerId, ChunkMeta&& chunk);
     private:
         void processDependents(JobEntry& parent);
+
     };
 
 public:
@@ -450,13 +465,9 @@ public:
     //    return job;
     //}
 
-    JobId emplaceId(){
-        return jobStorage.emplaceJobID();
-    }
-
     //job = JobHandle.dependents(handle1,handle2);
 
-    JobHandle scheduleJobHandle(JobId id,Job&&job);
+    JobHandle scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
 
     //JobHandle scheduleJobHandle(JobId jobId, JobHandle& handle);
 
@@ -486,7 +497,7 @@ public:
 
     void scheduleDependentHandle(JobId childId){
         auto& entry = getJobEntry(childId);
-        ASSERT(!entry.inner->isReady(), "this job is executed");
+        //ASSERT(!entry.inner->isReady(), "this job is executed");
 
         enqueue(entry.taskCategory, entry.jobCategory, childId);
     }
@@ -508,11 +519,7 @@ public:
     bool checkRanAllJobInJobQueues();
 
     //削除予定リストに追加、jobIdをNULLIDに変更
-    void addRemoveJob(JobId& jobId);
-
-    //1フレームの最後に実行させること
-    //最後のフレームで削除予定のジョブをすべて削除して、ストレージをソートする
-    void removeJobsOnLastFrame();
+    void removeJob(JobId& jobId);
 
     //バックグラウンドで動かすJobを詰めたストレージからchunkをpopする
     void popGlobalBackGroundQueue();
@@ -536,7 +543,7 @@ public:
     }
 
     JobEntry& getJobEntry(const JobId& jobId) {
-        return jobStorage.getJobEntry(jobId);
+        return jobStorage.getJobInfo(getJobIndex(jobId));
     }
 
 private:
@@ -562,7 +569,15 @@ private:
     void addDependent(const JobId& child, JobHandle& parent);
 
     JobEntry& getDense(const size_t dense) {
-        return jobStorage.getDense(dense);
+        return jobStorage.getJobInfo(dense);
+    }
+
+    Job& getJob(const size_t dense){
+        return jobStorage.getFunc(dense);
+    }
+
+    Inner* getInner(const size_t dense){
+        return jobStorage.getInner(dense).get();
     }
 
     bool clearTaskStorage(JobCategory category);
@@ -654,7 +669,7 @@ struct TaskFuture : public IFuture{
     ~TaskFuture(){
         auto&jm = JobManager::Instance();
 
-        jm.addRemoveJob(Id);
+        jm.removeJob(Id);
     }
 
     template<typename F>
@@ -670,8 +685,8 @@ struct TaskFuture : public IFuture{
         auto& job = jm.getJobEntry(Id);
 
         ASSERT(false,"not work");
-        job.job.invoke();
-        job.inner->ready = true;
+        jm.getJob(Id).invoke();
+        jm.getInner()->setReady(true);
     }
 
     //JobHandle schedule() {

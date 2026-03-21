@@ -10,10 +10,10 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobId* Id) {
 
     JobManager& jm = JobManager::Instance();
     auto& jobEntry = jm.getJobEntry(*Id);        
-    ASSERT(jobEntry.job.valid(), "this job is executed");
+    //ASSERT(jobEntry.job.valid(), "this job is executed");
 
-    jobEntry.job.invoke();
-    jobEntry.inner->setReady(true);
+    //jobEntry.job.invoke();
+    //jobEntry.inner->setReady(true);
 
     //processDependents(jobEntry.data);
 
@@ -29,14 +29,14 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin,
     size_t size = end - begin;
 
     //slot実行
-    for (JobId* it = begin; it != end; ++it) {
+    for (auto it = begin; it != end; ++it) {
         ASSERT(jm.containsJob(*it), "job not contains");
-        auto& job = jm.getJobEntry(*it);
+        
+        auto& job = jm.getJob(*it);
+        ASSERT(job.valid(), "this job is executed");
 
-        ASSERT(job.job.valid(), "this job is executed");
-
-        job.job.invoke();
-        job.inner->setReady(true);
+        job.invoke();
+        jm.getInner(*it)->setReady(true);
 
         //processDependents(job.data);
     }
@@ -54,18 +54,18 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
     size_t size = chunk.size();
 
     //chunk実行
-    for (JobId* it = chunk.begin; it != chunk.end; ++it) {
-        ASSERT(jm.containsJob(*it),"job not contains");
+    for (auto it = chunk.begin; it != chunk.end; ++it) {
+        //ASSERT(jm.containsJob(*it),"job not contains");
         
-        auto& job = jm.getJobEntry(*it);
-        ASSERT(!job.inner->isReady(),"this job is executed");
-        ASSERT(job.job.valid(), "this job is executed");
-        
-        job.job.invoke();
-        job.inner->setReady(true);
+        auto& job = jm.getJob(*it);
+        ASSERT(!jm.getInner(*it)->isReady(),"this job is executed");
+        ASSERT(job.valid(), "this job is executed");
+
+        job.invoke();
+        jm.getInner(*it)->setReady(true);
 
         //依存関係の解決
-        processDependents(job);
+        //processDependents(job);
     }
 
     //カウント減算
@@ -76,18 +76,18 @@ void ECS::JobSystem::JobManager::Executor::processDependents(JobEntry& parent)
 {
     auto& jm = JobManager::Instance();
 
-    for(auto& child : parent.dependents){
-        auto& childJobEntry = jm.getJobEntry(child);
+    //for(auto& child : parent.dependents){
+    //    auto& childJobEntry = jm.getJobEntry(child);
 
-        //auto& childJob = childJobEntry.data;
+    //    //auto& childJob = childJobEntry.data;
 
-        if (childJobEntry.inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            //スケジュール済み
-            if (childJobEntry.inner) {
-                jm.scheduleDependentHandle(child);
-            }
-        }
-    }
+    //    if (childJobEntry.inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+    //        //スケジュール済み
+    //        if (childJobEntry.inner) {
+    //            jm.scheduleDependentHandle(child);
+    //        }
+    //    }
+    //}
 
     //for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
     //    child != std::nullopt;
@@ -135,23 +135,32 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-JobHandle JobManager::scheduleJobHandle(JobId id,Job&& job)
+JobHandle JobManager::scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory,Job&& job)
 {
-    auto& entry = jobStorage.getJobEntry(id);
-
     //いずれ、自動でtaskCategoryを算出できるようにする
-    stats_.onScheduled(entry.jobCategory, 1);
+    stats_.onScheduled(jobCategory, 1);
 
     //いずれ、これら二つの変数を詰め込んだjobだけをchunkにつめていく。
+
+    //jobをJobManagerにコピー
+    auto jobId = jobStorage.emplaceJobId();
+
     auto inner = std::make_shared<Inner>();
-    entry.job = std::move(job);
 
-    if (entry.inDegree.load(std::memory_order_acquire) == 0) {
-        enqueue(entry.taskCategory, entry.jobCategory, id);
-    }
+    //ここでindegree追加するか処置
 
-    auto handle = JobHandle::createHandle(id, std::move(inner));
-    entry.inner = handle.inner;
+     //jobとdependents,inner
+    auto index = getJobIndex(jobId);
+    auto& func = jobStorage.getFunc(index);
+    func = std::move(job);
+    auto& jobInfo = jobStorage.getJobInfo(index);
+    jobInfo.jobCategory = jobCategory;
+    jobInfo.taskCategory = taskCategory;
+    jobStorage.getInner(index) = inner;
+
+    enqueue(taskCategory, jobCategory, index);
+
+    auto handle = JobHandle::createHandle(jobId, std::move(inner));
 
     return handle;
 }
@@ -170,7 +179,14 @@ JobHandle JobManager::scheduleJobHandle(JobId id,Job&& job)
 //
 //    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
 //        enqueue(entry.taskCategory, entry.jobCategory, jobId);
-//    }
+//    }else{
+//          //待機ジョブに登録
+//size_t waitJobIndex = jobStorage.emplaceWaitJob();
+//auto& entry = jobStorage.getWaitJob(waitJobIndex);
+//entry.jobCategory = jobCategory;
+//entry.taskCategory = taskCategory;
+//  
+//      }
 //
 //    return JobHandle::createHandle(jobId, entry.inner);
 //}
@@ -229,9 +245,9 @@ bool JobManager::checkRanAllJobInJobQueues()
     return true;
 }
 
-void JobManager::addRemoveJob(JobId& jobId)
+void JobManager::removeJob(JobId& jobId)
 {
-    jobStorage.addRemoveJob(jobId);
+    jobStorage.removeJob(jobId);
     jobId = NULL_JOB_ID;
 }
 
@@ -253,15 +269,6 @@ void JobManager::addRemoveJob(JobId& jobId)
 //    }
 //}
 
-//frame最後の同期ポイントで必ず行う
-
-void JobManager::removeJobsOnLastFrame()
-{
-    ASSERT(!clearTaskStorage(JobCategory::RealTime), "Some Job can not executed");
-
-    //削除予定のjobDataをここで一斉に削除
-    jobStorage.removeJobs();
-}
 
 void JobManager::popGlobalBackGroundQueue() {
     //if (globalBackGroudQueue.empty()) return; // グローバルキューが空の場合終了
@@ -345,7 +352,7 @@ void JobManager::getFlushChunk(const JobCategory category, ChunkMeta& chunk)
 
     if(!chunk.isEmpty()){
         auto&job = getJobEntry(*chunk.begin);
-        if(job.inner->isReady()){
+        if(getInner(*chunk.begin)->isReady()){
             ASSERT(false,"inner is true");
         }
     }
