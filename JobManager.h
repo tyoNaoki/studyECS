@@ -122,7 +122,6 @@ namespace ECS::JobSystem{
             jobInfos.emplace_back();
             jobs.emplace_back();
             dependents.emplace_back();
-            inners.emplace_back(nullptr);
             jobIds.emplace_back();
         }
 
@@ -146,10 +145,6 @@ namespace ECS::JobSystem{
 
         std::vector<JobId>& getDependents(size_t index) {
             return dependents[index];
-        }
-
-        std::shared_ptr<Inner>& getInner(size_t index) {
-            return inners[index];
         }
 
         //schedule時に対応ジョブに関数ポインターを割り当てる
@@ -214,7 +209,6 @@ namespace ECS::JobSystem{
             std::swap(jobInfos[job],jobInfos[job2]);
             std::swap(jobs[job], jobs[job2]);
             std::swap(dependents[job], dependents[job2]);
-            std::swap(inners[job], inners[job2]);
         }
 
         //void removeJob(JobId& id) {
@@ -249,8 +243,6 @@ namespace ECS::JobSystem{
         std::vector<JobEntry>jobInfos;
         std::vector<Job>jobs;
         std::vector<std::vector<size_t>>dependents;
-
-        std::vector<std::shared_ptr<Inner>>inners;
         //std::vector<std::mutex> dependentLocks;
 
         //JobIdのリスト
@@ -467,7 +459,7 @@ public:
 
     //job = JobHandle.dependents(handle1,handle2);
 
-    JobHandle scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
+    JobHandle scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
 
     //JobHandle scheduleJobHandle(JobId jobId, JobHandle& handle);
 
@@ -576,10 +568,6 @@ private:
         return jobStorage.getFunc(dense);
     }
 
-    Inner* getInner(const size_t dense){
-        return jobStorage.getInner(dense).get();
-    }
-
     bool clearTaskStorage(JobCategory category);
 
 private:
@@ -686,7 +674,6 @@ struct TaskFuture : public IFuture{
 
         ASSERT(false,"not work");
         jm.getJob(Id).invoke();
-        jm.getInner()->setReady(true);
     }
 
     //JobHandle schedule() {

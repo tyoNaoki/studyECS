@@ -152,6 +152,53 @@ public:
     // 暗黙の bool 変換は禁止
     explicit operator bool() const noexcept = delete;
 };
+
+struct FutureInner {
+    FutureInner() = default;
+
+    // コピー禁止
+    FutureInner(const FutureInner&) = delete;
+    FutureInner& operator=(const FutureInner&) = delete;
+
+    // ムーブ禁止
+    FutureInner(FutureInner&&) = delete;
+    FutureInner& operator=(FutureInner&&) = delete;
+
+    std::atomic<bool> ready{ false };
+};
+
+class JobFuture {
+    std::shared_ptr<FutureInner> inner;
+public:
+    explicit JobFuture(std::shared_ptr<FutureInner> i)
+        : inner(std::move(i)) {}
+
+    //JobSystem::run_one_pending_job() を呼びつつ待ち
+    bool isReady() {
+        return inner->ready.load(std::memory_order_acquire);
+    }
+};
+
+class SettableJobFuture {
+    std::shared_ptr<FutureInner> inner;
+public:
+    explicit SettableJobFuture(std::shared_ptr<FutureInner> i)
+        : inner(std::move(i)) {}
+
+    static auto create() {
+        auto ptr = std::make_shared<FutureInner>();
+        return std::make_pair(
+            SettableJobFuture{ ptr },
+            JobFuture{ptr}
+        );
+    }
+
+    // 結果なしの通知だけ
+    void set_value() {
+        inner->ready.store(true, std::memory_order_release);;
+    }
+};
+
 //
 //struct Task {
 //    Job job;
@@ -350,22 +397,11 @@ private:
 };
 
 template<typename Derived>
-struct IJob<Derived,void> : std::enable_shared_from_this<Derived>,IJobBase {
+struct IJob<Derived,void>{
     //using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
-
-    struct Context {
-        std::shared_ptr<Derived> self;
-        std::shared_ptr<Inner>setter;
-
-        Context(std::shared_ptr<Derived> s,
-            std::shared_ptr<Inner>set )
-            : self(s),setter(std::move(set)){}
-    };
 
 public:
     IJob() = default;
-
-    ~IJob() = default;
 
     void AddRequest(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
@@ -376,11 +412,12 @@ public:
     }
 
     JobHandle scheduleIJob() {
-        Derived* self = static_cast<Derived*>(this);
-        /*auto ctx = std::make_shared<Context>(
-            shared_this()
-            , std::move(settable)
-            );*/
+
+        //createでsetterとIFutureを作れるようにしておく
+        //auto [settable, future] = SettableJobFuture::create();
+
+        setter = std::make_shared<Inner>();
+        auto self = static_cast<Derived*>(this);
 
         auto work = [self]() { ExecuteIJob(self);};
         Job job(std::move(work));
@@ -389,7 +426,7 @@ public:
 
         //inner = std::make_shared<Inner>();
         //仮としてRealTime
-        return jm.scheduleJobHandle(TaskCategory::Easy,JobCategory::RealTime,std::move(job));
+        return jm.scheduleJobHandle(setter,TaskCategory::Easy,JobCategory::RealTime,std::move(job));
     }
 
    /* template<
@@ -410,22 +447,13 @@ public:
         return job;
     }*/
 
-protected:
-    void Execute() {
-        // Derived の Execute() を呼び出し
-        //static_cast<Derived*>(this)->Execute(index);
-        ASSERT(false, "Derived class not found Execute() member function!!");
-    }
-
 private:
-    static void ExecuteIJob(Derived* ctx) {
-        ctx->Execute();
-        //self->setInner();
-    };
 
-    /*void setInner(){
-        inner->setReady(true);
-    }*/
+    static void ExecuteIJob(Derived* self) {
+        
+        self->Execute();
+        self->setter->setReady(true);
+    };
 
     void applyCommands() {
 
@@ -439,55 +467,92 @@ private:
     }
 
 protected:
+
+    inline void Execute() {
+        // Derived の Execute() を呼び出し
+        //static_cast<Derived*>(this)->Execute(index);
+        ASSERT(false, "Derived class not found Execute() member function!!");
+    }
+
+    std::shared_ptr<Derived> shared_this()
+    {
+        return std::enable_shared_from_this<Derived>::shared_from_this();
+    }
+
     friend class JobManager;
+
 private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
-    //std::shared_ptr<Inner>inner;
+
+    std::shared_ptr<Inner> setter;
 };
 
 template<typename Derived,typename ReturnType>
 struct IJob
-    : IJobBase
+    : public std::enable_shared_from_this<Derived>
     , ResultHolder<ReturnType> {
     using Return_t = ReturnType;
 
     using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
+    struct Context {
+        std::shared_ptr<Derived> self;
+
+        Context(std::shared_ptr<Derived> s)
+            : self(s) {}
+    };
+
 public:
-    IJob() = default;
-
-    ~IJob() = default;
-
+    template<typename... Args>
+    static std::shared_ptr<Derived> Create(Args&&... args) {
+        // make_shared で Derived を生成
+        return std::make_shared<Derived>(std::forward<Args>(args)...);
+    }
+    
     void AddRequeset(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
     }
 
-    void scheduleIJob(){
+    JobHandle scheduleIJob(){
         auto* self = static_cast<Derived*>(this);
-        
 
         auto work = [self]() { ExecuteIJob(self); };
         Job job(std::move(work));
 
         auto& jm = JobManager::Instance();
-        jm.scheduleJobHandle(id_, std::move(job));
+
+        return jm.scheduleJobHandle(TaskCategory::Easy, JobCategory::RealTime, std::move(job));
     }
 
-    JobId getId() const { return id_; }
+    std::shared_ptr<Derived> shared_this()
+    {
+        return std::enable_shared_from_this<Derived>::shared_from_this();
+    }
 
 protected:
-    void Execute() {
+    inline void Execute() {
         // Derived の Execute() を呼び出し
         //static_cast<Derived*>(this)->Execute(index);
         //ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
+    
+
 private:
+    IJob() = default;
+
     static void ExecuteIJob(Derived* self) {
         ASSERT(self, "self is nullptr");
 
         self->Execute();
+    };
+
+    static void ExecuteIJob(std::shared_ptr<Context> ctx) {
+        ASSERT(ctx->self, "self is nullptr");
+    
+        ctx->self->Execute();
+        //ctx->self->setInner();
     };
 
     void applyCommands() {
