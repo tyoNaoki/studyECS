@@ -36,7 +36,6 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin,
         ASSERT(job.valid(), "this job is executed");
 
         job.invoke();
-        jm.getInner(*it)->setReady(true);
 
         //processDependents(job.data);
     }
@@ -58,11 +57,9 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
         //ASSERT(jm.containsJob(*it),"job not contains");
         
         auto& job = jm.getJob(*it);
-        ASSERT(!jm.getInner(*it)->isReady(),"this job is executed");
         ASSERT(job.valid(), "this job is executed");
 
         job.invoke();
-        jm.getInner(*it)->setReady(true);
 
         //依存関係の解決
         //processDependents(job);
@@ -135,7 +132,7 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-JobHandle JobManager::scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory,Job&& job)
+JobHandle JobManager::scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory,Job&& job)
 {
     //いずれ、自動でtaskCategoryを算出できるようにする
     stats_.onScheduled(jobCategory, 1);
@@ -144,8 +141,6 @@ JobHandle JobManager::scheduleJobHandle(TaskCategory taskCategory,JobCategory jo
 
     //jobをJobManagerにコピー
     auto jobId = jobStorage.emplaceJobId();
-
-    auto inner = std::make_shared<Inner>();
 
     //ここでindegree追加するか処置
 
@@ -156,7 +151,6 @@ JobHandle JobManager::scheduleJobHandle(TaskCategory taskCategory,JobCategory jo
     auto& jobInfo = jobStorage.getJobInfo(index);
     jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
-    jobStorage.getInner(index) = inner;
 
     enqueue(taskCategory, jobCategory, index);
 
@@ -352,9 +346,6 @@ void JobManager::getFlushChunk(const JobCategory category, ChunkMeta& chunk)
 
     if(!chunk.isEmpty()){
         auto&job = getJobEntry(*chunk.begin);
-        if(getInner(*chunk.begin)->isReady()){
-            ASSERT(false,"inner is true");
-        }
     }
     popChunk(chunk);
 }
