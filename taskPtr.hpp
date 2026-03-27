@@ -42,22 +42,12 @@ namespace ECS::JobSystem{
     inline JobIndex NULL_JOB_INDEX = 0xFFFFFFFFu;
     inline JobId NULL_JOB_ID = composeJobId(0xFFFFFFFFu, 0u);
 
+    //TaskCategoryをparallelJobに変更
     enum class TaskCategory : uint8_t {
-        Easy = 0,
-        Normal = 1,
-        Heavy = 2,
-        Num = 3
+        Normal = 0,
+        Batch = 1,
+        Num = 2,
     };
-
-    constexpr std::array<uint8_t, static_cast<size_t>(TaskCategory::Num)> WorkloadMap = {
-        1,   // Easy
-        8,  // Normal
-        16   // Heavy
-    };
-
-    inline uint8_t getWorkload(TaskCategory cat) {
-        return WorkloadMap[static_cast<size_t>(cat)];
-    }
 
 enum class JobCategory { RealTime, BackGround, Num };
 
@@ -342,7 +332,7 @@ protected:
 template<typename T>
 struct TaskFuture;
 
-template<typename,typename>
+template<typename>
 struct IJob;
 
 class JobManager;
@@ -370,7 +360,6 @@ private:
     std::atomic<bool> ready{ false };
 };
 
-
 struct JobHandle {
     bool isComplete() const;
 
@@ -397,7 +386,7 @@ private:
 };
 
 template<typename Derived>
-struct IJob<Derived,void>{
+struct IJob{
     //using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
 
 public:
@@ -411,11 +400,7 @@ public:
         std::swap(commands,fns);
     }
 
-    JobHandle scheduleIJob() {
-
-        //createでsetterとIFutureを作れるようにしておく
-        //auto [settable, future] = SettableJobFuture::create();
-
+    JobHandle scheduleIJob(TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
         setter = std::make_shared<Inner>();
         auto self = static_cast<Derived*>(this);
 
@@ -423,10 +408,9 @@ public:
         Job job(std::move(work));
 
         auto& jm = JobManager::Instance();
+        jobId = jm.emplaceJobID();
 
-        //inner = std::make_shared<Inner>();
-        //仮としてRealTime
-        return jm.scheduleJobHandle(setter,TaskCategory::Easy,JobCategory::RealTime,std::move(job));
+        return jm.scheduleJobHandle(setter,taskCategory,jobCategory,jobId,std::move(job));
     }
 
    /* template<
@@ -448,11 +432,12 @@ public:
     }*/
 
 private:
-
     static void ExecuteIJob(Derived* self) {
-        
         self->Execute();
         self->setter->setReady(true);
+
+        JobManager::Instance().processDependents(self->jobId);
+        //removeJob(self->jobId);
     };
 
     void applyCommands() {
@@ -474,107 +459,104 @@ protected:
         ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
-    std::shared_ptr<Derived> shared_this()
-    {
-        return std::enable_shared_from_this<Derived>::shared_from_this();
-    }
-
-    friend class JobManager;
+    //friend class JobManager;
 
 private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
 
     std::shared_ptr<Inner> setter;
+
+    JobId jobId;
 };
-
-template<typename Derived,typename ReturnType>
-struct IJob
-    : public std::enable_shared_from_this<Derived>
-    , ResultHolder<ReturnType> {
-    using Return_t = ReturnType;
-
-    using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
-
-    struct Context {
-        std::shared_ptr<Derived> self;
-
-        Context(std::shared_ptr<Derived> s)
-            : self(s) {}
-    };
-
-public:
-    template<typename... Args>
-    static std::shared_ptr<Derived> Create(Args&&... args) {
-        // make_shared で Derived を生成
-        return std::make_shared<Derived>(std::forward<Args>(args)...);
-    }
-    
-    void AddRequeset(std::function<void(Derived&)>&& fn) {
-        commands.emplace_back(std::move(fn));
-    }
-
-    JobHandle scheduleIJob(){
-        auto* self = static_cast<Derived*>(this);
-
-        auto work = [self]() { ExecuteIJob(self); };
-        Job job(std::move(work));
-
-        auto& jm = JobManager::Instance();
-
-        return jm.scheduleJobHandle(TaskCategory::Easy, JobCategory::RealTime, std::move(job));
-    }
-
-    std::shared_ptr<Derived> shared_this()
-    {
-        return std::enable_shared_from_this<Derived>::shared_from_this();
-    }
-
-protected:
-    inline void Execute() {
-        // Derived の Execute() を呼び出し
-        //static_cast<Derived*>(this)->Execute(index);
-        //ASSERT(false, "Derived class not found Execute() member function!!");
-    }
-
-    
-
-private:
-    IJob() = default;
-
-    static void ExecuteIJob(Derived* self) {
-        ASSERT(self, "self is nullptr");
-
-        self->Execute();
-    };
-
-    static void ExecuteIJob(std::shared_ptr<Context> ctx) {
-        ASSERT(ctx->self, "self is nullptr");
-    
-        ctx->self->Execute();
-        //ctx->self->setInner();
-    };
-
-    void applyCommands() {
-
-        if(commands.empty()) return;
-
-        for (auto& fn : commands) {
-            fn(static_cast<Derived&>(*this)); // 直接呼び出し
-        }
-
-        commands.clear();
-    }
-
-protected:
-    using ResultHolder<ReturnType>::result;
-
-    friend struct TaskFuture<Derived>;
-
-private:
-    // コマンドバッファ
-    std::vector<std::function<void(Derived&)>> commands;
-};
+//
+//template<typename Derived,TaskCategory>
+//struct IJob
+//    : public std::enable_shared_from_this<Derived>
+//    , ResultHolder<ReturnType> {
+//    using Return_t = ReturnType;
+//
+//    using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+//
+//    struct Context {
+//        std::shared_ptr<Derived> self;
+//
+//        Context(std::shared_ptr<Derived> s)
+//            : self(s) {}
+//    };
+//
+//public:
+//    template<typename... Args>
+//    static std::shared_ptr<Derived> Create(Args&&... args) {
+//        // make_shared で Derived を生成
+//        return std::make_shared<Derived>(std::forward<Args>(args)...);
+//    }
+//    
+//    void AddRequeset(std::function<void(Derived&)>&& fn) {
+//        commands.emplace_back(std::move(fn));
+//    }
+//
+//    JobHandle scheduleIJob(){
+//        auto* self = static_cast<Derived*>(this);
+//
+//        auto work = [self]() { ExecuteIJob(self); };
+//        Job job(std::move(work));
+//
+//        auto& jm = JobManager::Instance();
+//
+//        return jm.scheduleJobHandle(TaskCategory::Easy, JobCategory::RealTime, std::move(job));
+//    }
+//
+//    std::shared_ptr<Derived> shared_this()
+//    {
+//        return std::enable_shared_from_this<Derived>::shared_from_this();
+//    }
+//
+//protected:
+//    inline void Execute() {
+//        // Derived の Execute() を呼び出し
+//        //static_cast<Derived*>(this)->Execute(index);
+//        //ASSERT(false, "Derived class not found Execute() member function!!");
+//    }
+//
+//    
+//
+//private:
+//    IJob() = default;
+//
+//    static void ExecuteIJob(Derived* self) {
+//        ASSERT(self, "self is nullptr");
+//
+//        self->Execute();
+//    };
+//
+//    static void ExecuteIJob(std::shared_ptr<Context> ctx) {
+//        ASSERT(ctx->self, "self is nullptr");
+//    
+//        ctx->self->Execute();
+//        //ctx->self->setInner();
+//    };
+//
+//    void applyCommands() {
+//
+//        if(commands.empty()) return;
+//
+//        for (auto& fn : commands) {
+//            fn(static_cast<Derived&>(*this)); // 直接呼び出し
+//        }
+//
+//        commands.clear();
+//    }
+//
+//protected:
+//    using ResultHolder<ReturnType>::result;
+//
+//    friend struct TaskFuture<Derived>;
+//
+//private:
+//    // コマンドバッファ
+//    std::vector<std::function<void(Derived&)>> commands;
+//};
 
 //parallelJobの基底クラス
 //Derived : 派生クラス
