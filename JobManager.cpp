@@ -54,14 +54,9 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
 
     //chunk実行
     for (size_t i = 0; i < size; i++) {
+        ASSERT(chunk.jobs[i].valid(), "this job is executed");
         chunk.jobs[i].invoke();
     }
-
-    /*for (auto it = chunk.jobs.begin(); it != chunk.jobs.end(); ++it) {
-        ASSERT(it->valid(), "this job is executed");
-
-        it->invoke();
-    }*/
 
     //カウント減算
     jm.stats_.onJobFinish(chunk.jobCategory, size);
@@ -337,7 +332,7 @@ void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, Job&
     }
 
     ChunkMeta chunk = ChunkMeta();
-    chunk.jobs.emplace_back(std::move(job));
+    chunk.jobs.push_back(std::move(job));
     chunk.jobCategory = jobCategory;
 
     size_t queueIndex = getNextQueueIndex();
@@ -345,9 +340,9 @@ void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, Job&
 }
 
 void JobManager::enqueue(JobCategory jobCategory, std::vector<Job>&& jobs){
-    ChunkMeta chunk = ChunkMeta(jobs.size());
+    ChunkMeta chunk;
 
-    std::swap(chunk.jobs,jobs);
+    chunk.jobs = std::move(jobs);
     chunk.jobCategory = jobCategory;
 
     size_t queueIndex = getNextQueueIndex();

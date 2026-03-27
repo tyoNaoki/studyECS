@@ -222,10 +222,6 @@ struct ChunkMeta {
 
     ChunkMeta() = default;
 
-    ChunkMeta(size_t reserveCount){
-        jobs.reserve(reserveCount);
-    }
-
     // コピー禁止
     ChunkMeta(const ChunkMeta&) = delete;
     ChunkMeta& operator=(const ChunkMeta&) = delete;
@@ -252,23 +248,26 @@ class TaskArena {
     TaskArena() = delete;
 
 public:
-    TaskArena(JobCategory jobCat,size_t maxBatch) : jobCategory(jobCat), batchMaxSize(maxBatch){currentBatchChunk.jobCategory = jobCat;};
+    TaskArena(JobCategory jobCat,size_t maxBatch) : jobCategory(jobCat), batchMaxSize(maxBatch){
+        currentBatchChunk.jobs.reserve(maxBatch);
+        currentBatchChunk.jobCategory = jobCat;
+    };
 
      void enqueue(ChunkMeta&&chunk){
         std::lock_guard<std::mutex> guard(lock);
 
-        chunks.emplace_back(std::move(chunk));
+        chunks.push_back(std::move(chunk));
      }
 
      //Batch処理用の関数
     void enqueue(Job&&job){
-        currentBatchChunk.jobs.emplace_back(std::move(job));
+        currentBatchChunk.jobs.push_back(std::move(job));
 
         if (currentBatchChunk.size() >= batchMaxSize) {
             enqueue(std::move(currentBatchChunk));
 
             currentBatchChunk.jobCategory = jobCategory;
-            currentBatchChunk.jobs.clear();
+            currentBatchChunk.jobs.reserve(batchMaxSize);
         }
     }
 
@@ -325,7 +324,7 @@ public:
         chunk = std::move(currentBatchChunk);
 
         currentBatchChunk.jobCategory = jobCategory;
-        currentBatchChunk.jobs.clear();
+        currentBatchChunk.jobs.reserve(batchMaxSize);
         return true;
     }
 
