@@ -120,11 +120,8 @@ struct TestEmptyJob
 };
 
 struct TestJob
-	: public ECS::JobSystem::IJob<TestJob,void>
+	: public ECS::JobSystem::IJob<TestJob>
 {
-	using Base = IJob<TestJob,void>;
-	using Base::Base;
-
 	TestNormalJobConnector connecter;
 
 	/*static void Execute(TestJob*job) {
@@ -139,11 +136,8 @@ struct TestJob
 };
 
 struct TestParticalJob
-	: public ECS::JobSystem::IJob<TestJob, void>
+	: public ECS::JobSystem::IJob<TestJob>
 {
-	using Base = IJob<TestJob, void>;
-	using Base::Base;
-
 	std::string name;
 
 	/*static void Execute(TestJob*job) {
@@ -191,11 +185,14 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	///JobHandleに、JobIdを設定して、実際にchunk化で入れられるのはdense側のId
 	//createIJobをなくし、継承先をIJobかどうかで作成は普通にTestJob job();
 
+	//バッチ処理できるようにする。
+	// 今までのtaskArenaのcurrentSlotによるchunk詰めと同じことをする。
+	// JobCategoryにBatch処理用のカテゴリーを追加
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
 		auto job = TestJob();
 
-		auto handle = job.scheduleIJob();
+		auto handle = job.scheduleIJob(ECS::JobSystem::TaskCategory::Batch, ECS::JobSystem::JobCategory::RealTime);
 	}
 
 	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));

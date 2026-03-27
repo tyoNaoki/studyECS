@@ -70,7 +70,7 @@ namespace ECS::JobSystem{
     };
 
     struct JobStorage {
-        void addDependent(size_t child,size_t parent){
+        void addDependent(JobIndex child, JobIndex parent){
             auto& childJob = getJobInfo(child);
 
             //std::lock_guard<std::mutex> lk(dependentLocks[sparse[getJobIndex(parent)]]);
@@ -125,25 +125,25 @@ namespace ECS::JobSystem{
             jobIds.emplace_back();
         }
 
-        void pushBackWaitQueue(size_t jobIndex) {
+        void pushBackWaitQueue(JobIndex jobIndex) {
             std::lock_guard<std::mutex> lk(lock);
 
             waitQueue.push_back(jobIndex);
         }
 
-        JobId& getWaitJob(const size_t jobIndex) {
+        JobId& getWaitJob(const JobIndex jobIndex) {
             return waitQueue[jobIndex];
         }
 
-        JobEntry& getJobInfo(size_t index){
+        JobEntry& getJobInfo(JobIndex index){
             return jobInfos[index];
         }
 
-        Job& getFunc(size_t index){
+        Job& getFunc(JobIndex index){
             return jobs[index];
         }
 
-        std::vector<JobId>& getDependents(size_t index) {
+        std::vector<JobId>& getDependents(JobIndex index) {
             return dependents[index];
         }
 
@@ -156,7 +156,8 @@ namespace ECS::JobSystem{
         void removeJob(JobId jobId){
             std::lock_guard<std::mutex> lk(lock);
 
-            jobIds[getJobIndex(jobId)] = NULL_JOB_ID;
+            auto index = getJobIndex(jobId);
+            jobIds[index] = NULL_JOB_ID;
             freeIds.push_back(jobId);
         }
 
@@ -205,7 +206,7 @@ namespace ECS::JobSystem{
             waitJobs.pop_back();*/
         }
 
-        void swap(size_t job,size_t job2){
+        void swap(JobIndex job, JobIndex job2){
             std::swap(jobInfos[job],jobInfos[job2]);
             std::swap(jobs[job], jobs[job2]);
             std::swap(dependents[job], dependents[job2]);
@@ -378,9 +379,6 @@ class JobManager
         void runSlot(size_t workerId, JobId* begin, JobId* end);
 
         void runChunk(size_t workerId, ChunkMeta&& chunk);
-    private:
-        void processDependents(JobEntry& parent);
-
     };
 
 public:
@@ -459,40 +457,40 @@ public:
 
     //job = JobHandle.dependents(handle1,handle2);
 
-    JobHandle scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
+    JobId emplaceJobID() {
+        return jobStorage.emplaceJobId();
+    }
 
+    JobHandle scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory, JobId jobId, Job&&job);
+
+    //parallelJob用のscheduleも用意しておく。
+    //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
+    // 
     //JobHandle scheduleJobHandle(JobId jobId, JobHandle& handle);
 
     //JobHandle scheduleJobHandle(JobId jobId,std::vector<JobHandle>&jobHandles);
 
     //JobHandle scheduleJobHandle(JobId jobId,Job&&job, std::vector<JobHandle>& jobHandles);
 
-    void scheduleDependentHandles(std::vector<JobId>&&jobs) {
-
-#ifdef DEBUG
-        //jobsのスケジュール済みかどうかチェック
-        ASSERT(!jobs.empty(),"jobs is empty");
-
-        for(size_t i = 0;i<jobs.size();i++){
-            auto& entry = getJobEntry(jobs[i].jobId);
-            ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-        }
-
-#endif // DEBUG
-
-        auto&entry = getJobEntry(jobs[0]);
-
-        taskStorage.enqueue(entry.taskCategory, std::move(jobs));
-
-        popChunks();
-    }
-
-    void scheduleDependentHandle(JobId childId){
-        auto& entry = getJobEntry(childId);
-        //ASSERT(!entry.inner->isReady(), "this job is executed");
-
-        enqueue(entry.taskCategory, entry.jobCategory, childId);
-    }
+//    void scheduleDependentHandles(std::vector<JobId>&&jobs) {
+//
+//#ifdef DEBUG
+//        //jobsのスケジュール済みかどうかチェック
+//        ASSERT(!jobs.empty(),"jobs is empty");
+//
+//        for(size_t i = 0;i<jobs.size();i++){
+//            auto& entry = getJobEntry(jobs[i].jobId);
+//            ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
+//        }
+//
+//#endif // DEBUG
+//
+//        auto&entry = getJobEntry(jobs[0]);
+//
+//        taskStorage.enqueue(entry.taskCategory, std::move(jobs));
+//
+//        popChunks();
+//    }
 
    /// <summary>
    /// Jobにコマンド形式で関数ポインターを渡していく
@@ -520,14 +518,8 @@ public:
     const size_t getThreadSize() const{ return threadSize;}
 
 public:
-    //すべてのchunk化されていないjobも含めて、すべてのワーカーのローカルキューに順番に詰めていく。
-    void allFlushJob(const JobCategory category);
-
     //chunkをワーカーから盗む（メインスレッド専用)
     bool stealChunk(const JobCategory category,ChunkMeta&chunk);
-
-    //chunkとして完成していないchunkも含めて、一つchunk化されたJob群を取得する
-    void getFlushChunk(const JobCategory category,ChunkMeta&chunk);
 
     //緊急停止フラグがたっているか
     bool isAbort() {
@@ -535,16 +527,22 @@ public:
     }
 
     JobEntry& getJobEntry(const JobId& jobId) {
+        ASSERT(jobStorage.containsJob(jobId),"jobId is NULL or Deleted ID");
+
         return jobStorage.getJobInfo(getJobIndex(jobId));
     }
 
+    bool containsJob(const JobId& jobId){
+        return jobStorage.containsJob(jobId);
+    }
+
+    void processDependents(const JobId& parent);
+
 private:
     //タスクストレージにジョブを追加する
-    void enqueue(TaskCategory taskCategory,JobCategory jobCategory,JobId jobId);
+    void enqueue(TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
 
-    void popChunks();
-
-    void popChunk(ChunkMeta&chunk);
+    void enqueue(JobCategory jobCategory, std::vector<Job>&& jobs);
 
     bool allQueuesEmpty() const;
 
@@ -560,7 +558,7 @@ private:
     //依存関係追加
     void addDependent(const JobId& child, JobHandle& parent);
 
-    JobEntry& getDense(const size_t dense) {
+    JobEntry& getJobInfo(const size_t dense) {
         return jobStorage.getJobInfo(dense);
     }
 
@@ -568,7 +566,17 @@ private:
         return jobStorage.getFunc(dense);
     }
 
-    bool clearTaskStorage(JobCategory category);
+    std::vector<JobId>& getDependents(const size_t dense){
+        return jobStorage.getDependents(dense);
+    }
+
+    void scheduleDependentHandle(JobId childId) {
+        auto& entry = getJobEntry(childId);
+        auto jobIndex = getJobIndex(childId);
+
+        auto& job = getJob(jobIndex);
+        enqueue(entry.taskCategory, entry.jobCategory, std::move(job));
+    }
 
 private:
     double avg_JobTimeMs = 1.0f;
@@ -583,8 +591,6 @@ private:
     inline static thread_local std::ostringstream localLogBuffer;
 
     std::vector<std::unique_ptr<JobQueue>> localQueues;
-
-    TaskArena taskStorage;
 
     JobStorage jobStorage;
 

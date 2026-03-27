@@ -209,115 +209,73 @@ namespace ECS::JobSystem{
 //};
 
 struct ChunkMeta {
-    JobId* begin = nullptr;
-    JobId* end = nullptr;
-    std::atomic<size_t> slotNum = 0;
+    std::vector<Job> jobs;
+    JobCategory jobCategory;
 
-    size_t size() const {
-        return end - begin;
+    size_t size(){
+        return jobs.size();
     }
 
-    bool isEmpty() const{
-        return slotNum == 0;
+    bool isEmpty(){
+        return size() == 0;
     }
 
-    JobCategory getJobCategory() const {return jobCategory;}
+    ChunkMeta() = default;
 
-    ChunkMeta() = default; //デフォルト
-    ChunkMeta(JobCategory category) : jobCategory(category) {}
+    ChunkMeta(size_t reserveCount){
+        jobs.reserve(reserveCount);
+    }
 
-    ChunkMeta(const ChunkMeta&) = delete;            // コピー禁止
-    ChunkMeta& operator=(const ChunkMeta&) = delete; // コピー禁止
+    // コピー禁止
+    ChunkMeta(const ChunkMeta&) = delete;
+    ChunkMeta& operator=(const ChunkMeta&) = delete;
 
+    // move のみ許可
     ChunkMeta(ChunkMeta&& other) noexcept
-        : begin(other.begin),
-        end(other.end),
+        : jobs(std::move(other.jobs)),
         jobCategory(other.jobCategory)
-    {
-        other.begin = nullptr;
-        other.end = nullptr;
-        slotNum.store(other.slotNum.load(std::memory_order_relaxed), std::memory_order_relaxed);
-    }
+    {}
 
     ChunkMeta& operator=(ChunkMeta&& other) noexcept {
         if (this != &other) {
-            
-            begin = other.begin;
-            end = other.end;
+            jobs = std::move(other.jobs);
             jobCategory = other.jobCategory;
-            slotNum.store(other.slotNum.load(std::memory_order_relaxed), std::memory_order_relaxed);
-
-            other.begin = nullptr;
-            other.end = nullptr;
         }
         return *this;
     }
-
-    private:
-        JobCategory jobCategory;
 };
 
 class JobManager;
 
 //Chunkはリストのブロック
 class TaskArena {
-    std::vector<JobId> data;
-    std::deque<ChunkMeta> chunks;
-
-    std::unordered_map<TaskCategory,std::vector<JobId>>currentSlots;
-    ChunkMeta currentChunk;
-
-    std::mutex lock;
-
-    size_t chunkMaxSize;
-
-    uint8_t maxWorkloadOfOneSlot;
-    size_t maxTaskCapacity = 0;
-
-    JobCategory jobCategory;
-
-    bool initFlag = false;
-
-    bool emptyFlag = false;
+    TaskArena() = delete;
 
 public:
-    TaskArena() = default;
+    TaskArena(JobCategory jobCat,size_t maxBatch) : jobCategory(jobCat), batchMaxSize(maxBatch){currentBatchChunk.jobCategory = jobCat;};
 
-    void Initialize(JobCategory category, uint8_t maxSlotWorkCap, size_t maxTasks, size_t chunkSize);
-
-    void flushIncomplete();
-
-    void enqueue(TaskCategory cat,JobId jobId);
-
-    void enqueue(TaskCategory cat,std::vector<JobId>&&jobIds);
-
-    void enqueue(ChunkMeta&& chunk) {
+     void enqueue(ChunkMeta&&chunk){
         std::lock_guard<std::mutex> guard(lock);
 
-        chunks.push_back(std::move(chunk));
+        chunks.emplace_back(std::move(chunk));
+     }
+
+     //Batch処理用の関数
+    void enqueue(Job&&job){
+        currentBatchChunk.jobs.emplace_back(std::move(job));
+
+        if (currentBatchChunk.size() >= batchMaxSize) {
+            enqueue(std::move(currentBatchChunk));
+
+            currentBatchChunk.jobCategory = jobCategory;
+            currentBatchChunk.jobs.clear();
+        }
     }
 
     //chunkが一つもない
     bool isEmptyChunks() const noexcept{
         return 
             chunks.size() == 0;
-    }
-
-    bool clearAllJobHandles(){
-        flushIncomplete();
-
-        {
-            std::lock_guard<std::mutex> guard(lock);
-
-            //flushしても空なら、全て実行済みなので消去
-            if(isEmptyChunks()){
-                chunks.clear();
-                data.clear();
-                return true;
-            }
-
-            return false;
-        }
     }
 
     //一つchunkPop
@@ -342,7 +300,7 @@ public:
 
         //現在の満タンのchunkがない場合、代わりに未完成のchunkを積む
         if (isEmptyChunks()) {
-            flushIncomplete();
+            return;
         }
     
         out.reserve(std::min(maxCount, chunks.size()));
@@ -361,66 +319,28 @@ public:
         }
     }
 
+    bool getFlushBatchChunk(ChunkMeta&chunk){
+        if(currentBatchChunk.isEmpty()) return false;
+
+        chunk = std::move(currentBatchChunk);
+
+        currentBatchChunk.jobCategory = jobCategory;
+        currentBatchChunk.jobs.clear();
+        return true;
+    }
+
 private:
-    bool isFullSlot(TaskCategory cat){
-        uint8_t workload = getWorkload(cat);
-        return (workload * static_cast<uint8_t>(currentSlots[cat].size())) >= maxWorkloadOfOneSlot;
-    }
+    std::deque<ChunkMeta> chunks;
 
-    void pushJob(TaskCategory cat, JobId&& job) {
-        size_t offset = data.size();
-        data.push_back(std::move(job));
+    std::mutex lock;
 
-        if (!currentChunk.begin) {
-            currentChunk.begin = &data.back();   //data内の先頭を記録
-        }
+    JobCategory jobCategory;
 
-        currentChunk.slotNum++;
+    bool emptyFlag = false;
 
-        if (isFullCurrentChunk()) {
-            pushChunk(std::move(currentChunk));
-
-            currentChunk = ChunkMeta(jobCategory);
-        }
-
-        emptyFlag = false;
-    }
-
-    void pushJobs(TaskCategory cat, std::vector<JobId>&& jobs) {
-
-        auto it = data.insert(data.end(),
-            std::make_move_iterator(jobs.begin()),
-            std::make_move_iterator(jobs.end()));
-
-        if (!currentChunk.begin) {
-            currentChunk.begin = &*it;   // data 内の先頭を記録
-        }
-
-       /* auto& jm = JobManager::Instance();
-        for(auto&id : jobs){
-            auto& j = jm.getJobEntry(id);
-            currentChunk.funcs.emplace_back(j.func);
-        }*/
-
-        currentChunk.slotNum++;
-
-        if (isFullCurrentChunk()) {
-            pushChunk(std::move(currentChunk));
-
-            currentChunk = ChunkMeta(jobCategory);
-        }
-
-        emptyFlag = false;
-    }
-
-    bool isFullCurrentChunk(){
-        return currentChunk.slotNum >= chunkMaxSize;
-    }
-
-    void pushChunk(ChunkMeta&&chunk) {
-        chunk.end = data.data() + data.size();
-        chunks.push_back(std::move(chunk));
-    }
+    //Batch処理用のchunk詰め変数
+    ChunkMeta currentBatchChunk;
+    size_t batchMaxSize;
 };
 
 }

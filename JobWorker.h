@@ -28,8 +28,8 @@ class JobManager;
 
 struct RealTimePolicy{
 
-    template<typename LocalQ, typename StealQs,typename TaskQueue>
-    bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,TaskQueue& taskQueue)
+    template<typename LocalQ, typename StealQs,typename TaskStorage>
+    bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,TaskStorage& taskQueue)
     {
         if((*localQ)->isAbort()){
             return false;
@@ -45,8 +45,13 @@ struct RealTimePolicy{
             std::vector<ChunkMeta> chunks;
 
             // RealTime待機キューから取得
-            taskQueue.pop(chunks);
+            taskQueue.popMany(takeNum,chunks);
 
+            // 次実装でfor文でchunksを入れられるようにする。
+                // 詳しくはマルチスレッド対応リングバッファ検索
+            //(*localQ)->pushManyWithTimeout(std::move(chunks), taskQueue);
+
+            //一回ずつ
             while (!chunks.empty()) {
 
                 ChunkMeta chunk = std::move(chunks.back());
@@ -54,6 +59,7 @@ struct RealTimePolicy{
                 chunks.pop_back();
                 // localQueueにpushする。
                 // 制限時間以上ロックされていた場合、待機キューに戻す
+               
                 (*localQ)->pushWithTimeout(std::move(chunk), taskQueue);
             }
         }
@@ -75,240 +81,34 @@ struct RealTimePolicy{
                 executeCategory = JobCategory::RealTime;
 
                 return true;
-            }else{
-                //未完成のchunkを一つ取得、実行
-                manager.getFlushChunk(JobCategory::RealTime,chunkHandle);
-
-                if(!chunkHandle.isEmpty()){
-
-                    //chunk実行
+            }
+            else {
+                //    //未完成のchunkを一つ取得、実行
+                if(taskQueue.getFlushBatchChunk(chunkHandle)){
                     manager.executor().runChunk(workerId, std::move(chunkHandle));
-                    executeCategory = JobCategory::RealTime;
+                    executeCategory = chunkHandle.jobCategory;
 
                     return true;
                 }
+
+                //    if(!chunkHandle.isEmpty()){
+
+                //        //chunk実行
+                //        manager.executor().runChunk(workerId, std::move(chunkHandle));
+                //        executeCategory = JobCategory::RealTime;
+
+                //        return true;
+                //    }
             }
         }
 
         return false;
     }
 
+    //数値を必ず2の累乗
+    //static constexpr size_t localQueueCap = 1'6384;
     static constexpr size_t localQueueCap = 32;
 };
-//
-//struct TaskChunk {
-//    std::vector<Job>jobs;
-//    std::vector<std::vector<size_t>>dependents;
-//
-//    std::vector<std::shared_ptr<Inner>>inners;
-//};
-//
-//struct TaskStorage {
-//    void addDependent(size_t child, size_t parent) {
-//        auto& childJob = getJobInfo(child);
-//
-//        //std::lock_guard<std::mutex> lk(dependentLocks[sparse[getJobIndex(parent)]]);
-//
-//        if (getFunc(parent).valid()) { // まだ実行されていない
-//            //childを親のnextDependentに差し込む
-//            getDependents(parent).push_back(child);
-//
-//            //子ジョブの未解決依存数を増やす
-//            childJob.inDegree.fetch_add(1, std::memory_order_relaxed);
-//        }
-//    }
-//
-//    void reserveJobs(size_t reserveCount) {
-//        sparse.reserve(reserveCount);
-//        jobIds.reserve(reserveCount);
-//    }
-//
-//    void clearAll() {
-//        std::lock_guard<std::mutex> lk(lock);
-//
-//        sparse.clear();
-//        waitQueue.clear();
-//        dependents.clear();
-//        //dependentLocks.clear();
-//        jobIds.clear();
-//        freeIds.clear();
-//        removeJobData.clear();
-//        nextIndex = 0;
-//    }
-//
-//    //JobIDを返す
-//    JobId emplaceJobId() {
-//        std::lock_guard<std::mutex> lk(lock);
-//
-//        JobId newId = allocateJobId();
-//
-//        if (sparse.size() <= getJobIndex(newId)) {
-//            sparse.emplace_back();
-//            sparse.back() = NULL_JOB_ID;
-//        }
-//
-//        ASSERT(sparse[getJobIndex(newId)] == NULL_JOB_ID, "valid sparse slot do not use");
-//        jobIds.push_back(newId);
-//
-//        return newId;
-//    }
-//
-//    size_t emplaceJob(JobId newId) {
-//        ASSERT(containsJob(newId), "not contains job");
-//
-//        auto result = jobs.size();
-//
-//        jobInfos.emplace_back();
-//        jobs.emplace_back();
-//        dependents.emplace_back();
-//        inners.emplace_back(nullptr);
-//
-//        sparse[getJobIndex(newId)] = result;
-//
-//        return result;
-//    }
-//
-//    void pushBackWaitQueue(size_t jobIndex) {
-//        std::lock_guard<std::mutex> lk(lock);
-//
-//        waitQueue.push_back(jobIndex);
-//    }
-//
-//    size_t getDenseIndex(const JobId jobId) {
-//        ASSERT(containsJob(jobId), "not contains JobId");
-//
-//        return sparse[getJobIndex(jobId)];
-//    }
-//
-//    JobId& getWaitJob(const size_t jobIndex) {
-//        return waitQueue[jobIndex];
-//    }
-//
-//    JobEntry& getJobInfo(size_t index) {
-//        return jobInfos[index];
-//    }
-//
-//    Job& getFunc(size_t index) {
-//        return jobs[index];
-//    }
-//
-//    std::vector<JobId>& getDependents(size_t index) {
-//        return dependents[index];
-//    }
-//
-//    std::shared_ptr<Inner>& getInner(size_t index) {
-//        return inners[index];
-//    }
-//
-//    //schedule時に対応ジョブに関数ポインターを割り当てる
-//    /*template<class DerivedJob>
-//    void createJobFunction(const JobId& id){
-//        jobData[getJobIndex(id)].func = &Invoke<DerivedJob>;
-//    }*/
-//
-//    void addRemoveJob(JobId jodId) { removeJobData.push_back(jodId); }
-//
-//    void addRemoveJobs(std::vector<JobId>&& jobs) {
-//        removeJobData.insert(removeJobData.end(),
-//            std::move_iterator(jobs.begin()),
-//            std::move_iterator(jobs.end()));
-//    }
-//
-//    //GetJobEntry関数の参照が壊れるので、絶対にFrameの最後全てのジョブを処理か、処理をしていないタイミングで行うこと!!
-//    void removeJobs() {
-//        std::lock_guard<std::mutex> lk(lock);
-//
-//        std::sort(removeJobData.begin(), removeJobData.end(),
-//            [&](JobId& a, JobId& b) {
-//                return sparse[getJobIndex(a)] > sparse[getJobIndex(b)]; // removeIndex の大きい順
-//            });
-//
-//        for (auto& removeId : removeJobData) {
-//            //removeJob(removeId);
-//        }
-//
-//        removeJobData.clear();
-//    }
-//
-//    bool containsJob(const JobId id) const {
-//        JobIndex index = getJobIndex(id);
-//        return index < sparse.size() && jobIds[index] == id;
-//    }
-//
-//    //template<class T>
-//    //static void Invoke(IJobBase* raw) {
-//    //    //static_cast<T*>(raw)->Execute();
-//    //    //raw->Execute();
-//    //}
-//
-//    JobId allocateJobId() {
-//        if (!freeIds.empty()) {
-//            // removeの時以外でfreeIdsが使用されないので、ロックレスで問題なし
-//            JobId old = freeIds.back();
-//            freeIds.pop_back();
-//
-//            return composeJobId(getJobIndex(old), getJobVersion(old) + 1);
-//        }
-//
-//        return composeJobId(nextIndex++, 0u);
-//    }
-//
-//private:
-//    void removeWaitJob(size_t removeJobIndex) {
-//        /*auto& waitJob = waitJobs.back();
-//        auto rastJobIndex = getJobIndex(waitJob.jobId);
-//        auto swapId = waitJobs[removeJobIndex].jobId;
-//
-//        sparse[rastJobIndex] = removeJobIndex;
-//        sparse[swapId] = NULL_JOB_INDEX;
-//
-//        std::swap(waitJobs[removeJobIndex],waitJobs.back());
-//        waitJobs.pop_back();*/
-//    }
-//
-//    void swap(size_t job, size_t job2) {
-//        std::swap(jobInfos[job], jobInfos[job2]);
-//        std::swap(jobs[job], jobs[job2]);
-//        std::swap(dependents[job], dependents[job2]);
-//        std::swap(inners[job], inners[job2]);
-//    }
-//
-//    //void removeJob(JobId& id) {
-//    //    JobId removeId = jobIds[getJobIndex(id)];
-//    //    JobIndex removeIndex = getJobIndex(removeId);
-//
-//    //    std::lock_guard<std::mutex> lk(lock);
-//
-//    //    //すでに無効
-//    //    ASSERT(jobData.empty() || removeIndex >= jobData.size(),"this id is NULL");
-//
-//    //    jobIds.back() = removeId;
-//
-//    //    std::swap(jobData[removeIndex], jobData.back());
-//    //    std::swap(jobIds[removeIndex], jobIds.back());
-//
-//    //    jobData.pop_back();
-//    //    jobIds.pop_back();
-//    //    //dependentLocks.pop_back();
-//
-//    //    sparse[id] = NULL_JOB_INDEX;
-//    //    freeIds.push_back(id);
-//    //    id = NULL_JOB_ID;
-//    //}
-//
-//private:
-//    
-//    std::vector<size_t>readyQueue;
-//
-//    std::vector<JobEntry>jobInfos;
-//    std::vector<Job>jobs;
-//    std::vector<std::vector<size_t>>dependents;
-//
-//    std::vector<std::shared_ptr<Inner>>inners;
-//    //std::vector<std::mutex> dependentLocks;
-//
-//    std::mutex lock;
-//};
 
 //struct BackGroundPolicy {
 //
@@ -362,6 +162,9 @@ public:
     virtual ~IWorker() = default;
 
     virtual void enqueue(JobCategory jobCategory, ChunkMeta&& chunk) = 0;
+
+    //BatchJob
+    virtual void enqueue(JobCategory jobCategory, Job&& job) = 0;
 };
 
 template<
@@ -375,6 +178,9 @@ class Worker : public IWorker{
 
 public:
     static constexpr size_t localQueueCapacity = WorkerPolicy::localQueueCap;
+    
+    //static constexpr size_t maxBatchSize = 32;
+    static constexpr size_t maxBatchSize = 2048;
 
     //static constexpr size_t realTimeCap = 20'000;
     //static constexpr size_t backGroundCap = 1'000;
@@ -394,6 +200,9 @@ public:
     //BackGround未完成
     void enqueue(JobCategory jobCategory,ChunkMeta&& chunk) override;
 
+    //BatchJob
+    void enqueue(JobCategory jobCategory, Job&&job) override;
+
 private:
     //localQueueのpop、stealを行う。
     void run();
@@ -412,7 +221,7 @@ private:
     const size_t workerId;
     WorkerPolicy policy_;
 
-    ThreadSafeQueue taskQueue;
+    TaskArena taskStorage;
 
     LocalQPtr localQueue;
 
@@ -427,7 +236,7 @@ template<typename LocalQueue,typename WorkerPolicy>
 inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobBarrier&barrier) : workerId(id),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true), 
     thread_([this,&barrier]{
         barrier.wait();
-        run();})
+        run();}),taskStorage(JobCategory::RealTime,maxBatchSize)
 {
 }
 
@@ -447,7 +256,7 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, C
     switch (jobCategory)
     {
     case ECS::JobSystem::JobCategory::RealTime:
-        taskQueue.push(std::move(chunk));
+        taskStorage.enqueue(std::move(chunk));
         break;
     case ECS::JobSystem::JobCategory::BackGround:
         ASSERT(false,"not work");
@@ -459,65 +268,30 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, C
     }
 }
 
-//template<typename LocalQueue, typename WorkerPolicy>
-//inline void Worker<LocalQueue, WorkerPolicy>::enqueue(ChunkMeta* chunk)
-//{
-//    switch (chunk->getJobCategory())
-//    {
-//    case ECS::JobSystem::JobCategory::RealTime:
-//        chunkQueue.push(chunk);
-//        break;
-//    case ECS::JobSystem::JobCategory::BackGround:
-//        ASSERT(false,"not work");
-//        return;
-//        break;
-//    default:
-//        return;
-//        break;
-//    }
-//
-//}
-
-//template<typename ChunkAllocator, typename WorkerPolicy>
-//inline bool Worker<ChunkAllocator, WorkerPolicy>::popOrSteal(ChunkHandle* chunkHandle)
-//{
-//    Chunk chunk;
-//    //リアルタイムJobを処理
-//    //自キューからPOP
-//    {
-//        auto popRes = localQueue->popQueue(chunk);
-//
-//        if (popRes == PopStatus::Success) {
-//            //jobExecuter->runChunk(std::move(chunk));
-//            return true;
-//        }
-//        else if (popRes == PopStatus::WouldBlock) {
-//            std::this_thread::yield();
-//            return true;
-//        }
-//    }
-//
-//    //他キューからSteal
-//    {
-//        auto result = localQueue->stealQueues(chunk, stealQueues);
-//
-//        if (result == StealStatus::Success) {
-//            //jobExecuter->runChunk(std::move(chunk));
-//            return true;
-//        }
-//    }
-//
-//    std::this_thread::yield();
-//    return false
-// 
-//}
+template<typename LocalQueue, typename WorkerPolicy>
+inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, Job&& job)
+{
+    switch (jobCategory)
+    {
+    case ECS::JobSystem::JobCategory::RealTime:
+        taskStorage.enqueue(std::move(job));
+        break;
+    case ECS::JobSystem::JobCategory::BackGround:
+        ASSERT(false, "not work");
+        return;
+        break;
+    default:
+        return;
+        break;
+    }
+}
 
 template<typename LocalQueue,typename WorkerPolicy>
 inline void Worker<LocalQueue,WorkerPolicy>::run()
 {
     JobCategory category;
     while (running.load(std::memory_order_relaxed)) {
-        if(policy_(category,workerId,localQueue,stealQueues, stealQueueSize, taskQueue)){
+        if(policy_(category,workerId,localQueue,stealQueues, stealQueueSize, taskStorage)){
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
 
             //ログ出力
@@ -538,7 +312,7 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
     while(stats.scheduledJobCount(JobCategory::RealTime) > 0 && stats.scheduledJobCount(JobCategory::BackGround) > 0){
 
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
-        if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize,taskQueue)) {
+        if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize, taskStorage)) {
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
             //ログ出力
             DebugLog(category);
