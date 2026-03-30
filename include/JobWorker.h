@@ -5,6 +5,8 @@
 #include "JobBarrier.h"
 #include "ThreadSafeQueue.h"
 
+#include "third_party\moodycamel\concurrentqueue.h"
+
 namespace ECS::JobSystem{
 
 class JobManager;
@@ -28,41 +30,14 @@ class JobManager;
 
 struct RealTimePolicy{
 
-    template<typename LocalQ, typename StealQs,typename TaskStorage>
-    bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,TaskStorage& taskQueue)
+    template<typename LocalQ>
+    bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ)
     {
-        if((*localQ)->isAbort()){
+        /*if((*localQ)->isAbort()){
             return false;
-        }
+        }*/
 
         auto& manager = JobManager::Instance();
-
-        size_t takeNum = (*localQ)->emptyNum();
-
-        // 空きスロットがある
-        if((*localQ)->emptyNum() != 0){
-            // 待機キューから取得
-            std::vector<ChunkMeta> chunks;
-
-            // RealTime待機キューから取得
-            taskQueue.popMany(takeNum,chunks);
-
-            // 次実装でfor文でchunksを入れられるようにする。
-                // 詳しくはマルチスレッド対応リングバッファ検索
-            //(*localQ)->pushManyWithTimeout(std::move(chunks), taskQueue);
-
-            //一回ずつ
-            while (!chunks.empty()) {
-
-                ChunkMeta chunk = std::move(chunks.back());
-
-                chunks.pop_back();
-                // localQueueにpushする。
-                // 制限時間以上ロックされていた場合、待機キューに戻す
-               
-                (*localQ)->pushWithTimeout(std::move(chunk), taskQueue);
-            }
-        }
         
         auto& stats = manager.getStats();
 
@@ -71,34 +46,15 @@ struct RealTimePolicy{
 
             ChunkMeta chunkHandle;
 
-            if((*localQ)->popOrSteal(stealQs, queueSize, chunkHandle)){
-
-                //取得失敗
-                if (chunkHandle.isEmpty()) return false;
-
-                //chunk実行
+            if(localQ.try_dequeue(chunkHandle)){
                 manager.executor().runChunk(workerId, std::move(chunkHandle));
                 executeCategory = JobCategory::RealTime;
 
                 return true;
-            }
-            else {
-                //    //未完成のchunkを一つ取得、実行
-                if(taskQueue.getFlushBatchChunk(chunkHandle)){
-                    manager.executor().runChunk(workerId, std::move(chunkHandle));
-                    executeCategory = chunkHandle.jobCategory;
-
-                    return true;
-                }
-
-                //    if(!chunkHandle.isEmpty()){
-
-                //        //chunk実行
-                //        manager.executor().runChunk(workerId, std::move(chunkHandle));
-                //        executeCategory = JobCategory::RealTime;
-
-                //        return true;
-                //    }
+            }else if(manager.getFlushChunk(chunkHandle)){
+                manager.executor().runChunk(workerId, std::move(chunkHandle));
+                executeCategory = JobCategory::RealTime;
+                return true;
             }
         }
 
@@ -174,13 +130,13 @@ template<
 class Worker : public IWorker{
     //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
 
-    using LocalQPtr = std::unique_ptr<LocalQueue>*;
+    //using LocalQPtr = std::unique_ptr<LocalQueue>*;
 
 public:
     static constexpr size_t localQueueCapacity = WorkerPolicy::localQueueCap;
     
-    //static constexpr size_t maxBatchSize = 32;
-    static constexpr size_t maxBatchSize = 2048;
+    static constexpr size_t maxBatchSize = 32;
+    //static constexpr size_t maxBatchSize = 2048;
 
     //static constexpr size_t realTimeCap = 20'000;
     //static constexpr size_t backGroundCap = 1'000;
@@ -192,7 +148,7 @@ public:
     //static constexpr size_t slotWorkCapacity = 32;
 
     //localQやtaskQの初期化処理など
-    Worker(size_t id,LocalQPtr queues,size_t queueSize,JobBarrier& barrier);
+    Worker(size_t id,JobBarrier& barrier, moodycamel::ConcurrentQueue<ChunkMeta>&conCurrentQueue);
 
     //残っているtaskの処理
     ~Worker() override;
@@ -221,22 +177,25 @@ private:
     const size_t workerId;
     WorkerPolicy policy_;
 
-    TaskArena taskStorage;
+    //TaskArena taskStorage;
 
-    LocalQPtr localQueue;
+    moodycamel::ConcurrentQueue<ChunkMeta>&queue;
+    moodycamel::ProducerToken token;
 
-    LocalQPtr stealQueues;
+    //LocalQPtr localQueue;
 
-    size_t stealQueueSize;
+    //LocalQPtr stealQueues;
+
+    //size_t stealQueueSize;
 
     std::thread     thread_;
 };
 
 template<typename LocalQueue,typename WorkerPolicy>
-inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,LocalQPtr queues,size_t queueSize,JobBarrier&barrier) : workerId(id),localQueue(&queues[id]), stealQueues(queues),stealQueueSize(queueSize),running(true), 
+inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,JobBarrier&barrier, moodycamel::ConcurrentQueue<ChunkMeta>& conCurrentQueue) : workerId(id),running(true),queue(conCurrentQueue),token(conCurrentQueue),
     thread_([this,&barrier]{
         barrier.wait();
-        run();}),taskStorage(JobCategory::RealTime,maxBatchSize)
+        run();})
 {
 }
 
@@ -256,7 +215,7 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, C
     switch (jobCategory)
     {
     case ECS::JobSystem::JobCategory::RealTime:
-        taskStorage.enqueue(std::move(chunk));
+        queue.enqueue(token,std::move(chunk));
         break;
     case ECS::JobSystem::JobCategory::BackGround:
         ASSERT(false,"not work");
@@ -274,7 +233,8 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, J
     switch (jobCategory)
     {
     case ECS::JobSystem::JobCategory::RealTime:
-        taskStorage.enqueue(std::move(job));
+        ASSERT(false, "not work");
+        //taskStorage.enqueue(std::move(job));
         break;
     case ECS::JobSystem::JobCategory::BackGround:
         ASSERT(false, "not work");
@@ -291,12 +251,11 @@ inline void Worker<LocalQueue,WorkerPolicy>::run()
 {
     JobCategory category;
     while (running.load(std::memory_order_relaxed)) {
-        if(policy_(category,workerId,localQueue,stealQueues, stealQueueSize, taskStorage)){
+        if(policy_(category,workerId,queue)){
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
 
             //ログ出力
-
-            DebugLog(category);
+            //DebugLog(category);
         }
     }
 }
@@ -312,7 +271,7 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
     while(stats.scheduledJobCount(JobCategory::RealTime) > 0 && stats.scheduledJobCount(JobCategory::BackGround) > 0){
 
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
-        if (policy_(category,workerId,localQueue, stealQueues, stealQueueSize, taskStorage)) {
+        if (policy_(category,workerId,queue)) {
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
             //ログ出力
             DebugLog(category);

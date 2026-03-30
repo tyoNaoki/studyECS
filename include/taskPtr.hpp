@@ -62,7 +62,7 @@ private:
     static constexpr size_t BufferSize = 32;
 
     // 呼び出し時の関数ポインタ型
-    using Invoker = void(*)(void*);
+    using Invoker = void(*)(void*,const size_t);
     using Destroyer = void(*)(void*);
 
     // 実データ格納＋呼び出し子
@@ -87,9 +87,9 @@ public:
         static_assert(sizeof(F) <= BufferSize,
             "Job function over BufferSize");
         new (buf) F(std::move(f));
-        invoke_fn = [](void* p) {
+        invoke_fn = [](void* p,const size_t id) {
             auto fp = static_cast<F*>(p);
-            (*fp)();
+            (*fp)(id);
         };
 
         destroy_fn = [](void* p) {
@@ -123,9 +123,9 @@ public:
     }
 
     // 一度きりの実行
-    void invoke() noexcept {
+    void invoke(size_t id) noexcept {
         if (invoke_fn) {
-            invoke_fn(buf);
+            invoke_fn(buf,id);
             if (destroy_fn) {
                 destroy_fn(buf);
                 destroy_fn = nullptr;
@@ -404,7 +404,7 @@ public:
         setter = std::make_shared<Inner>();
         auto self = static_cast<Derived*>(this);
 
-        auto work = [self]() { ExecuteIJob(self);};
+        auto work = [self](const size_t workerId) { ExecuteIJob(self, workerId);};
         Job job(std::move(work));
 
         auto& jm = JobManager::Instance();
@@ -432,11 +432,11 @@ public:
     }*/
 
 private:
-    static void ExecuteIJob(Derived* self) {
+    static void ExecuteIJob(Derived* self,const size_t workerID) {
         self->Execute();
         self->setter->setReady(true);
 
-        JobManager::Instance().processDependents(self->jobId);
+        JobManager::Instance().processDependents(workerID,self->jobId);
         //removeJob(self->jobId);
     };
 
