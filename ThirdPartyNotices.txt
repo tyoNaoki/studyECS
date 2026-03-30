@@ -1,0 +1,6 @@
+This project includes the following third-party components:
+
+- moodycamel::ConcurrentQueue
+  License: Simplified BSD License (2-clause BSD)
+  Copyright (c) 2013-2023 Cameron Desrochers
+  See third_party/concurrentqueue/LICENSE for details.

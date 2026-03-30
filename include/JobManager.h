@@ -21,6 +21,8 @@
 #include "CallbackList.hpp"
 #include "JobWorker.h"
 
+#include "third_party\moodycamel\concurrentqueue.h"
+
 namespace ECS::JobSystem{
 
     template<typename T>
@@ -366,7 +368,10 @@ class JobManager
 
     static constexpr size_t slotWorkCapacity = 32;
 
-    JobManager() = default;
+    JobManager() : token(queue){
+        currentBatchChunk.jobCategory = JobCategory::RealTime;
+        currentBatchChunk.jobs.reserve(batchmaxchunksize);
+    };
 
     JobManager(JobManager&&) = delete;
     JobManager& operator=(JobManager&&) = delete;
@@ -395,6 +400,10 @@ public:
 
     JobStats& getStats(){
         return stats_;
+    }
+
+    moodycamel::ConcurrentQueue<ChunkMeta>& getQueue(){
+        return queue;
     }
 
     void Initialize(size_t reserveJobNum,size_t threadCount,
@@ -505,9 +514,6 @@ public:
         job->AddRequeset(std::move(cmd));
     }
 
-    //すべてのワーカーが順調に稼働しているかチェックする
-    bool checkRanAllJobInJobQueues();
-
     //削除予定リストに追加、jobIdをNULLIDに変更
     void removeJob(JobId& jobId);
 
@@ -518,8 +524,6 @@ public:
     const size_t getThreadSize() const{ return threadSize;}
 
 public:
-    //chunkをワーカーから盗む（メインスレッド専用)
-    bool stealChunk(const JobCategory category,ChunkMeta&chunk);
 
     //緊急停止フラグがたっているか
     bool isAbort() {
@@ -536,15 +540,24 @@ public:
         return jobStorage.containsJob(jobId);
     }
 
-    void processDependents(const JobId& parent);
+    void processDependents(const size_t workerID,const JobId& parent);
+
+    bool getFlushChunk(ChunkMeta& chunk){
+        std::lock_guard<std::mutex> lk(batchMutex);
+
+        if(currentBatchChunk.isEmpty())return false;
+
+        chunk = std::move(currentBatchChunk);
+        currentBatchChunk.jobs.reserve(batchmaxchunksize);
+        currentBatchChunk.jobCategory = JobCategory::RealTime;
+        return true;
+    }
 
 private:
     //タスクストレージにジョブを追加する
     void enqueue(TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
 
     void enqueue(JobCategory jobCategory, std::vector<Job>&& jobs);
-
-    bool allQueuesEmpty() const;
 
     void abort();
 
@@ -570,13 +583,7 @@ private:
         return jobStorage.getDependents(dense);
     }
 
-    void scheduleDependentHandle(JobId childId) {
-        auto& entry = getJobEntry(childId);
-        auto jobIndex = getJobIndex(childId);
-
-        auto& job = getJob(jobIndex);
-        enqueue(entry.taskCategory, entry.jobCategory, std::move(job));
-    }
+    void scheduleDependentHandle(const size_t workerID,const JobIndex& childIndex);
 
 private:
     double avg_JobTimeMs = 1.0f;
@@ -590,7 +597,7 @@ private:
     std::mutex logMutex_;
     inline static thread_local std::ostringstream localLogBuffer;
 
-    std::vector<std::unique_ptr<JobQueue>> localQueues;
+    //std::vector<std::unique_ptr<JobQueue>> localQueues;
 
     JobStorage jobStorage;
 
@@ -599,14 +606,10 @@ private:
 
     std::mutex stealMutex;
 
-    std::mutex            wakeMutex;
-    std::condition_variable wakeCv;
-
     std::mutex            finishMutex;
     std::condition_variable finishCv;
 
     std::atomic<size_t>      nextQueue{ 0 };
-    std::condition_variable condition;
 
     std::unique_ptr<TimelineRecorder> recorder;
 
@@ -618,6 +621,13 @@ private:
     std::atomic<bool> abortFlag{ false };
 
     std::vector<std::unique_ptr<IWorker>> workers;
+
+    moodycamel::ConcurrentQueue<ChunkMeta>queue;
+    moodycamel::ProducerToken token;
+
+    std::mutex batchMutex;
+    ChunkMeta currentBatchChunk;
+    static constexpr size_t batchmaxchunksize = 32;
 };
 
 struct IFuture;

@@ -1,7 +1,7 @@
 #include "JobManager.h"
 #include "taskPtr.hpp"
 #include "JobDeque.hpp"
-#include "JobWorker.h"
+#include "include\JobWorker.h"
 
 namespace ECS::JobSystem{
 
@@ -35,7 +35,7 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin,
         auto& job = jm.getJob(*it);
         ASSERT(job.valid(), "this job is executed");
 
-        job.invoke();
+        job.invoke(workerId);
 
         //processDependents(job.data);
     }
@@ -54,14 +54,9 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
 
     //chunk実行
     for (size_t i = 0; i < size; i++) {
-        chunk.jobs[i].invoke();
+        ASSERT(chunk.jobs[i].valid(), "this job is executed");
+        chunk.jobs[i].invoke(workerId);
     }
-
-    /*for (auto it = chunk.jobs.begin(); it != chunk.jobs.end(); ++it) {
-        ASSERT(it->valid(), "this job is executed");
-
-        it->invoke();
-    }*/
 
     //カウント減算
     jm.stats_.onJobFinish(chunk.jobCategory, size);
@@ -79,12 +74,10 @@ void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique
 
     barrier.init(1);
 
-    localQueues.reserve(threadCount);
     workers.reserve(threadCount);
 
     for (size_t i = 0; i < threadCount; ++i) {
-        localQueues.emplace_back(std::make_unique<JobQueue>(RealTimeOnlyWorker::localQueueCapacity, i));
-        workers.emplace_back(std::make_unique<RealTimeOnlyWorker>(i,localQueues.data(),localQueues.size(),barrier));
+        workers.push_back(std::make_unique<RealTimeOnlyWorker>(i,barrier,queue));
     }
 
     jobStorage.reserveJobs(reserveJobNum);
@@ -113,7 +106,6 @@ JobHandle JobManager::scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory
     auto& jobInfo = jobStorage.getJobInfo(index);
     jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
-    jobStorage.getDependents(index).clear();
 
     enqueue(taskCategory, jobCategory, std::move(job));
 
@@ -190,17 +182,6 @@ JobHandle JobManager::scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory
 //
 //    return JobHandle::createHandle(jobId, entry.inner);
 //}
-
-bool JobManager::checkRanAllJobInJobQueues()
-{
-    for (auto& queue : localQueues) {
-        if (queue->validCheck()) {
-            return false;
-        }
-    }
-
-    return true;
-}
 
 void JobManager::removeJob(JobId& jobId)
 {
@@ -281,36 +262,26 @@ void JobManager::popGlobalBackGroundQueue() {
     //}   
 }
 
-bool JobManager::stealChunk(const JobCategory category, ChunkMeta& chunk)
-{
-    for(auto& localQ : localQueues){
-        auto result = localQ->stealTop(99);
-
-        if(result.first == StealStatus::Success){
-            chunk = std::move(*result.second);
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-void JobManager::processDependents(const JobId& parentId)
+void JobManager::processDependents(const size_t workerID,const JobId& parentId)
 {
     if(!containsJob(parentId)) return;
 
     auto&parentDependents = getDependents(getJobIndex(parentId));
 
     for(auto& child : parentDependents){
-        auto& childJobEntry = getJobEntry(child);
 
-        //auto& childJob = childJobEntry.data;
+        if(!jobStorage.containsJob(child)) continue;
 
-        if (childJobEntry.inDegree.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        auto childIndex = getJobIndex(child);
+        auto& childJobEntry = jobStorage.getJobInfo(childIndex);
+
+        if (childJobEntry.inDegree.fetch_sub(1, std::memory_order_release) == 1) {
             //スケジュール
-            scheduleDependentHandle(child);
+            scheduleDependentHandle(workerID, childIndex);
         }
     }
+
+    parentDependents.clear();
 
     //for (auto child = std::exchange(parentJob->nextDependent, std::nullopt);
     //    child != std::nullopt;
@@ -330,35 +301,38 @@ void JobManager::processDependents(const JobId& parentId)
 
 void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, Job&&job){
     //chunkとしてまとめてから後で
-    if(taskCategory == TaskCategory::Batch){
-        size_t queueIndex = getNextQueueIndex();
-        workers[queueIndex]->enqueue(jobCategory, std::move(job));
+    //バッチ処理
+    if (taskCategory == TaskCategory::Batch) {
+
+        std::lock_guard<std::mutex> lk(batchMutex);
+
+        currentBatchChunk.jobs.push_back(std::move(job));
+
+        if(currentBatchChunk.jobs.size()>=batchmaxchunksize){
+            queue.enqueue(token,std::move(currentBatchChunk));
+
+            currentBatchChunk.jobCategory = JobCategory::RealTime;
+            currentBatchChunk.jobs.reserve(batchmaxchunksize);
+        }
+        
         return;
     }
 
     ChunkMeta chunk = ChunkMeta();
-    chunk.jobs.emplace_back(std::move(job));
+    chunk.jobs.push_back(std::move(job));
     chunk.jobCategory = jobCategory;
 
-    size_t queueIndex = getNextQueueIndex();
-    workers[queueIndex]->enqueue(jobCategory, std::move(chunk));
+    queue.enqueue(token, std::move(chunk));
 }
 
 void JobManager::enqueue(JobCategory jobCategory, std::vector<Job>&& jobs){
-    ChunkMeta chunk = ChunkMeta(jobs.size());
+    ChunkMeta chunk;
 
-    std::swap(chunk.jobs,jobs);
+    chunk.jobs = std::move(jobs);
     chunk.jobCategory = jobCategory;
 
     size_t queueIndex = getNextQueueIndex();
     workers[queueIndex]->enqueue(jobCategory, std::move(chunk));
-}
-
-bool JobManager::allQueuesEmpty() const
-{
-    for (auto& dq : localQueues)
-        if (!dq->empty()) return false;
-    return true;
 }
 
 void JobManager::abort()
@@ -372,7 +346,7 @@ void JobManager::abort()
 
 size_t JobManager::getNextQueueIndex()
 {
-    return nextQueue.fetch_add(1, std::memory_order_relaxed) % localQueues.size();
+    return nextQueue.fetch_add(1, std::memory_order_relaxed) % workers.size();
 }
 
 size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime) {
@@ -399,6 +373,34 @@ void JobManager::addDependent(const JobId& child, JobHandle& parent)
     ASSERT(child != parent.getJobId(), "addDependent() do not use childJob and childJob");
 
     jobStorage.addDependent(child, parent.getJobId());
+}
+
+void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& childIndex)
+{
+    auto& entry = getJobInfo(childIndex);
+
+    auto& job = getJob(childIndex);
+    if (entry.taskCategory == TaskCategory::Batch) {
+        std::lock_guard<std::mutex> lk(batchMutex);
+
+        currentBatchChunk.jobs.push_back(std::move(job));
+
+        if (currentBatchChunk.jobs.size() >= batchmaxchunksize) {
+            workers[workerID]->enqueue(entry.jobCategory, std::move(currentBatchChunk));
+
+            currentBatchChunk.jobCategory = JobCategory::RealTime;
+            currentBatchChunk.jobs.reserve(batchmaxchunksize);
+        }
+
+        return;
+    }
+
+    ChunkMeta chunk = ChunkMeta();
+
+    chunk.jobs.push_back(std::move(job));
+    chunk.jobCategory = entry.jobCategory;
+
+    workers[workerID]->enqueue(entry.jobCategory, std::move(chunk));
 }
 
 void JobStats::onJobFinish(const JobCategory cat, size_t count) noexcept
@@ -447,11 +449,12 @@ void JobHandle::Complete() const
         ChunkMeta chunk;
 
         //ワーカースレッドからstealする
-        if (jm.stealChunk(job.jobCategory, chunk)) {
-            //chunk実行
-            jm.executor().runChunk(99, std::move(chunk));
-            continue;
-        }
+        //if (jm.stealChunk(job.jobCategory, chunk)) {
+        //    //chunk実行
+        //    jm.executor().runChunk(99, std::move(chunk));
+        //    continue;
+        //}
+
 
         //何も取れない
         std::this_thread::yield();
@@ -474,11 +477,11 @@ void CombineJobHandles::Complete() const
         ChunkMeta chunk;
 
         //ワーカースレッドからstealする
-        if (jm.stealChunk(job.jobCategory, chunk)) {
-            //chunk実行
-            jm.executor().runChunk(99, std::move(chunk));
-            continue;
-        }
+        //if (jm.stealChunk(job.jobCategory, chunk)) {
+        //    //chunk実行
+        //    jm.executor().runChunk(99, std::move(chunk));
+        //    continue;
+        //}
 
         //何も取れない
         std::this_thread::yield();
