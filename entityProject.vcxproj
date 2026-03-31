@@ -18,6 +18,55 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\EntityPool.cpp" />
+    <ClCompile Include="src\JobManager.cpp" />
+    <ClCompile Include="src\JobWorker.cpp" />
+    <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\Scene.cpp" />
+    <ClCompile Include="src\SceneView.cpp" />
+    <ClCompile Include="src\TaskQueue.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="include\CallbackList.hpp" />
+    <ClInclude Include="include\ChunkAllocator.h" />
+    <ClInclude Include="include\Component.h" />
+    <ClInclude Include="include\ComponentPoolManager.hpp" />
+    <ClInclude Include="include\DebugHelpr.h" />
+    <ClInclude Include="include\ecsTest.h" />
+    <ClInclude Include="include\Entity.h" />
+    <ClInclude Include="include\EntityEventMixin.hpp" />
+    <ClInclude Include="include\EntityPool.h" />
+    <ClInclude Include="include\Event.h" />
+    <ClInclude Include="include\Event.hpp" />
+    <ClInclude Include="include\EventDispatcher.hpp" />
+    <ClInclude Include="include\EventQueue.hpp" />
+    <ClInclude Include="include\group.hpp" />
+    <ClInclude Include="include\HashFunctions.hpp" />
+    <ClInclude Include="include\HopscotchHashMap.h" />
+    <ClInclude Include="include\intrusive_ptr.h" />
+    <ClInclude Include="include\JobBarrier.h" />
+    <ClInclude Include="include\JobDebugger.h" />
+    <ClInclude Include="include\JobDeque.hpp" />
+    <ClInclude Include="include\JobHandle.hpp" />
+    <ClInclude Include="include\JobManager.h" />
+    <ClInclude Include="include\JobRecorder.h" />
+    <ClInclude Include="include\JobWorker.h" />
+    <ClInclude Include="include\OrderedQueueList.hpp" />
+    <ClInclude Include="include\Scene.h" />
+    <ClInclude Include="include\SceneView.h" />
+    <ClInclude Include="include\Signal.hpp" />
+    <ClInclude Include="include\SparseHopscotch.h" />
+    <ClInclude Include="include\SparseSet.h" />
+    <ClInclude Include="include\Storage.hpp" />
+    <ClInclude Include="include\StorageMixin.hpp" />
+    <ClInclude Include="include\taskPtr.hpp" />
+    <ClInclude Include="include\TaskQueue.h" />
+    <ClInclude Include="include\TestFramework.hpp" />
+    <ClInclude Include="include\ThreadSafeQueue.h" />
+    <ClInclude Include="include\typeList.hpp" />
+    <ClInclude Include="include\World.h" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
@@ -88,7 +137,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用;D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\include;D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\third_party</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
@@ -124,7 +173,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用;D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\include;D:\DxLib_VC\DX_LibData\tyoNaoki\entityProject\third_party</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>

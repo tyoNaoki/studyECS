@@ -312,15 +312,7 @@ public:
 
 struct DummyBuffer {};
 
-struct IJobBase {
 
-    virtual ~IJobBase() = default;
-
-    JobId getId() const { return id_; }
-
-protected:
-    JobId id_;
-};
 
 // åãâ ÇéùÇ¬èÍçá
 template<typename T>
@@ -385,32 +377,44 @@ private:
     }
 };
 
-template<typename Derived>
-struct IJob{
-    //using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+struct IJobBase {
+    virtual ~IJobBase() = default;
+};
 
-public:
+template<typename Derived>
+struct IJob : public IJobBase,std::enable_shared_from_this<Derived>{
+
+protected:
     IJob() = default;
 
-    void AddRequest(std::function<void(Derived&)>&& fn) {
+public:
+    virtual ~IJob() = default;
+
+    template<typename... Args>
+    static std::shared_ptr<Derived> create(Args&&... args){
+        return std::make_shared<Derived>(std::forward<Args>(args)...);
+    }
+
+    void addRequest(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
     }
 
-    void AddRequest(std::vector<std::function<void(Derived&)>>&& fns) {
+    void addRequest(std::vector<std::function<void(Derived&)>>&& fns) {
         std::swap(commands,fns);
     }
 
     JobHandle scheduleIJob(TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
-        setter = std::make_shared<Inner>();
-        auto self = static_cast<Derived*>(this);
 
-        auto work = [self](const size_t workerId) { ExecuteIJob(self, workerId);};
+        Derived* self = shared_this().get();
+
+        auto work = [self](const size_t workerId) { executeIJob(self, workerId);};
         Job job(std::move(work));
 
         auto& jm = JobManager::Instance();
         jobId = jm.emplaceJobID();
+        setter = std::make_shared<Inner>();
 
-        return jm.scheduleJobHandle(setter,taskCategory,jobCategory,jobId,std::move(job));
+        return jm.scheduleJobHandle(shared_this(),setter,taskCategory,jobCategory,jobId,std::move(job));
     }
 
    /* template<
@@ -432,12 +436,15 @@ public:
     }*/
 
 private:
-    static void ExecuteIJob(Derived* self,const size_t workerID) {
-        self->Execute();
+    static void executeIJob(Derived* self,const size_t workerID) {
+        self->execute();
         self->setter->setReady(true);
 
-        JobManager::Instance().processDependents(workerID,self->jobId);
-        //removeJob(self->jobId);
+        auto& jm = JobManager::Instance();
+
+        //Ç±ÇÃìÒÇ¬ÇÃä÷êîÇ™ëÂÇ´Ç≠éûä‘ÇÇ©ÇØÇƒÇ¢ÇÈ
+        jm.processDependents(workerID,self->jobId);
+        jm.completedJob(workerID,self->jobId);
     };
 
     void applyCommands() {
@@ -451,9 +458,18 @@ private:
         commands.clear();
     }
 
+    std::shared_ptr<Derived> shared_this(){
+        return std::enable_shared_from_this<Derived>::shared_from_this();
+    }
+
+
 protected:
 
-    inline void Execute() {
+    JobId& getID() {
+        return jobId;
+    }
+
+    inline void execute() {
         // Derived ÇÃ Execute() ÇåƒÇ—èoÇµ
         //static_cast<Derived*>(this)->Execute(index);
         ASSERT(false, "Derived class not found Execute() member function!!");
