@@ -13,7 +13,6 @@
 #include <cassert>
 #include "HopscotchHashMap.h"
 #include "SparseHopscotch.h"
-#include "unodreredDense.h"
 #include <random>
 #include "EventQueue.hpp"
 #include "Signal.hpp"
@@ -101,37 +100,58 @@ void busyWait(std::chrono::nanoseconds duration) {
 	}
 }
 
-struct TestNormalJobConnector
+struct TestHoge
 {
 	int value = 2;
 
-	TestNormalJobConnector() = default;
+	TestHoge(int v) : value(v){};
 };
 
 struct TestEmptyJob
 {
 
-	TestNormalJobConnector connecter;
+	TestHoge connecter;
 
-	void Execute() {
+	void execute() {
 		connecter.value = connecter.value * connecter.value;
 		//return connecter.value;
 	}
 };
 
-struct TestJob
-	: public ECS::JobSystem::IJob<TestJob>
+struct TestPrintJob
+	: public ECS::JobSystem::IJob<TestPrintJob>
 {
-	TestNormalJobConnector connecter;
+	TestHoge hoge;
 
 	/*static void Execute(TestJob*job) {
 		job->connecter.value = job->connecter.value * job->connecter.value;
 		
 	}*/
 
-	void Execute() {
-		connecter.value = connecter.value * connecter.value;
-		//return connecter.value;
+	TestPrintJob(int value) : hoge(value){
+	}
+
+	void execute() {
+		hoge.value = hoge.value * hoge.value;
+		std::printf("JobID %zu is execute result is %d \n",ECS::JobSystem::getJobIndex(getID()),hoge.value);
+	}
+};
+
+struct TestJob
+	: public ECS::JobSystem::IJob<TestJob>
+{
+	TestHoge hoge;
+
+	/*static void Execute(TestJob*job) {
+		job->connecter.value = job->connecter.value * job->connecter.value;
+
+	}*/
+
+	TestJob(int value) : hoge(value) {
+	}
+
+	void execute() {
+		hoge.value = hoge.value * hoge.value;
 	}
 };
 
@@ -147,7 +167,7 @@ struct TestParticalJob
 
 	TestParticalJob(std::string jobName) : name(jobName){}
 
-	void Execute() {
+	void execute() {
 		std::printf("%s particalJob executed \n",name.c_str());
 	}
 };
@@ -190,9 +210,9 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	// JobCategoryにBatch処理用のカテゴリーを追加
 	// check 個のジョブをスケジュール
 	for (int i = 0; i <check; ++i) {
-		auto job = TestJob();
+		auto job = TestJob::create(i);
 
-		auto handle = job.scheduleIJob(ECS::JobSystem::TaskCategory::Normal, ECS::JobSystem::JobCategory::RealTime);
+		auto handle = job->scheduleIJob(ECS::JobSystem::TaskCategory::Batch, ECS::JobSystem::JobCategory::RealTime);
 	}
 
 	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
@@ -204,11 +224,8 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 
 	auto globalEnd = ECS::JobSystem::now();
 
-	//std::printf("realTime job %zu finished!! \n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+	std::printf("realTime job %zu finished!! \n", check);
 
-	//assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
-	//assertTrue(!jm.isAbort(),"JobSystem Work Test");
-	
 	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";

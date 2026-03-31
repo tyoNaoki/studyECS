@@ -5,7 +5,7 @@
 #include "JobBarrier.h"
 #include "ThreadSafeQueue.h"
 
-#include "third_party\moodycamel\concurrentqueue.h"
+#include "moodycamel\concurrentqueue.h"
 
 namespace ECS::JobSystem{
 
@@ -121,6 +121,9 @@ public:
 
     //BatchJob
     virtual void enqueue(JobCategory jobCategory, Job&& job) = 0;
+
+    virtual void completedJob(JobId jobId) = 0;
+
 };
 
 template<
@@ -148,7 +151,7 @@ public:
     //static constexpr size_t slotWorkCapacity = 32;
 
     //localQやtaskQの初期化処理など
-    Worker(size_t id,JobBarrier& barrier, moodycamel::ConcurrentQueue<ChunkMeta>&conCurrentQueue);
+    Worker(size_t id,JobBarrier& barrier, moodycamel::ConcurrentQueue<ChunkMeta>&chunkQueue, moodycamel::ConcurrentQueue<JobId>&completedJobQueue);
 
     //残っているtaskの処理
     ~Worker() override;
@@ -158,6 +161,8 @@ public:
 
     //BatchJob
     void enqueue(JobCategory jobCategory, Job&&job) override;
+
+    void completedJob(JobId jobId) override;
 
 private:
     //localQueueのpop、stealを行う。
@@ -179,8 +184,10 @@ private:
 
     //TaskArena taskStorage;
 
-    moodycamel::ConcurrentQueue<ChunkMeta>&queue;
-    moodycamel::ProducerToken token;
+    moodycamel::ConcurrentQueue<ChunkMeta>& chunkQueue;
+    moodycamel::ProducerToken chunkToken;
+    moodycamel::ConcurrentQueue<JobId>& completedJobQueue;
+    moodycamel::ProducerToken completeJobtoken;
 
     //LocalQPtr localQueue;
 
@@ -192,7 +199,7 @@ private:
 };
 
 template<typename LocalQueue,typename WorkerPolicy>
-inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,JobBarrier&barrier, moodycamel::ConcurrentQueue<ChunkMeta>& conCurrentQueue) : workerId(id),running(true),queue(conCurrentQueue),token(conCurrentQueue),
+inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,JobBarrier&barrier, moodycamel::ConcurrentQueue<ChunkMeta>& chunkQ, moodycamel::ConcurrentQueue<JobId>& completedJobQ) : workerId(id),running(true), chunkQueue(chunkQ),chunkToken(chunkQ), completedJobQueue(completedJobQ),completeJobtoken(completedJobQ),
     thread_([this,&barrier]{
         barrier.wait();
         run();})
@@ -215,7 +222,7 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, C
     switch (jobCategory)
     {
     case ECS::JobSystem::JobCategory::RealTime:
-        queue.enqueue(token,std::move(chunk));
+        chunkQueue.enqueue(chunkToken,std::move(chunk));
         break;
     case ECS::JobSystem::JobCategory::BackGround:
         ASSERT(false,"not work");
@@ -246,12 +253,18 @@ inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, J
     }
 }
 
+template<typename LocalQueue, typename WorkerPolicy>
+inline void Worker<LocalQueue, WorkerPolicy>::completedJob(JobId jobId)
+{
+    completedJobQueue.enqueue(completeJobtoken,jobId);
+}
+
 template<typename LocalQueue,typename WorkerPolicy>
 inline void Worker<LocalQueue,WorkerPolicy>::run()
 {
     JobCategory category;
     while (running.load(std::memory_order_relaxed)) {
-        if(policy_(category,workerId,queue)){
+        if(policy_(category,workerId,chunkQueue)){
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
 
             //ログ出力
@@ -271,7 +284,7 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
     while(stats.scheduledJobCount(JobCategory::RealTime) > 0 && stats.scheduledJobCount(JobCategory::BackGround) > 0){
 
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
-        if (policy_(category,workerId,queue)) {
+        if (policy_(category,workerId,chunkQueue)) {
             ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
             //ログ出力
             DebugLog(category);

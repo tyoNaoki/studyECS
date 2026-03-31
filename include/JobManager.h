@@ -21,7 +21,7 @@
 #include "CallbackList.hpp"
 #include "JobWorker.h"
 
-#include "third_party\moodycamel\concurrentqueue.h"
+#include "moodycamel\concurrentqueue.h"
 
 namespace ECS::JobSystem{
 
@@ -93,12 +93,9 @@ namespace ECS::JobSystem{
         void clearAll() {
             std::lock_guard<std::mutex> lk(lock);
 
-            waitQueue.clear();
             dependents.clear();
-            //dependentLocks.clear();
             jobIds.clear();
             freeIds.clear();
-            removeJobData.clear();
             nextIndex = 0;
         }
 
@@ -125,16 +122,7 @@ namespace ECS::JobSystem{
             jobs.emplace_back();
             dependents.emplace_back();
             jobIds.emplace_back();
-        }
-
-        void pushBackWaitQueue(JobIndex jobIndex) {
-            std::lock_guard<std::mutex> lk(lock);
-
-            waitQueue.push_back(jobIndex);
-        }
-
-        JobId& getWaitJob(const JobIndex jobIndex) {
-            return waitQueue[jobIndex];
+            jobPtrs.emplace_back(nullptr);
         }
 
         JobEntry& getJobInfo(JobIndex index){
@@ -145,30 +133,26 @@ namespace ECS::JobSystem{
             return jobs[index];
         }
 
+        std::shared_ptr<IJobBase>& getJobPtr(JobIndex index){
+            return jobPtrs[index];
+        }
+
         std::vector<JobId>& getDependents(JobIndex index) {
             return dependents[index];
         }
 
-        //schedule時に対応ジョブに関数ポインターを割り当てる
-        /*template<class DerivedJob>
-        void createJobFunction(const JobId& id){
-            jobData[getJobIndex(id)].func = &Invoke<DerivedJob>;
-        }*/
-
         void removeJob(JobId jobId){
-            std::lock_guard<std::mutex> lk(lock);
-
             auto index = getJobIndex(jobId);
             jobIds[index] = NULL_JOB_ID;
-            freeIds.push_back(jobId);
+            jobPtrs[index] = nullptr;
+            freeIds.push_back(jobId); // ここはメインスレッド専用なのでロック不要
         }
 
-        void removeJobs(std::vector<JobId> jobs) {
-            std::lock_guard<std::mutex> lk(lock);
-
-            for(size_t i = 0;i<jobs.size();i++){
-                jobIds[getJobIndex(jobs[i])] = NULL_JOB_ID;
-                freeIds.push_back(jobs[i]);
+        //cleanUp時に呼ぶ
+        void cleanup(moodycamel::ConcurrentQueue<JobId>& completedJobs) {
+            JobId jobId;
+            while (completedJobs.try_dequeue(jobId)) {
+                removeJob(jobId);
             }
         }
 
@@ -212,6 +196,7 @@ namespace ECS::JobSystem{
             std::swap(jobInfos[job],jobInfos[job2]);
             std::swap(jobs[job], jobs[job2]);
             std::swap(dependents[job], dependents[job2]);
+            std::swap(jobPtrs[job],jobPtrs[job2]);
         }
 
         //void removeJob(JobId& id) {
@@ -239,23 +224,22 @@ namespace ECS::JobSystem{
 
     private:
         //関数ポインター,IJobBase*dataが入っている
-        std::vector<size_t>waitQueue;
-
-        std::vector<size_t>readyQueue;
-
         std::vector<JobEntry>jobInfos;
         std::vector<Job>jobs;
         std::vector<std::vector<size_t>>dependents;
+        std::vector<std::shared_ptr<IJobBase>>jobPtrs;
         //std::vector<std::mutex> dependentLocks;
 
         //JobIdのリスト
         std::vector<JobId>jobIds;
 
-        std::vector<JobId>removeJobData;
+        //std::vector<JobId>removeJobData;
 
         JobIndex nextIndex{ 0 };
         std::vector<JobId> freeIds;
+
         std::mutex lock;
+        std::mutex removeLock;
     };
 
     static constexpr size_t NumCategories = static_cast<size_t>(JobCategory::Num);
@@ -345,8 +329,6 @@ class JobManager
 
     using RealTimeOnlyWorker = Worker<JobQueue,RealTimePolicy>;
 
-    static constexpr size_t NULL_RESULT = std::numeric_limits<size_t>::max();
-
     //仮として60FPS
     static constexpr float targetFPS = 60.0f;
 
@@ -358,17 +340,8 @@ class JobManager
     static constexpr double bgRatioMin = 0.10;
 
     static constexpr double bgRatioMax = 0.50;
-    //TaskQueueパラメータ設定
-    static constexpr size_t realTimeCap = 100'000;
-    static constexpr size_t backGroundCap = 1'000;
 
-    //512
-    static constexpr size_t realTimeChunkSize = 64;
-    static constexpr size_t backGroundChunkSize = 512;
-
-    static constexpr size_t slotWorkCapacity = 32;
-
-    JobManager() : token(queue){
+    JobManager() : chunkToken(chunkQueue),completedJobToken(completedJobQueue){
         currentBatchChunk.jobCategory = JobCategory::RealTime;
         currentBatchChunk.jobs.reserve(batchmaxchunksize);
     };
@@ -387,6 +360,8 @@ class JobManager
     };
 
 public:
+    static constexpr size_t MAIN_THREAD_ID = 99;//メインスレッド専用ワーカーID
+
     static JobManager& Instance() {
         static JobManager manager;
         return manager;
@@ -400,10 +375,6 @@ public:
 
     JobStats& getStats(){
         return stats_;
-    }
-
-    moodycamel::ConcurrentQueue<ChunkMeta>& getQueue(){
-        return queue;
     }
 
     void Initialize(size_t reserveJobNum,size_t threadCount,
@@ -470,7 +441,7 @@ public:
         return jobStorage.emplaceJobId();
     }
 
-    JobHandle scheduleJobHandle(std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory, JobId jobId, Job&&job);
+    JobHandle scheduleJobHandle(std::shared_ptr<IJobBase>jobBasePtr,std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory, JobId jobId, Job&&job);
 
     //parallelJob用のscheduleも用意しておく。
     //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
@@ -515,13 +486,17 @@ public:
     }
 
     //削除予定リストに追加、jobIdをNULLIDに変更
-    void removeJob(JobId& jobId);
+    void completedJob(const size_t workerId,JobId jobId);
 
     //バックグラウンドで動かすJobを詰めたストレージからchunkをpopする
     void popGlobalBackGroundQueue();
 
     //ワーカーの数取得
     const size_t getThreadSize() const{ return threadSize;}
+
+    bool stealChunk(ChunkMeta&chunk){
+        return chunkQueue.try_dequeue(chunk);
+    }
 
 public:
 
@@ -571,16 +546,16 @@ private:
     //依存関係追加
     void addDependent(const JobId& child, JobHandle& parent);
 
-    JobEntry& getJobInfo(const size_t dense) {
-        return jobStorage.getJobInfo(dense);
+    JobEntry& getJobInfo(const JobIndex index) {
+        return jobStorage.getJobInfo(index);
     }
 
-    Job& getJob(const size_t dense){
-        return jobStorage.getFunc(dense);
+    Job& getJob(const JobIndex index){
+        return jobStorage.getFunc(index);
     }
 
-    std::vector<JobId>& getDependents(const size_t dense){
-        return jobStorage.getDependents(dense);
+    std::vector<JobId>& getDependents(const JobIndex index){
+        return jobStorage.getDependents(index);
     }
 
     void scheduleDependentHandle(const size_t workerID,const JobIndex& childIndex);
@@ -622,124 +597,14 @@ private:
 
     std::vector<std::unique_ptr<IWorker>> workers;
 
-    moodycamel::ConcurrentQueue<ChunkMeta>queue;
-    moodycamel::ProducerToken token;
+    moodycamel::ConcurrentQueue<ChunkMeta>chunkQueue;
+    moodycamel::ConcurrentQueue<JobId>completedJobQueue;
+    moodycamel::ProducerToken chunkToken;
+    moodycamel::ProducerToken completedJobToken;
 
     std::mutex batchMutex;
     ChunkMeta currentBatchChunk;
-    static constexpr size_t batchmaxchunksize = 32;
-};
-
-struct IFuture;
-
-struct CombineJobHandles {
-    bool isComplete() const;
-
-    void Complete() const;
-
-    void AddJob(IFuture& future) const{};
-
-private:
-    std::vector<JobId> jobIds;
-    std::shared_ptr<Inner>inner;
-
-    // デフォルトコンストラクタ
-    CombineJobHandles() = default;
-
-    friend class JobManager;
-
-    // 外部には見せない
-    static CombineJobHandles createHandle(IFuture&future, std::shared_ptr<Inner> inner) {
-        CombineJobHandles h;
-        //h.jobIds.push = std::move(ids);
-        //h.inner = std::move(inner);
-        return h;
-    }
-};
-
-struct IFuture {
-
-protected:
-    JobId Id;
-};
-
-template<typename Derived_t>
-struct TaskFuture : public IFuture{
-    
-    using type = Derived_t;
-
-    explicit TaskFuture(JobId id){ Id = id;}
-
-    ~TaskFuture(){
-        auto&jm = JobManager::Instance();
-
-        jm.removeJob(Id);
-    }
-
-    template<typename F>
-    void addCommands(F&& f) {
-        commands.emplace_back(std::forward<F>(f));
-    }
-
-    ////その場で実行。
-    void ExecuteJob(){
-     
-        auto& jm = JobManager::Instance();
-        ASSERT(jm.containsJob(Id), "job not contains");
-        auto& job = jm.getJobEntry(Id);
-
-        ASSERT(false,"not work");
-        jm.getJob(Id).invoke();
-    }
-
-    //JobHandle schedule() {
-    //    auto& jm = JobManager::Instance();
-    //    auto& job = jm.getJobEntry(Id);
-
-    //    //auto* derived = static_cast<Derived_t*>(job.data);
-    //    //AddRequest(derived);
-
-    //    return jm.scheduleJobHandle(Id);
-    //}
-
-    /*JobHandle schedule(JobHandle& handle) {
-        auto& jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(Id);
-
-        auto* derived = static_cast<Derived_t*>(job.data);
-        AddRequest(derived);
-
-        return jm.scheduleJobHandle(Id, handle);
-    }
-
-    JobHandle schedule(std::vector<JobHandle>&dependents){
-        auto&jm = JobManager::Instance();
-        auto& job = jm.getJobEntry(Id);
-
-        auto* derived = static_cast<Derived_t*>(job.data);
-        AddRequest(derived);
-
-        return jm.scheduleJobHandle(Id, dependents);
-    }*/
-
-    //type* getJob() const {
-    //    auto& jm = JobManager::Instance();
-    //    auto& job = jm.getJobEntry(Id);
-
-    //    //Jobを返す
-    //    return static_cast<type*>(job.data);
-    //}
-
-private:
-    void AddRequest(Derived_t* derived){
-        if(commands.empty()) return;
-
-        derived->AddRequest(std::move(commands));
-        commands.clear();
-    }
-
-private:
-    std::vector<std::function<void(Derived_t&)>>commands;
+    static constexpr size_t batchmaxchunksize = 34;
 };
 
 } //namespace ECS::JobSystem
