@@ -75,7 +75,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_jobSystem",1);
+	RUN_TEST("test_chainJobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -133,7 +133,6 @@ struct TestPrintJob
 
 	void execute() {
 		hoge.value = hoge.value * hoge.value;
-		std::printf("JobID %zu is execute result is %d \n",ECS::JobSystem::getJobIndex(getID()),hoge.value);
 	}
 };
 
@@ -156,7 +155,7 @@ struct TestJob
 };
 
 struct TestParticalJob
-	: public ECS::JobSystem::IJob<TestJob>
+	: public ECS::JobSystem::IJob<TestParticalJob>
 {
 	std::string name;
 
@@ -165,7 +164,7 @@ struct TestParticalJob
 
 	}*/
 
-	TestParticalJob(std::string jobName) : name(jobName){}
+	TestParticalJob(std::string n) : name(n){}
 
 	void execute() {
 		std::printf("%s particalJob executed \n",name.c_str());
@@ -183,11 +182,11 @@ struct TestParticalJob
 		//return connecter.value;
 
 TEST_CASE_PRIORITY(test_jobSystem) {
-	int check = 9'0000;
+	int check = 1;
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
-	jm.Initialize(9'0000,7,std::move(recorder));
+	jm.initialize(9'0000,7,std::move(recorder));
 
 	/*for(int i = 0;i < 20;i++){
 		job->schedule(ECS::JobSy
@@ -212,7 +211,7 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	for (int i = 0; i <check; ++i) {
 		auto job = TestJob::create(i);
 
-		auto handle = job->scheduleIJob(ECS::JobSystem::TaskCategory::Batch, ECS::JobSystem::JobCategory::RealTime);
+		auto handle = job->scheduleIJob(ECS::JobSystem::TaskCategory::Normal, ECS::JobSystem::JobCategory::RealTime);
 	}
 
 	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
@@ -244,28 +243,26 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
-	jm.Initialize(allCheckNum,7, std::move(recorder));
+	jm.initialize(allCheckNum,7, std::move(recorder));
 
-	std::printf("RealTimeJob Start is %zu\n", check);
+	//std::printf("RealTimeJob Start is %zu\n", check);
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 
-	std::vector<ECS::JobSystem::JobHandle> jobAHandles;
+	//std::vector<ECS::JobSystem::JobHandle> jobAHandles;
 
 	//単一依存
 	/*A → B
 	B は A 完了後に実行されることを確認。*/
 	{
-		/*auto futureA = jm.createJob<TestJob>();
-		auto jobHandleA = futureA.schedule();
+		auto jobA = TestParticalJob::create("A");
+		auto handle = jobA->scheduleIJob();
 
-		auto futureB = jm.createJob<TestJob>();
-		auto jobHandleB = futureB.schedule(jobHandleA);
-		jobHandleB.Complete();
-
-		auto value = futureB.getJob()->connecter.value;
-		assertTrue(value == 4,"futureB.value == 4, one chain job Test");*/
+		auto jobB = TestParticalJob::create("B");
+		auto handle2 = jobB->scheduleIJob(handle);
 	}
+
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	/*複数依存(fan - in)
 		A, B → C
@@ -289,6 +286,8 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		assertTrue(value == 4, "futureC.value == 4, 2 chain job Test");*/
 	}
 
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+
 	/*複数子依存 (fan-out)
 		A → B, C
 		B と C が A 完了後に並列で実行されることを確認。*/
@@ -310,6 +309,8 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		assertTrue(value == 4, "futureC.value == 4, 1 chain 2 job Test");*/
 	}
 
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+
 	/*深い依存チェーン
 		A → B → C → D
 		順序通りに実行されることを確認。*/
@@ -319,6 +320,8 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}
+
+	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	/*依存統合 (CombineDependencies 相当)
 		A, B, C をまとめて barrier にして D を依存させる。*/

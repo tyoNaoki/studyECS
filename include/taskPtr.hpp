@@ -123,7 +123,7 @@ public:
     }
 
     // 一度きりの実行
-    void invoke(size_t id) noexcept {
+    void invoke(const size_t id) noexcept {
         if (invoke_fn) {
             invoke_fn(buf,id);
             if (destroy_fn) {
@@ -359,15 +359,6 @@ struct JobHandle {
 
     JobId getJobId() { return jobId; }
 
-private:
-    JobId jobId;
-    std::shared_ptr<Inner>inner;
-
-    // デフォルトコンストラクタ
-    JobHandle() = default;
-
-    friend class JobManager;
-
     // 外部には見せない
     static JobHandle createHandle(JobId id, std::shared_ptr<Inner>&& inner) {
         JobHandle h;
@@ -375,6 +366,13 @@ private:
         h.inner = std::move(inner);
         return h;
     }
+
+private:
+    JobId jobId;
+    std::shared_ptr<Inner>inner;
+
+    // デフォルトコンストラクタ
+    JobHandle() = default;
 };
 
 struct IJobBase {
@@ -384,11 +382,25 @@ struct IJobBase {
 template<typename Derived>
 struct IJob : public IJobBase,std::enable_shared_from_this<Derived>{
 
+private:
+    struct  Context
+    {
+        std::shared_ptr<Derived> self;
+        std::shared_ptr<Inner>setter;
+        JobId jobId;
+
+        Context(std::shared_ptr<Derived> s,
+        JobId Id,
+        std::shared_ptr<Inner>set):self(s),jobId(Id),setter(set){}
+    };
+
 protected:
     IJob() = default;
 
 public:
-    virtual ~IJob() = default;
+    virtual ~IJob(){
+        //std::printf("JobID %zu deleted \n",getJobIndex(jobId));
+    };
 
     template<typename... Args>
     static std::shared_ptr<Derived> create(Args&&... args){
@@ -405,16 +417,45 @@ public:
 
     JobHandle scheduleIJob(TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
 
-        Derived* self = shared_this().get();
+        std::shared_ptr<Derived> self = shared_this();
+        auto& jm = JobManager::Instance();
+        auto jobId = jm.emplaceJobID();
+        auto setter = std::make_shared<Inner>();
 
-        auto work = [self](const size_t workerId) { executeIJob(self, workerId);};
+        auto context = std::make_shared<Context>(self,jobId,setter);
+
+        auto work = [context](const size_t workerId) { executeIJob(context->self.get(),context->jobId,context->setter.get(),workerId);};
         Job job(std::move(work));
 
-        auto& jm = JobManager::Instance();
-        jobId = jm.emplaceJobID();
-        setter = std::make_shared<Inner>();
+        jm.scheduleJobHandle(taskCategory,jobCategory,jobId,std::move(job));
+        
+        auto handle = JobHandle::createHandle(jobId, std::move(setter));
 
-        return jm.scheduleJobHandle(shared_this(),setter,taskCategory,jobCategory,jobId,std::move(job));
+        return handle;
+    }
+
+    JobHandle scheduleIJob(JobHandle& dependentHandle,TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
+
+        std::shared_ptr<Derived> self = shared_this();
+        auto& jm = JobManager::Instance();
+        auto jobId = jm.emplaceJobID();
+        auto setter = std::make_shared<Inner>();
+
+        auto context = std::make_shared<Context>(self, jobId, setter);
+
+        auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
+        Job job(std::move(work));
+
+        //依存解決
+        if(dependentHandle.isComplete()){
+            jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job));
+        }else{
+            jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job),dependentHandle);
+        }
+
+        auto handle = JobHandle::createHandle(jobId, std::move(setter));
+
+        return handle;
     }
 
    /* template<
@@ -436,15 +477,15 @@ public:
     }*/
 
 private:
-    static void executeIJob(Derived* self,const size_t workerID) {
+    static void executeIJob(Derived* self,JobId jobId,Inner*setter,const size_t workerID) {
         self->execute();
-        self->setter->setReady(true);
+        setter->setReady(true);
 
         auto& jm = JobManager::Instance();
 
         //この二つの関数が大きく時間をかけている
-        jm.processDependents(workerID,self->jobId);
-        jm.completedJob(workerID,self->jobId);
+        jm.processDependents(workerID,jobId);
+        jm.completedJob(workerID,jobId);
     };
 
     void applyCommands() {
@@ -462,12 +503,7 @@ private:
         return std::enable_shared_from_this<Derived>::shared_from_this();
     }
 
-
 protected:
-
-    JobId& getID() {
-        return jobId;
-    }
 
     inline void execute() {
         // Derived の Execute() を呼び出し
@@ -480,10 +516,6 @@ protected:
 private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
-
-    std::shared_ptr<Inner> setter;
-
-    JobId jobId;
 };
 //
 //template<typename Derived,TaskCategory>

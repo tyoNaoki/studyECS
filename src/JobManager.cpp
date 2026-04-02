@@ -5,7 +5,7 @@
 
 namespace ECS::JobSystem{
 
-void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobId* Id) {
+void ECS::JobSystem::JobManager::Executor::runJob(const size_t workerId, JobId* Id) {
     ASSERT(*Id, "task is invoked in JobQueue!!");
 
     JobManager& jm = JobManager::Instance();
@@ -20,7 +20,7 @@ void ECS::JobSystem::JobManager::Executor::runJob(size_t workerId, JobId* Id) {
     jm.stats_.onJobFinish(jobEntry.jobCategory,1);
 }
 
-void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin, JobId*end)
+void ECS::JobSystem::JobManager::Executor::runSlot(const size_t workerId, JobId*begin, JobId*end)
 {
     if (begin == end) return;
     JobManager& jm = JobManager::Instance();
@@ -44,7 +44,7 @@ void ECS::JobSystem::JobManager::Executor::runSlot(size_t workerId, JobId*begin,
     jm.stats_.onJobFinish(jobCategory, size);
 }
 
-void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&& chunk)
+void ECS::JobSystem::JobManager::Executor::runChunk(const size_t workerId, ChunkMeta&& chunk)
 {
     if(chunk.isEmpty()) return;
 
@@ -62,7 +62,7 @@ void ECS::JobSystem::JobManager::Executor::runChunk(size_t workerId, ChunkMeta&&
     jm.stats_.onJobFinish(chunk.jobCategory, size);
 }
 
-void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
+void JobManager::initialize(size_t maxJobNum,size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
 {
     ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
     initFlag = true;
@@ -80,7 +80,11 @@ void JobManager::Initialize(size_t reserveJobNum,size_t threadCount, std::unique
         workers.push_back(std::make_unique<RealTimeOnlyWorker>(i,barrier,chunkQueue,completedJobQueue));
     }
 
-    jobStorage.reserveJobs(reserveJobNum);
+    jobStorage.initialize(maxJobNum);
+
+    //RealTime用のBatchChunk
+    currentBatchChunk.jobCategory = JobCategory::RealTime;
+    currentBatchChunk.jobs.reserve(batchmaxchunksize);
 }
 
 JobManager::~JobManager()
@@ -88,33 +92,38 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-JobHandle JobManager::scheduleJobHandle(std::shared_ptr<IJobBase>jobBasePtr,std::shared_ptr<Inner>inner,TaskCategory taskCategory,JobCategory jobCategory,JobId jobId,Job&& job)
+void JobManager::scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory,JobId jobId,Job&& job)
 {
-    //いずれ、自動でtaskCategoryを算出できるようにする
     stats_.onScheduled(jobCategory, 1);
 
-    //いずれ、これら二つの変数を詰め込んだjobだけをchunkにつめていく。
-
-    //jobをJobManagerにコピー
-    // 
-    //ここでindegree追加するか処置
-
-     //jobとdependents,inner
     auto index = getJobIndex(jobId);
-    //auto& func = jobStorage.getFunc(index);
-    //func = std::move(job);
     auto& jobInfo = jobStorage.getJobInfo(index);
+    
     jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
-    auto& jobPtr = jobStorage.getJobPtr(index);
-    jobPtr = std::move(jobBasePtr);
-
     enqueue(taskCategory, jobCategory, std::move(job));
+}
 
-    auto handle = JobHandle::createHandle(jobId, std::move(inner));
+void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, JobHandle& depedentHandle)
+{
+    stats_.onScheduled(jobCategory, 1);
 
-    return handle;
+    auto index = getJobIndex(jobId);
+    
+    auto& jobInfo = jobStorage.getJobInfo(index);
+
+    jobInfo.jobCategory = jobCategory;
+    jobInfo.taskCategory = taskCategory;
+
+    addDependent(jobId,depedentHandle);
+
+    if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
+        enqueue(taskCategory, jobCategory, std::move(job));
+    }else{
+        auto& func = jobStorage.getFunc(index);
+        func = std::move(job);
+    }
 }
 
 //JobHandle JobManager::scheduleJobHandle(JobId jobId, JobHandle& handle)
@@ -192,6 +201,7 @@ void JobManager::completedJob(const size_t workerId,JobId jobId)
         completedJobQueue.enqueue(completedJobToken,jobId);
         return;
     }
+
     workers[workerId]->completedJob(jobId);
 }
 
@@ -272,15 +282,18 @@ namespace {
     thread_local std::vector<JobId> reuseBuffer;
 }
 
-void JobManager::processDependents(const size_t workerID,const JobId& parentId)
+void JobManager::processDependents(const size_t workerID,const JobId parentId)
 {
     if(!containsJob(parentId)) return;
 
-    auto&parentDependents = getDependents(getJobIndex(parentId));
-    if(parentDependents.empty()) return;
+    {
+        auto& parentDependents = getDependents(getJobIndex(parentId));
+        std::lock_guard<std::mutex> dlk(*parentDependents.dependentLock);
 
-    reuseBuffer.swap(parentDependents);
-
+        if (parentDependents.dependents.empty()) return;
+        reuseBuffer.swap(parentDependents.dependents);
+    }
+    
     for(auto& child : reuseBuffer){
 
         if(!jobStorage.containsJob(child)) continue;
@@ -375,18 +388,14 @@ size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double
     return 0;
 }
 
-void JobManager::addDependent(const JobId& child,const JobId& parent)
-{
-    ASSERT(child != parent, "addDependent() do not use childJob and childJob");
-
-    jobStorage.addDependent(child,parent);
-}
-
 void JobManager::addDependent(const JobId& child, JobHandle& parent)
 {
     ASSERT(child != parent.getJobId(), "addDependent() do not use childJob and childJob");
+    ASSERT(containsJob(child),"%zu is not contains",getJobIndex(child));
 
-    jobStorage.addDependent(child, parent.getJobId());
+    if(!parent.isComplete()){
+        jobStorage.addDependent(child, parent.getJobId());
+    }
 }
 
 void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& childIndex)
