@@ -65,10 +65,8 @@ void ECS::JobSystem::JobManager::Executor::runChunk(const size_t workerId, Chunk
 void JobManager::initialize(size_t maxJobNum,size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
 {
     ASSERT(threadCount > 0, "JobSystem is ThreadCount <= 0");
-    initFlag = true;
 
     recorder = std::move(rec);
-    stopFlag = false;
     nextQueue = 0;
     threadSize = threadCount;
 
@@ -85,6 +83,9 @@ void JobManager::initialize(size_t maxJobNum,size_t threadCount, std::unique_ptr
     //RealTime—p‚ÌBatchChunk
     currentBatchChunk.jobCategory = JobCategory::RealTime;
     currentBatchChunk.jobs.reserve(batchmaxchunksize);
+
+    initFlag = true;
+    stopFlag = false;
 }
 
 JobManager::~JobManager()
@@ -116,11 +117,35 @@ void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCat
     jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
-    addDependent(jobId,depedentHandle);
+    addDependent(jobId, depedentHandle);
 
     if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
         enqueue(taskCategory, jobCategory, std::move(job));
     }else{
+        auto& func = jobStorage.getFunc(index);
+        func = std::move(job);
+    }
+}
+
+void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles)
+{
+    stats_.onScheduled(jobCategory, 1);
+
+    auto index = getJobIndex(jobId);
+
+    auto& jobInfo = jobStorage.getJobInfo(index);
+
+    jobInfo.jobCategory = jobCategory;
+    jobInfo.taskCategory = taskCategory;
+
+    for(size_t i = 0;i<depedentHandles.size();i++){
+        addDependent(jobId, depedentHandles[i]);
+    }
+
+    if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
+        enqueue(taskCategory, jobCategory, std::move(job));
+    }
+    else {
         auto& func = jobStorage.getFunc(index);
         func = std::move(job);
     }
@@ -394,7 +419,7 @@ void JobManager::addDependent(const JobId& child, JobHandle& parent)
     ASSERT(containsJob(child),"%zu is not contains",getJobIndex(child));
 
     if(!parent.isComplete()){
-        jobStorage.addDependent(child, parent.getJobId());
+        jobStorage.addDependent(child, parent);
     }
 }
 
