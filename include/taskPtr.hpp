@@ -446,35 +446,31 @@ public:
         auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
         Job job(std::move(work));
 
-        //ˆË‘¶‰ğŒˆ
-        if(dependentHandle.isComplete()){
-            jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job));
-        }else{
-            jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job),dependentHandle);
-        }
+        jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job), dependentHandle);
 
         auto handle = JobHandle::createHandle(jobId, std::move(setter));
 
         return handle;
     }
 
-   /* template<
-        typename Derived,
-        typename... Args
-    >
-        static Derived createIJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime, Args&&... args) {
+    JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
+
+        std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
+        auto jobId = jm.emplaceJobID();
+        auto setter = std::make_shared<Inner>();
 
-        auto id = jm.emplaceId();
-        auto& entry = jm.getJobEntry(id);
-        entry.jobCategory = JC;
-        entry.taskCategory = TC;
+        auto context = std::make_shared<Context>(self, jobId, setter);
 
-        Derived job(std::forward<Args>(args)...);
-        job.id_ = id;
+        auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
+        Job job(std::move(work));
 
-        return job;
-    }*/
+        jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job), dependentHandles);
+
+        auto handle = JobHandle::createHandle(jobId, std::move(setter));
+
+        return handle;
+    }
 
 private:
     static void executeIJob(Derived* self,JobId jobId,Inner*setter,const size_t workerID) {
@@ -483,8 +479,10 @@ private:
 
         auto& jm = JobManager::Instance();
 
-        //‚±‚Ì“ñ‚Â‚ÌŠÖ”‚ª‘å‚«‚­ŠÔ‚ğ‚©‚¯‚Ä‚¢‚é
+        //ˆË‘¶‰ğŒˆ
         jm.processDependents(workerID,jobId);
+
+        //cleanUP—p
         jm.completedJob(workerID,jobId);
     };
 

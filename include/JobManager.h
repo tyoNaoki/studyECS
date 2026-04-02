@@ -141,14 +141,16 @@ namespace ECS::JobSystem{
             return dependents[index];
         }
 
-        void addDependent(JobId child,JobId parent){
-            auto parentJobIndex = getJobIndex(parent);
+        void addDependent(JobId child, JobHandle parentHandle) {
+            auto parentJobIndex = getJobIndex(parentHandle.getJobId());
 
             std::lock_guard<std::mutex>dlk(*dependents[parentJobIndex].dependentLock);
 
+            if(parentHandle.isComplete()) return;
+
             dependents[parentJobIndex].dependents.push_back(child);
 
-            getJobInfo(getJobIndex(child)).inDegree.fetch_add(1,std::memory_order_acq_rel);
+            getJobInfo(getJobIndex(child)).inDegree.fetch_add(1, std::memory_order_acq_rel);
         }
 
         void removeJob(JobId jobId){
@@ -382,7 +384,9 @@ public:
     ~JobManager();
 
     void start(){
-        barrier.start();
+        if(initFlag){
+            barrier.start();
+        }
     }
 
     template<typename... Args>
@@ -444,6 +448,8 @@ public:
 
     void scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job,JobHandle& depedentHandle);
 
+    void scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles);
+
     //parallelJob用のscheduleも用意しておく。
     //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
     // 
@@ -472,19 +478,6 @@ public:
 //
 //        popChunks();
 //    }
-
-   /// <summary>
-   /// Jobにコマンド形式で関数ポインターを渡していく
-   /// job.AddRequest(jobHandle,([&capture](JobClass& t) {
-   ///     t.temp = capture;
-   /// }));
-   /// </summary>
-   /// <returns></returns>
-    template<typename JobT>
-    void addCommand(const JobId&jobId, std::function<void(JobT&)>&&cmd){
-        JobT* job = static_cast<JobT>(getJobEntry(jobId).data);
-        job->AddRequeset(std::move(cmd));
-    }
 
     //削除予定リストに追加、jobIdをNULLIDに変更
     void completedJob(const size_t workerId,JobId jobId);

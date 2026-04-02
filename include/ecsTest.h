@@ -171,6 +171,25 @@ struct TestParticalJob
 	}
 };
 
+struct TestDelayParticalJob
+	: public ECS::JobSystem::IJob<TestDelayParticalJob>
+{
+	std::string name;
+	int delayTime;
+
+	/*static void Execute(TestJob*job) {
+		job->connecter.value = job->connecter.value * job->connecter.value;
+
+	}*/
+
+	TestDelayParticalJob(std::string n,int delay) : name(n),delayTime(delay) {}
+
+	void execute() {
+		std::printf("%s particalJob executed \n", name.c_str());
+		busyWait(std::chrono::milliseconds(delayTime));
+	}
+};
+
 //connecter.value = connecter.value * connecter.value;
 		//int sleepTime = generateRandomInt(5, 10);
 		//busyWait(std::chrono::milliseconds(sleepTime));
@@ -246,7 +265,6 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 	jm.initialize(allCheckNum,7, std::move(recorder));
 
 	//std::printf("RealTimeJob Start is %zu\n", check);
-	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 
 	//std::vector<ECS::JobSystem::JobHandle> jobAHandles;
@@ -265,48 +283,51 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	/*複数依存(fan - in)
-		A, B → C
-		C は A と B が両方終わるまで実行されないことを確認。*/
+		A, B → C*/
 	{
-		/*auto futureA = jm.createJob<TestJob>();
-		auto jobHandleA = futureA.schedule();
-
-		auto futureB = jm.createJob<TestJob>();
-		auto jobHandleB = futureB.schedule();
-
 		std::vector<ECS::JobSystem::JobHandle>handles;
-		handles.push_back(std::move(jobHandleA));
-		handles.push_back(std::move(jobHandleB));
 
-		auto futureC = jm.createJob<TestJob>();
-		auto jobHandleC = futureB.schedule(handles);
-		jobHandleC.Complete();
+		auto jobA = TestParticalJob::create("A");
+		auto handle = jobA->scheduleIJob();
 
-		auto value = futureC.getJob()->connecter.value;
-		assertTrue(value == 4, "futureC.value == 4, 2 chain job Test");*/
+		auto jobB = TestParticalJob::create("B");
+		auto handle2 = jobB->scheduleIJob();
+
+		handles.push_back(handle);
+		handles.push_back(handle2);
+
+		auto jobC = TestParticalJob::create("C");
+		auto handle3 = jobC->scheduleIJob(handles);
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
 	}
 
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	/*複数子依存 (fan-out)
-		A → B, C
-		B と C が A 完了後に並列で実行されることを確認。*/
+		A,B → C, D。*/
 	{
 		
-		/*auto futureA = jm.createJob<TestJob>();
-		auto jobHandleA = futureA.schedule();
+		std::vector<ECS::JobSystem::JobHandle>handles;
 
-		auto futureB = jm.createJob<TestJob>();
-		auto jobHandleB = futureB.schedule(jobHandleA);
+		auto jobA = TestDelayParticalJob::create("A",4);
+		auto handle = jobA->scheduleIJob();
 
-		auto futureC = jm.createJob<TestJob>();
-		auto jobHandleC = futureB.schedule(jobHandleA);
+		auto jobB = TestDelayParticalJob::create("B",4);
+		auto handle2 = jobB->scheduleIJob();
 
-		jobHandleB.Complete();
-		jobHandleC.Complete();
+		handles.push_back(handle);
+		handles.push_back(handle2);
 
-		auto value = futureC.getJob()->connecter.value;
-		assertTrue(value == 4, "futureC.value == 4, 1 chain 2 job Test");*/
+		auto jobC = TestParticalJob::create("C");
+		auto handle3 = jobC->scheduleIJob(handles);
+
+		auto jobD = TestParticalJob::create("D");
+		auto handle4 = jobD->scheduleIJob(handles);
+
+		// 少しずつずらしてスケジューリング
+		busyWait(std::chrono::milliseconds(2));
 	}
 
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
@@ -315,24 +336,22 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		A → B → C → D
 		順序通りに実行されることを確認。*/
 	{
+		auto jobA = TestParticalJob::create("A");
+		auto handle = jobA->scheduleIJob();
 
+		auto jobB = TestDelayParticalJob::create("B",2);
+		auto handle2 = jobB->scheduleIJob(handle);
+
+		auto jobC = TestParticalJob::create("C");
+		auto handle3 = jobC->scheduleIJob(handle2);
+
+		auto jobD = TestParticalJob::create("D");
+		auto handle4 = jobD->scheduleIJob(handle3);
 
 		// 少しずつずらしてスケジューリング
 		busyWait(std::chrono::milliseconds(2));
 	}
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
-
-	/*依存統合 (CombineDependencies 相当)
-		A, B, C をまとめて barrier にして D を依存させる。*/
-	{
-
-
-		// 少しずつずらしてスケジューリング
-		busyWait(std::chrono::milliseconds(2));
-	}
-
-	// 4) すべてのジョブ完了を待機
 	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
 
 	auto globalEnd = ECS::JobSystem::now();
