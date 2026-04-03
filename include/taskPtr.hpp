@@ -46,7 +46,8 @@ namespace ECS::JobSystem{
     enum class TaskCategory : uint8_t {
         Normal = 0,
         Batch = 1,
-        Num = 2,
+        Parallel = 2,
+        Num = 3,
     };
 
 enum class JobCategory { RealTime, BackGround, Num };
@@ -375,12 +376,8 @@ private:
     JobHandle() = default;
 };
 
-struct IJobBase {
-    virtual ~IJobBase() = default;
-};
-
 template<typename Derived>
-struct IJob : public IJobBase,std::enable_shared_from_this<Derived>{
+struct IJob : public std::enable_shared_from_this<Derived>{
 
 private:
     struct  Context
@@ -515,6 +512,174 @@ private:
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
 };
+
+//parallelJobの基底クラス
+//Derived : 派生クラス
+//ParallelJoData : Job実行時に書き込むデータ
+template<typename Derived>
+struct IParallelJob : public std::enable_shared_from_this<Derived>{
+
+private:
+    struct Context {
+        std::shared_ptr<Derived> self;
+        JobId jobId;
+        size_t total, batchSize, numBatches, chunkBatches;
+        std::atomic<size_t>* nextBatch;
+        std::shared_ptr<Inner> setter;
+
+        Context(std::atomic<size_t>* next)
+            : total(0), batchSize(0), numBatches(0), chunkBatches(0), nextBatch(next), setter(nullptr, 0) {}
+
+        Context(std::shared_ptr<Derived> s,
+            JobId Id,
+            size_t t, size_t b, size_t n,
+            size_t c,
+            std::atomic<size_t>* next,
+            std::shared_ptr<Inner> set)
+            : self(s), jobId(Id), total(t), batchSize(b), numBatches(n), chunkBatches(c), nextBatch(next), setter(std::move(set)) {}
+
+        ~Context() {};
+    };
+
+protected:
+    IParallelJob() = default;
+    
+public:
+    virtual ~IParallelJob(){};
+
+    template<typename... Args>
+    static std::shared_ptr<Derived> create(Args&&... args) {
+        return std::make_shared<Derived>(std::forward<Args>(args)...);
+    }
+
+    JobHandle schedule(const size_t total,const size_t batchSize,const size_t workerCount,JobCategory jobCategory = JobCategory::RealTime) {
+        ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
+
+        std::shared_ptr<Derived> self = shared_this();
+        auto& jm = JobManager::Instance();
+        auto jobId = jm.emplaceJobID();
+        auto setter = std::make_shared<Inner>();
+
+        const size_t numBatches = (total + batchSize - 1) / batchSize;
+
+        const size_t threadSize = jm.getThreadSize();
+        const size_t workerNum = std::min({threadSize,workerCount,numBatches});
+
+        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
+
+        taskCounter = numBatches;
+
+        nextBatch_.store(0, std::memory_order_relaxed);
+
+        auto ctx = std::make_shared<Context>(
+            shared_this()
+            , jobId
+            , total
+            , batchSize
+            , numBatches
+            , chunkBatches
+            , &nextBatch_
+            , setter
+            );
+
+        std::vector<Job>jobs;
+        jobs.reserve(workerNum);
+
+        // ワーカー数分だけ Task を作成して登録
+        for (size_t w = 0; w < workerNum; ++w) {
+            auto work = [ctx](const size_t workerId) { workerEntry(ctx->self.get(),ctx->jobId,ctx->setter.get(),ctx->batchSize,ctx->numBatches,ctx->total,ctx->chunkBatches,workerId); };
+
+            Job job(std::move(work));
+
+            jobs.push_back(std::move(job));
+        }
+
+        jm.scheduleParalellJobHandle(TaskCategory::Parallel,jobCategory,jobId,std::move(jobs));
+
+        auto handle = JobHandle::createHandle(jobId, std::move(setter));
+
+        return handle;
+    }
+
+    void AddRequeset(std::function<void(Derived&)>&& fn) {
+        commands.emplace_back(std::move(fn));
+    }
+   
+private:
+    static void workerEntry(Derived* self,JobId jobId,Inner* setter,size_t batchSize,size_t numBatches,size_t total,size_t chunkBatches,size_t workerID) {
+
+        while (true) {
+            //回数見直し、バッチ回数に合わせる。応じて変える
+            //numBatchesも
+            const size_t idx = self->nextBatch_.fetch_add(chunkBatches, std::memory_order_relaxed);
+
+            if(idx >= numBatches) return;
+
+            const size_t taken = std::min(chunkBatches, numBatches - idx);
+
+            for (size_t b = 0; b < taken; ++b) {
+                const size_t start = (idx + b) * batchSize;
+
+                ASSERT(start < total,"IParallelJob workerEntry : start >= total");
+
+                const size_t len = std::min(batchSize, total - start);
+
+                self->ExecuteBatch(start,len,self);
+                
+                if (self->taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
+                    setter->setReady(true);
+                    
+                    auto& jm = JobManager::Instance();
+
+                    //依存解決
+                    jm.processDependents(workerID, jobId);
+
+                    //cleanUP用
+                    jm.completedJob(workerID, jobId);
+                    return;
+                }
+            }
+        }
+    }
+
+    inline void Execute(size_t index) {
+        // Derived の Execute() を呼び出し
+        //static_cast<Derived*>(this)->Execute(index);
+        ASSERT(false, "Derived class not found Execute(size_t) member function!!");
+    }
+
+    void applyCommands() {
+
+        if (commands.empty()) return;
+
+        for (auto& fn : commands) {
+            fn(static_cast<Derived&>(*this)); // 直接呼び出し
+        }
+
+        commands.clear();
+    }
+
+protected:
+    inline void ExecuteBatch(const size_t start,const size_t len,Derived*self) {
+        for (size_t i = start; i < start + len; ++i) {
+            self->Execute(i);
+        }
+    }
+
+    std::shared_ptr<Derived> shared_this()
+    {
+        return std::enable_shared_from_this<Derived>::shared_from_this();
+    }
+
+private:
+    std::atomic<size_t> nextBatch_{ 0 };
+
+    std::atomic<size_t> taskCounter{0};
+
+    // コマンドバッファ
+    std::vector<std::function<void(Derived&)>> commands;
+};
+
 //
 //template<typename Derived,TaskCategory>
 //struct IJob
@@ -523,6 +688,24 @@ private:
 //    using Return_t = ReturnType;
 //
 //    using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
+// 
+// using TaskPtr = intrusive_ptr<Task>;
+
+//using Data_t = ParallelJobData;
+//
+//using HasData = std::bool_constant<!std::is_same_v<Data_t, std::monostate>>;
+//
+//using Future_t = std::conditional_t<
+//    HasData::value,
+//    ParallelJobFuture<Data_t>,
+//    ParallelJobFuture<void>
+//>;
+//
+//using Setter_t = std::conditional_t<
+//    HasData::value,
+//    SettableParallelJobFuture<Data_t>,
+//    SettableParallelJobFuture<void>
+//>;
 //
 //    struct Context {
 //        std::shared_ptr<Derived> self;
@@ -602,240 +785,6 @@ private:
 //private:
 //    // コマンドバッファ
 //    std::vector<std::function<void(Derived&)>> commands;
-//};
-
-//parallelJobの基底クラス
-//Derived : 派生クラス
-//ParallelJoData : Job実行時に書き込むデータ
-//template<typename Derived,typename ParallelJobData  = std::monostate>
-//struct IParallelJob : std::enable_shared_from_this<Derived>{
-//    using TaskPtr = intrusive_ptr<Task>;
-//
-//    using Data_t = ParallelJobData;
-//
-//    using HasData = std::bool_constant<!std::is_same_v<Data_t, std::monostate>>;
-//
-//    using Future_t = std::conditional_t<
-//        HasData::value,
-//        ParallelJobFuture<Data_t>,
-//        ParallelJobFuture<void>
-//        >;
-//
-//    using Setter_t = std::conditional_t<
-//        HasData::value,
-//        SettableParallelJobFuture<Data_t>,
-//        SettableParallelJobFuture<void>
-//        >;
-//
-//    IParallelJob() = default;
-//
-//    template <typename T = Data_t,
-//        typename = std::enable_if_t<!std::is_same_v<T, void>>>
-//        IParallelJob(T&& d)
-//        : jobResult(std::forward<T>(d)) {}
-//    
-//    ~IParallelJob(){};
-//
-//    struct Context {
-//        std::shared_ptr<Derived> self;
-//        size_t total, batchSize, numBatches, chunkBatches;
-//        std::atomic<size_t>* nextBatch;
-//        Setter_t setter;
-//
-//        Context(std::atomic<size_t>* next)
-//            : total(0), batchSize(0), numBatches(0), chunkBatches(0),nextBatch(next), setter(nullptr,0) {}
-//
-//         Context(std::shared_ptr<Derived> s,
-//            size_t t, size_t b, size_t n,
-//            size_t c,
-//            std::atomic<size_t>* next,
-//            Setter_t&& set)
-//      : self(s),total(t),batchSize(b),numBatches(n), chunkBatches(c),nextBatch(next),setter(std::move(set)){}
-//
-//        ~Context(){};
-//    };
-//
-//    inline std::pair<std::vector<TaskPtr>, Future_t> schedule(const size_t total,const size_t batchSize,const size_t workerCount, JobCategory cat = JobCategory::RealTime) {
-//        ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
-//
-//        const size_t numBatches = (total + batchSize - 1) / batchSize;
-//
-//        const size_t threadSize = JobManager::Instance().getThreadSize();
-//        const size_t workerNum = std::min({threadSize,workerCount,numBatches});
-//
-//        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
-//
-//        auto [settable, future] = Setter_t::create(numBatches);
-//
-//        nextBatch_.store(0, std::memory_order_relaxed);
-//
-//        auto ctx = std::make_shared<Context>(
-//            shared_this()
-//            , total
-//            , batchSize
-//            , numBatches
-//            , chunkBatches
-//            , &nextBatch_
-//            , std::move(settable)
-//            );
-//
-//        std::vector<TaskPtr>tasks;
-//        tasks.reserve(workerNum);
-//
-//        // ワーカー数分だけ Task を作成して登録
-//        for (size_t w = 0; w < workerNum; ++w) {
-//            auto work = [ctx]() { workerEntry(ctx); };
-//
-//            /*auto task = new Task(Job(std::move(work)), 0,cat);
-//            TaskPtr taskPtr{ std::move(task) };*/
-//
-//            Job job(std::move(work));
-//
-//            auto taskPtr = JobManager::Instance().scheduleTask(cat, std::move(job), 0);
-//
-//            //JobManager::Instance().pushJobWaitQueue(taskPtr);
-//
-//            tasks.push_back(taskPtr);
-//        }
-//
-//        return std::make_pair(tasks, future);
-//    }
-//
-//    inline std::pair<std::vector<TaskPtr>,Future_t> schedule(JobCategory cat,size_t total,size_t batchSize,size_t workerCount,const std::vector<TaskPtr>&deps){
-//        ASSERT(total > 0 && batchSize > 0&& workerCount > 0,"parallelJob schedule total or batchSize is zero");
-//
-//        const size_t numBatches = (total + batchSize - 1) / batchSize;
-//        const size_t threadSize = JobManager::Instance().getThreadSize();
-//        const size_t workerNum = std::min({ threadSize,workerCount,numBatches });
-//
-//        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
-//
-//        auto [settable, future] = Setter_t::create(numBatches);
-//        
-//        nextBatch_.store(0, std::memory_order_relaxed);
-//
-//        auto ctx = std::make_shared<Context>(
-//            shared_this()
-//            ,total
-//            ,batchSize
-//            ,numBatches
-//            ,chunkBatches
-//            ,&nextBatch_
-//            ,std::move(settable)
-//            );
-//
-//        std::vector<TaskPtr>tasks;
-//        tasks.reserve(workerNum);
-//
-//        // ワーカー数分だけ Task を作成して登録
-//        for (size_t w = 0; w < workerCount; ++w) {
-//            auto work = [ctx]() { workerEntry(ctx); };
-//
-//            auto task = new Task(Job(std::move(work)), 0,cat);
-//            TaskPtr taskPtr{std::move(task)};
-//
-//            for (auto& d : deps) {
-//                std::lock_guard<std::mutex> lk(d->taskMutex);
-//                if (d && d->job.valid()) {
-//                    taskPtr.get()->addDependent(d.get());
-//                }
-//            }
-//
-//            if (taskPtr->inDegree.load() == 0) {
-//                JobManager::Instance().scheduleTask(taskPtr);
-//            }
-//
-//            tasks.push_back(taskPtr);
-//        }
-//
-//        return std::make_pair(tasks,future);
-//    }
-//
-//    void AddRequeset(std::function<void(Derived&)>&& fn) {
-//        commands.emplace_back(std::move(fn));
-//    }
-//   
-//private:
-//    static void workerEntry(std::shared_ptr<Context> ctx) {
-//        auto self = ctx->self;
-//        if(!self){
-//            std::printf("self is nullptr");
-//            return;
-//        }
-//        const size_t batchSize = ctx->batchSize;
-//        const size_t numBatches = ctx->numBatches;
-//        const size_t total = ctx->total;
-//        const size_t chunkBatches = ctx->chunkBatches;
-//
-//        while (true) {
-//            //回数見直し、バッチ回数に合わせる。応じて変える
-//            //numBatchesも
-//            const size_t idx = ctx->nextBatch->fetch_add(chunkBatches, std::memory_order_relaxed);
-//
-//            if(idx >= numBatches) return;
-//
-//            const size_t taken = std::min(chunkBatches, numBatches - idx);
-//
-//            for (size_t b = 0; b < taken; ++b) {
-//                const size_t start = (idx + b) * batchSize;
-//
-//                ASSERT(start < total,"IParallelJob workerEntry : start >= total");
-//
-//                const size_t len = std::min(batchSize, total - start);
-//
-//                self->ExecuteBatch(start,len,self.get());
-//
-//                if (ctx->setter.sub_counter() == 1) {
-//                    if constexpr (HasData::value){
-//                        ctx->setter.set_value(self->jobResult);
-//                    }else{
-//                        ctx->setter.set_value();
-//                    }
-//                    
-//                    return;
-//                }
-//            }
-//        }
-//    }
-//
-//    inline void Execute(size_t index) {
-//        // Derived の Execute() を呼び出し
-//        //static_cast<Derived*>(this)->Execute(index);
-//        ASSERT(false, "Derived class not found Execute(size_t) member function!!");
-//    }
-//
-//    void applyCommands() {
-//
-//        if (commands.empty()) return;
-//
-//        for (auto& fn : commands) {
-//            fn(static_cast<Derived&>(*this)); // 直接呼び出し
-//        }
-//
-//        commands.clear();
-//    }
-//
-//protected:
-//    inline void ExecuteBatch(const size_t start,const size_t len,Derived*self) {
-//        for (size_t i = start; i < start + len; ++i) {
-//            self->Execute(i);
-//        }
-//    }
-//
-//    std::shared_ptr<Derived> shared_this()
-//    {
-//        return std::enable_shared_from_this<Derived>::shared_from_this();
-//    }
-//
-//    [[no_unique_address]] Data_t jobResult;
-//
-//private:
-//    std::atomic<size_t> nextBatch_{ 0 };
-//
-//    // コマンドバッファ
-//    std::vector<std::function<void(Derived&)>> commands;
-//
-//    size_t threadSize;
 //};
 
 }//namespace ECS::JobSystem
