@@ -46,7 +46,6 @@ namespace ECS::JobSystem{
         std::atomic<int> inDegree{ 0 };
 
         // カテゴリ
-        JobCategory jobCategory{};
         TaskCategory taskCategory{};
 
         JobEntry() = default;
@@ -54,7 +53,6 @@ namespace ECS::JobSystem{
         // ムーブコンストラクタ
         JobEntry(JobEntry&& other) noexcept
             : inDegree(other.inDegree.load())
-            , jobCategory(other.jobCategory)
             , taskCategory(other.taskCategory)
         {
         }
@@ -63,7 +61,6 @@ namespace ECS::JobSystem{
         JobEntry& operator=(JobEntry&& other) noexcept {
             if (this != &other) {
                 inDegree.store(other.inDegree.load());
-                jobCategory = other.jobCategory;
                 taskCategory = other.taskCategory;
             }
 
@@ -191,7 +188,7 @@ namespace ECS::JobSystem{
 
             auto newId = composeJobId(nextIndex++, 0u);
             
-            ASSERT(nextIndex < jobStorageMaxSize,"over size %zu",jobStorageMaxSize);
+            ASSERT(nextIndex <= jobStorageMaxSize,"over size %zu",jobStorageMaxSize);
 
             return newId;
         }
@@ -246,8 +243,6 @@ namespace ECS::JobSystem{
         size_t jobStorageMaxSize;
     };
 
-    static constexpr size_t NumCategories = static_cast<size_t>(JobCategory::Num);
-
     /// <summary>
     /*pending	キューに積まれ、まだ取得・実行が始まっていないジョブ数	pushBottom() 後、popOrSteal() 前
       running	ワーカーが取得し、現在実行中のジョブ数   popOrSteal() 成功直後 ～ 完了まで
@@ -274,20 +269,18 @@ namespace ECS::JobSystem{
         //    running_[size_t(cat)].fetch_add(count, std::memory_order_release);
         //}
 
-        void onJobFinish(const JobCategory cat, size_t count) noexcept;
+        void onJobFinish( size_t count) noexcept;
 
     public:
-        void onScheduled(const JobCategory cat, size_t count) noexcept {
-            scheduled[size_t(cat)].fetch_add(count, std::memory_order_release);
+        void onScheduled(size_t count) noexcept {
+            scheduled.fetch_add(count, std::memory_order_release);
         }
 
         // フレーム終端で指定カテゴリがすべて完了するまで待つ
-        void waitForAll(const JobCategory cat);
+        void waitForAll();
 
-        size_t scheduledJobCount(const JobCategory cat) const noexcept{
-            ASSERT(size_t(cat) < size_t(JobCategory::Num),"JobCategroy is falid num");
-
-            return scheduled[size_t(cat)].load(std::memory_order_acquire);
+        size_t scheduledJobCount() const noexcept{
+            return scheduled.load(std::memory_order_acquire);
         }
 
        /* size_t pendingJobCount(const JobCategory cat) const noexcept{
@@ -308,10 +301,7 @@ namespace ECS::JobSystem{
 
     private:
         // 各状態のカテゴリ別カウンタ
-        std::array<std::atomic<size_t>, NumCategories> scheduled{};
-        /*std::array<std::atomic<size_t>, NumCategories> pending_{};
-        std::array<std::atomic<size_t>, NumCategories> running_{};
-        std::array<std::atomic<size_t>, NumCategories> completed_{};*/
+        std::atomic<size_t> scheduled{};
 
         // フレーム同期用
         std::mutex             mtx_;
@@ -331,7 +321,7 @@ class JobManager
 
     using PushResult = JobQueue::PushResult;
 
-    using RealTimeOnlyWorker = Worker<JobQueue,RealTimePolicy>;
+    using GeneralWorker = Worker<JobQueue,GeneralPolicy>;
 
     //仮として60FPS
     static constexpr float targetFPS = 60.0f;
@@ -444,13 +434,13 @@ public:
         return jobStorage.emplaceJobId();
     }
 
-    void scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory, JobId jobId, Job&&job);
+    void scheduleJobHandle(TaskCategory taskCategory,JobId jobId, Job&&job);
 
-    void scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job,JobHandle& depedentHandle);
+    void scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job,JobHandle& depedentHandle);
 
-    void scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles);
+    void scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles);
 
-    void scheduleParalellJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, std::vector<Job>&& jobs);
+    void scheduleParalellJobHandle(TaskCategory taskCategory,JobId jobId, std::vector<Job>&& jobs);
 
     //parallelJob用のscheduleも用意しておく。
     //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
@@ -496,6 +486,10 @@ public:
 
 public:
 
+    bool isInitialized(){
+        return initFlag;
+    }
+
     //緊急停止フラグがたっているか
     bool isAbort() {
         return abortFlag.load(std::memory_order_acquire);
@@ -514,21 +508,22 @@ public:
     void processDependents(const size_t workerID,const JobId parent);
 
     bool getFlushChunk(ChunkMeta& chunk){
+        if (currentBatchChunk.isEmpty())return false;
+
         std::lock_guard<std::mutex> lk(batchMutex);
 
         if(currentBatchChunk.isEmpty())return false;
 
         chunk = std::move(currentBatchChunk);
         currentBatchChunk.jobs.reserve(batchmaxchunksize);
-        currentBatchChunk.jobCategory = JobCategory::RealTime;
         return true;
     }
 
 private:
     //タスクストレージにジョブを追加する
-    void enqueue(TaskCategory taskCategory,JobCategory jobCategory,Job&&job);
+    void enqueue(TaskCategory taskCategory,Job&&job);
 
-    void enqueue(JobCategory jobCategory, std::vector<Job>&& jobs);
+    //void enqueue(std::vector<Job>&& jobs);
 
     void abort();
 

@@ -28,10 +28,10 @@ class JobManager;
         }
     };
 
-struct RealTimePolicy{
+struct GeneralPolicy{
 
     template<typename LocalQ>
-    bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ)
+    bool operator()(size_t workerId,LocalQ& localQ)
     {
         /*if((*localQ)->isAbort()){
             return false;
@@ -42,18 +42,16 @@ struct RealTimePolicy{
         auto& stats = manager.getStats();
 
         // realTimeJob処理
-        if (stats.scheduledJobCount(JobCategory::RealTime) >  0){
+        if (stats.scheduledJobCount() >  0){
 
             ChunkMeta chunkHandle;
 
             if(localQ.try_dequeue(chunkHandle)){
                 manager.executor().runChunk(workerId, std::move(chunkHandle));
-                executeCategory = JobCategory::RealTime;
 
                 return true;
             }else if(manager.getFlushChunk(chunkHandle)){
                 manager.executor().runChunk(workerId, std::move(chunkHandle));
-                executeCategory = JobCategory::RealTime;
                 return true;
             }
         }
@@ -117,10 +115,7 @@ class IWorker {
 public:
     virtual ~IWorker() = default;
 
-    virtual void enqueue(JobCategory jobCategory, ChunkMeta&& chunk) = 0;
-
-    //BatchJob
-    virtual void enqueue(JobCategory jobCategory, Job&& job) = 0;
+    virtual void enqueue(ChunkMeta&& chunk) = 0;
 
     virtual void completedJob(JobId jobId) = 0;
 
@@ -128,7 +123,7 @@ public:
 
 template<
     typename LocalQueue,
-    typename WorkerPolicy = RealTimePolicy
+    typename WorkerPolicy = GeneralPolicy
     >
 class Worker : public IWorker{
     //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
@@ -157,10 +152,7 @@ public:
     ~Worker() override;
    
     //BackGround未完成
-    void enqueue(JobCategory jobCategory,ChunkMeta&& chunk) override;
-
-    //BatchJob
-    void enqueue(JobCategory jobCategory, Job&&job) override;
+    void enqueue(ChunkMeta&& chunk) override;
 
     void completedJob(JobId jobId) override;
 
@@ -171,9 +163,7 @@ private:
     //全てのたまっているtaskを処理し、終了
     void stop();
 
-    void DebugLog(JobCategory cat);
-
-    std::string jobCategoryToString(JobCategory cat);
+    void DebugLog();
 
 private:
     std::atomic<bool> running = false;
@@ -217,40 +207,9 @@ inline Worker<LocalQueue,WorkerPolicy>::~Worker()
 }
 
 template<typename LocalQueue, typename WorkerPolicy>
-inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, ChunkMeta&& chunk)
+inline void Worker<LocalQueue, WorkerPolicy>::enqueue(ChunkMeta&& chunk)
 {
-    switch (jobCategory)
-    {
-    case ECS::JobSystem::JobCategory::RealTime:
-        chunkQueue.enqueue(chunkToken,std::move(chunk));
-        break;
-    case ECS::JobSystem::JobCategory::BackGround:
-        ASSERT(false,"not work");
-        return;
-        break;
-    default:
-        return;
-        break;
-    }
-}
-
-template<typename LocalQueue, typename WorkerPolicy>
-inline void Worker<LocalQueue, WorkerPolicy>::enqueue(JobCategory jobCategory, Job&& job)
-{
-    switch (jobCategory)
-    {
-    case ECS::JobSystem::JobCategory::RealTime:
-        ASSERT(false, "not work");
-        //taskStorage.enqueue(std::move(job));
-        break;
-    case ECS::JobSystem::JobCategory::BackGround:
-        ASSERT(false, "not work");
-        return;
-        break;
-    default:
-        return;
-        break;
-    }
+    chunkQueue.enqueue(chunkToken, std::move(chunk));
 }
 
 template<typename LocalQueue, typename WorkerPolicy>
@@ -262,10 +221,8 @@ inline void Worker<LocalQueue, WorkerPolicy>::completedJob(JobId jobId)
 template<typename LocalQueue,typename WorkerPolicy>
 inline void Worker<LocalQueue,WorkerPolicy>::run()
 {
-    JobCategory category;
     while (running.load(std::memory_order_relaxed)) {
-        if(policy_(category,workerId,chunkQueue)){
-            ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
+        if(policy_(workerId,chunkQueue)){
 
             //ログ出力
             //DebugLog(category);
@@ -278,29 +235,25 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
 {
     running.store(false, std::memory_order_relaxed);
 
-    JobCategory category;
-
     auto& stats = JobManager::Instance().getStats();
-    while(stats.scheduledJobCount(JobCategory::RealTime) > 0 && stats.scheduledJobCount(JobCategory::BackGround) > 0){
+    while(stats.scheduledJobCount() > 0){
 
         //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
-        if (policy_(category,workerId,chunkQueue)) {
-            ASSERT(size_t(category) < size_t(JobCategory::Num), "JobCategroy is falid num");
+        if (policy_(workerId,chunkQueue)) {
             //ログ出力
-            DebugLog(category);
+            DebugLog();
         }
     }
 }
 
 template<typename LocalQueue,typename WorkerPolicy>
-inline void Worker<LocalQueue,WorkerPolicy>::DebugLog(JobCategory cat)
+inline void Worker<LocalQueue,WorkerPolicy>::DebugLog()
 {
     auto&jm = JobManager::Instance();
 
     const auto& stats = jm.getStats();
 
-    ASSERT(size_t(cat) < size_t(JobCategory::Num), "JobCategroy is falid num");
-    auto notCompletedCount = stats.scheduledJobCount(cat);
+    auto notCompletedCount = stats.scheduledJobCount();
 
     test::saveLog("[FINISH] queue=%zu outstanding=%zu", workerId, notCompletedCount);
     //Logger::log("[FINISH] queue =",workerId,", outstanding =",notCompletedCount);
@@ -308,20 +261,10 @@ inline void Worker<LocalQueue,WorkerPolicy>::DebugLog(JobCategory cat)
     std::printf("[FINISH] queue=%zu outstanding=%zu \n", workerId, notCompletedCount);
 
     if(notCompletedCount == 0){
-        test::saveLog("All FINISH : %s", jobCategoryToString(cat).c_str());
+        test::saveLog("All FINISH JOB");
         //Logger::log("All FINISH : ", jobCategoryToString(cat).c_str());
 
-        std::printf("All FINISH : %s\n", jobCategoryToString(cat).c_str());
-    }
-}
-
-template<typename LocalQueue,typename WorkerPolicy>
-inline std::string Worker<LocalQueue,WorkerPolicy>::jobCategoryToString(JobCategory cat)
-{
-    switch (cat) {
-    case JobCategory::RealTime:   return "RealTime";
-    case JobCategory::BackGround: return "BackGround";
-    default:    return "Unknown";
+        std::printf("All FINISH JOB\n");
     }
 }
 

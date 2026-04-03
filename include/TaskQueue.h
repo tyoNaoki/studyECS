@@ -210,7 +210,6 @@ namespace ECS::JobSystem{
 
 struct ChunkMeta {
     std::vector<Job> jobs;
-    JobCategory jobCategory;
 
     size_t size(){
         return jobs.size();
@@ -228,14 +227,12 @@ struct ChunkMeta {
 
     // move ‚Ì‚Ý‹–‰Â
     ChunkMeta(ChunkMeta&& other) noexcept
-        : jobs(std::move(other.jobs)),
-        jobCategory(other.jobCategory)
+        : jobs(std::move(other.jobs))
     {}
 
     ChunkMeta& operator=(ChunkMeta&& other) noexcept {
         if (this != &other) {
             jobs = std::move(other.jobs);
-            jobCategory = other.jobCategory;
         }
         return *this;
     }

@@ -50,8 +50,6 @@ namespace ECS::JobSystem{
         Num = 3,
     };
 
-enum class JobCategory { RealTime, BackGround, Num };
-
 #define REFLECT_FIELDS(Type, ...)                                  \
   static constexpr auto field_ptrs()                                \
   { return std::make_tuple(__VA_ARGS__); }
@@ -412,7 +410,7 @@ public:
         std::swap(commands,fns);
     }
 
-    JobHandle scheduleIJob(TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
+    JobHandle scheduleIJob(TaskCategory taskCategory = TaskCategory::Normal) {
 
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
@@ -424,14 +422,14 @@ public:
         auto work = [context](const size_t workerId) { executeIJob(context->self.get(),context->jobId,context->setter.get(),workerId);};
         Job job(std::move(work));
 
-        jm.scheduleJobHandle(taskCategory,jobCategory,jobId,std::move(job));
+        jm.scheduleJobHandle(taskCategory,jobId,std::move(job));
         
         auto handle = JobHandle::createHandle(jobId, std::move(setter));
 
         return handle;
     }
 
-    JobHandle scheduleIJob(JobHandle& dependentHandle,TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
+    JobHandle scheduleIJob(JobHandle& dependentHandle,TaskCategory taskCategory = TaskCategory::Normal) {
 
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
@@ -443,14 +441,14 @@ public:
         auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
         Job job(std::move(work));
 
-        jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job), dependentHandle);
+        jm.scheduleJobHandle(taskCategory, jobId, std::move(job), dependentHandle);
 
         auto handle = JobHandle::createHandle(jobId, std::move(setter));
 
         return handle;
     }
 
-    JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal, JobCategory jobCategory = JobCategory::RealTime) {
+    JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal) {
 
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
@@ -462,7 +460,7 @@ public:
         auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
         Job job(std::move(work));
 
-        jm.scheduleJobHandle(taskCategory, jobCategory, jobId, std::move(job), dependentHandles);
+        jm.scheduleJobHandle(taskCategory, jobId, std::move(job), dependentHandles);
 
         auto handle = JobHandle::createHandle(jobId, std::move(setter));
 
@@ -552,7 +550,7 @@ public:
         return std::make_shared<Derived>(std::forward<Args>(args)...);
     }
 
-    JobHandle schedule(const size_t total,const size_t batchSize,const size_t workerCount,JobCategory jobCategory = JobCategory::RealTime) {
+    JobHandle schedule(const size_t total,const size_t batchSize,const size_t workerCount) {
         ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
 
         std::shared_ptr<Derived> self = shared_this();
@@ -594,7 +592,7 @@ public:
             jobs.push_back(std::move(job));
         }
 
-        jm.scheduleParalellJobHandle(TaskCategory::Parallel,jobCategory,jobId,std::move(jobs));
+        jm.scheduleParalellJobHandle(TaskCategory::Parallel,jobId,std::move(jobs));
 
         auto handle = JobHandle::createHandle(jobId, std::move(setter));
 
