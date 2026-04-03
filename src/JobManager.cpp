@@ -16,8 +16,6 @@ void ECS::JobSystem::JobManager::Executor::runJob(const size_t workerId, JobId* 
     //jobEntry.inner->setReady(true);
 
     //processDependents(jobEntry.data);
-
-    jm.stats_.onJobFinish(jobEntry.jobCategory,1);
 }
 
 void ECS::JobSystem::JobManager::Executor::runSlot(const size_t workerId, JobId*begin, JobId*end)
@@ -39,9 +37,6 @@ void ECS::JobSystem::JobManager::Executor::runSlot(const size_t workerId, JobId*
 
         //processDependents(job.data);
     }
-
-    //カウント減算
-    jm.stats_.onJobFinish(jobCategory, size);
 }
 
 void ECS::JobSystem::JobManager::Executor::runChunk(const size_t workerId, ChunkMeta&& chunk)
@@ -57,9 +52,6 @@ void ECS::JobSystem::JobManager::Executor::runChunk(const size_t workerId, Chunk
         ASSERT(chunk.jobs[i].valid(), "this job is executed");
         chunk.jobs[i].invoke(workerId);
     }
-
-    //カウント減算
-    jm.stats_.onJobFinish(chunk.jobCategory, size);
 }
 
 void JobManager::initialize(size_t maxJobNum,size_t threadCount, std::unique_ptr<TimelineRecorder> rec)
@@ -138,7 +130,7 @@ void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCat
     jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
-    for(size_t i = 0;i<depedentHandles.size();i++){
+    for(int i = 0;i<depedentHandles.size();i++){
         addDependent(jobId, depedentHandles[i]);
     }
 
@@ -148,6 +140,25 @@ void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCat
     else {
         auto& func = jobStorage.getFunc(index);
         func = std::move(job);
+    }
+}
+
+void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, std::vector<Job>&& jobs)
+{
+    ASSERT(TaskCategory::Parallel==taskCategory,"parallelJob only");
+
+    stats_.onScheduled(jobCategory, 1);
+
+    auto index = getJobIndex(jobId);
+    auto& jobInfo = jobStorage.getJobInfo(index);
+
+    jobInfo.jobCategory = jobCategory;
+    jobInfo.taskCategory = taskCategory;
+
+    ASSERT(!jobs.empty(),"jobs is empty");
+
+    for(int i = 0;i<jobs.size();i++){
+        enqueue(taskCategory, jobCategory, std::move(jobs[i]));
     }
 }
 
@@ -222,6 +233,9 @@ void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCat
 
 void JobManager::completedJob(const size_t workerId,JobId jobId)
 {
+    auto jobCategory = getJobInfo(getJobIndex(jobId)).jobCategory;
+    stats_.onJobFinish(jobCategory,1);
+
     if(workerId == MAIN_THREAD_ID){//メインスレッドID
         completedJobQueue.enqueue(completedJobToken,jobId);
         return;

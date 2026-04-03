@@ -450,6 +450,8 @@ public:
 
     void scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles);
 
+    void scheduleParalellJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, std::vector<Job>&& jobs);
+
     //parallelJobópÇÃscheduleÇ‡ópà”ÇµÇƒÇ®Ç≠ÅB
     //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
     // 
