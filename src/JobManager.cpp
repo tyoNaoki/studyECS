@@ -23,7 +23,6 @@ void ECS::JobSystem::JobManager::Executor::runSlot(const size_t workerId, JobId*
     if (begin == end) return;
     JobManager& jm = JobManager::Instance();
 
-    auto jobCategory = jm.getJobEntry(*begin).jobCategory;
     size_t size = end - begin;
 
     //slot実行
@@ -67,13 +66,11 @@ void JobManager::initialize(size_t maxJobNum,size_t threadCount, std::unique_ptr
     workers.reserve(threadCount);
 
     for (size_t i = 0; i < threadCount; ++i) {
-        workers.push_back(std::make_unique<RealTimeOnlyWorker>(i,barrier,chunkQueue,completedJobQueue));
+        workers.push_back(std::make_unique<GeneralWorker>(i,barrier,chunkQueue,completedJobQueue));
     }
 
     jobStorage.initialize(maxJobNum);
 
-    //RealTime用のBatchChunk
-    currentBatchChunk.jobCategory = JobCategory::RealTime;
     currentBatchChunk.jobs.reserve(batchmaxchunksize);
 
     initFlag = true;
@@ -85,49 +82,46 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-void JobManager::scheduleJobHandle(TaskCategory taskCategory,JobCategory jobCategory,JobId jobId,Job&& job)
+void JobManager::scheduleJobHandle(TaskCategory taskCategory,JobId jobId,Job&& job)
 {
-    stats_.onScheduled(jobCategory, 1);
+    stats_.onScheduled(1);
 
     auto index = getJobIndex(jobId);
     auto& jobInfo = jobStorage.getJobInfo(index);
     
-    jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
-    enqueue(taskCategory, jobCategory, std::move(job));
+    enqueue(taskCategory,std::move(job));
 }
 
-void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, JobHandle& depedentHandle)
+void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, JobHandle& depedentHandle)
 {
-    stats_.onScheduled(jobCategory, 1);
+    stats_.onScheduled(1);
 
     auto index = getJobIndex(jobId);
     
     auto& jobInfo = jobStorage.getJobInfo(index);
 
-    jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
     addDependent(jobId, depedentHandle);
 
     if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
-        enqueue(taskCategory, jobCategory, std::move(job));
+        enqueue(taskCategory, std::move(job));
     }else{
         auto& func = jobStorage.getFunc(index);
         func = std::move(job);
     }
 }
 
-void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles)
+void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles)
 {
-    stats_.onScheduled(jobCategory, 1);
+    stats_.onScheduled(1);
 
     auto index = getJobIndex(jobId);
 
     auto& jobInfo = jobStorage.getJobInfo(index);
 
-    jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
     for(int i = 0;i<depedentHandles.size();i++){
@@ -135,7 +129,7 @@ void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCat
     }
 
     if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
-        enqueue(taskCategory, jobCategory, std::move(job));
+        enqueue(taskCategory,std::move(job));
     }
     else {
         auto& func = jobStorage.getFunc(index);
@@ -143,22 +137,21 @@ void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobCategory jobCat
     }
 }
 
-void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory, JobCategory jobCategory, JobId jobId, std::vector<Job>&& jobs)
+void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory,JobId jobId, std::vector<Job>&& jobs)
 {
     ASSERT(TaskCategory::Parallel==taskCategory,"parallelJob only");
 
-    stats_.onScheduled(jobCategory, 1);
+    stats_.onScheduled(1);
 
     auto index = getJobIndex(jobId);
     auto& jobInfo = jobStorage.getJobInfo(index);
 
-    jobInfo.jobCategory = jobCategory;
     jobInfo.taskCategory = taskCategory;
 
     ASSERT(!jobs.empty(),"jobs is empty");
 
     for(int i = 0;i<jobs.size();i++){
-        enqueue(taskCategory, jobCategory, std::move(jobs[i]));
+        enqueue(taskCategory,std::move(jobs[i]));
     }
 }
 
@@ -233,8 +226,7 @@ void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory, JobCategor
 
 void JobManager::completedJob(const size_t workerId,JobId jobId)
 {
-    auto jobCategory = getJobInfo(getJobIndex(jobId)).jobCategory;
-    stats_.onJobFinish(jobCategory,1);
+    stats_.onJobFinish(1);
 
     if(workerId == MAIN_THREAD_ID){//メインスレッドID
         completedJobQueue.enqueue(completedJobToken,jobId);
@@ -365,7 +357,7 @@ void JobManager::processDependents(const size_t workerID,const JobId parentId)
     //}
 }
 
-void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, Job&&job){
+void JobManager::enqueue(TaskCategory taskCategory,Job&&job){
     //chunkとしてまとめてから後で
     //バッチ処理
     if (taskCategory == TaskCategory::Batch) {
@@ -377,7 +369,6 @@ void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, Job&
         if(currentBatchChunk.jobs.size()>=batchmaxchunksize){
             chunkQueue.enqueue(chunkToken,std::move(currentBatchChunk));
 
-            currentBatchChunk.jobCategory = JobCategory::RealTime;
             currentBatchChunk.jobs.reserve(batchmaxchunksize);
         }
         
@@ -386,20 +377,18 @@ void JobManager::enqueue(TaskCategory taskCategory,JobCategory jobCategory, Job&
 
     ChunkMeta chunk = ChunkMeta();
     chunk.jobs.push_back(std::move(job));
-    chunk.jobCategory = jobCategory;
 
     chunkQueue.enqueue(chunkToken, std::move(chunk));
 }
 
-void JobManager::enqueue(JobCategory jobCategory, std::vector<Job>&& jobs){
-    ChunkMeta chunk;
-
-    chunk.jobs = std::move(jobs);
-    chunk.jobCategory = jobCategory;
-
-    size_t queueIndex = getNextQueueIndex();
-    workers[queueIndex]->enqueue(jobCategory, std::move(chunk));
-}
+//void JobManager::enqueue(std::vector<Job>&& jobs){
+//    ChunkMeta chunk;
+//
+//    chunk.jobs = std::move(jobs);
+//
+//    size_t queueIndex = getNextQueueIndex();
+//    workers[queueIndex]->enqueue(std::move(chunk));
+//}
 
 void JobManager::abort()
 {
@@ -451,10 +440,9 @@ void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& 
             if(workerID == MAIN_THREAD_ID){//メインスレッドのID
                 chunkQueue.enqueue(chunkToken, std::move(currentBatchChunk));
             }else{
-                workers[workerID]->enqueue(entry.jobCategory, std::move(currentBatchChunk));
+                workers[workerID]->enqueue(std::move(currentBatchChunk));
             }
 
-            currentBatchChunk.jobCategory = JobCategory::RealTime;
             currentBatchChunk.jobs.reserve(batchmaxchunksize);
         }
 
@@ -464,22 +452,20 @@ void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& 
     ChunkMeta chunk = ChunkMeta();
 
     chunk.jobs.push_back(std::move(job));
-    chunk.jobCategory = entry.jobCategory;
 
     if (workerID == MAIN_THREAD_ID) {
         chunkQueue.enqueue(chunkToken, std::move(chunk));
         return;
     }
 
-    workers[workerID]->enqueue(entry.jobCategory, std::move(chunk));
+    workers[workerID]->enqueue(std::move(chunk));
 }
 
-void JobStats::onJobFinish(const JobCategory cat, size_t count) noexcept
+void JobStats::onJobFinish(size_t count) noexcept
 {
     bool shouldNotify = false;
     {
-        auto& counter = scheduled[size_t(cat)];
-        if (counter.fetch_sub(count, std::memory_order_acq_rel) == count) {
+        if (scheduled.fetch_sub(count, std::memory_order_acq_rel) == count) {
             // 0 になった瞬間
             shouldNotify = true;
         }
@@ -489,13 +475,13 @@ void JobStats::onJobFinish(const JobCategory cat, size_t count) noexcept
     }
 }
 
-void JobStats::waitForAll(const JobCategory cat)
+void JobStats::waitForAll()
 {
     std::unique_lock<std::mutex> lk(mtx_);
     auto& jm = JobManager::Instance();
 
     while (true) {
-        if (scheduledJobCount(cat) == 0) {
+        if (scheduledJobCount() == 0) {
             break;
         }
 
@@ -513,6 +499,12 @@ void JobHandle::Complete() const
 {
     auto& jm = JobManager::Instance();
     auto& job = jm.getJobEntry(jobId);
+
+    if (!jm.isInitialized() || jm.isAbort()) {
+        ASSERT(false, "JobManager is not initialized or aborted");
+
+        return;
+    }
 
     ////実行完了するまでChunkをフラッシュしてChunk実行し続ける
     while (!inner->isReady()) {

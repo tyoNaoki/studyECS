@@ -75,7 +75,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_bigJobSystem",1);
+	RUN_TEST("test_jobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -201,7 +201,7 @@ struct TestDelayParticalJob
 		//return connecter.value;
 
 TEST_CASE_PRIORITY(test_jobSystem) {
-	int check = 1;
+	int check = 9'0000;
 
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
@@ -230,15 +230,15 @@ TEST_CASE_PRIORITY(test_jobSystem) {
 	for (int i = 0; i <check; ++i) {
 		auto job = TestJob::create(i);
 
-		auto handle = job->scheduleIJob(ECS::JobSystem::TaskCategory::Normal, ECS::JobSystem::JobCategory::RealTime);
+		auto handle = job->scheduleIJob(ECS::JobSystem::TaskCategory::Batch);
 	}
 
-	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime));
+	std::printf("RealTimeJob Start is %zu\n", jm.getStats().scheduledJobCount());
 
 	auto globalStart = ECS::JobSystem::now();
 	jm.start();
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll();
 
 	auto globalEnd = ECS::JobSystem::now();
 
@@ -272,7 +272,7 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		auto handle2 = jobB->scheduleIJob(handle);
 	}
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll();
 
 	/*複数依存(fan - in)
 		A, B → C*/
@@ -295,7 +295,7 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		busyWait(std::chrono::milliseconds(2));
 	}
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll();
 
 	/*複数子依存 (fan-out)
 		A,B → C, D。*/
@@ -322,7 +322,7 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		busyWait(std::chrono::milliseconds(2));
 	}
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll();
 
 	/*深い依存チェーン
 		A → B → C → D
@@ -344,7 +344,7 @@ TEST_CASE_PRIORITY(test_chainJobSystem){
 		busyWait(std::chrono::milliseconds(2));
 	}
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll();
 
 	//assertTrue(jm.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
 	//assertTrue(!jm.isAbort(), "JobSystem Work Test");
@@ -366,7 +366,7 @@ struct TestParallelJob
 	TestParallelJob(size_t size) : results(size,0){};
 
 	inline void Execute(size_t index) {
-		results[index] = index * index;
+		//results[index] = index * index;
 		std::printf("%zu is result is %d \n",index, results[index]);
 	}
 };
@@ -382,7 +382,7 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	size_t workerCount = 2;*/
 
-	size_t resultSize = 10'000'000;
+	size_t resultSize = 10'0000;
 
 	size_t batchSize = 1000;
 
@@ -392,13 +392,13 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 
 	auto handle = parallelJob->schedule(resultSize, batchSize, workerCount);
 
-	std::printf("ParallelJob %zu Start is %d\n", jm.getStats().scheduledJobCount(ECS::JobSystem::JobCategory::RealTime),resultSize/batchSize);
+	std::printf("ParallelJob %zu Start is %d\n", jm.getStats().scheduledJobCount(),resultSize/batchSize);
 
 	auto globalStart = ECS::JobSystem::now();
 
 	jm.start();
 
-	jm.getStats().waitForAll(ECS::JobSystem::JobCategory::RealTime);
+	jm.getStats().waitForAll();
 
 	// 5) テスト終了時刻を記録＆全体持続時間を計算
 	auto globalEnd = ECS::JobSystem::now();
