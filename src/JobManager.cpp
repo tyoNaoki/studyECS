@@ -5,39 +5,6 @@
 
 namespace ECS::JobSystem{
 
-void ECS::JobSystem::JobManager::Executor::runJob(const size_t workerId, JobId* Id) {
-    ASSERT(*Id, "task is invoked in JobQueue!!");
-
-    JobManager& jm = JobManager::Instance();
-    auto& jobEntry = jm.getJobEntry(*Id);        
-    //ASSERT(jobEntry.job.valid(), "this job is executed");
-
-    //jobEntry.job.invoke();
-    //jobEntry.inner->setReady(true);
-
-    //processDependents(jobEntry.data);
-}
-
-void ECS::JobSystem::JobManager::Executor::runSlot(const size_t workerId, JobId*begin, JobId*end)
-{
-    if (begin == end) return;
-    JobManager& jm = JobManager::Instance();
-
-    size_t size = end - begin;
-
-    //slot実行
-    for (auto it = begin; it != end; ++it) {
-        ASSERT(jm.containsJob(*it), "job not contains");
-        
-        auto& job = jm.getJob(*it);
-        ASSERT(job.valid(), "this job is executed");
-
-        job.invoke(workerId);
-
-        //processDependents(job.data);
-    }
-}
-
 void ECS::JobSystem::JobManager::Executor::runChunk(const size_t workerId, ChunkMeta&& chunk)
 {
     if(chunk.isEmpty()) return;
@@ -82,78 +49,94 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-void JobManager::scheduleJobHandle(TaskCategory taskCategory,JobId jobId,Job&& job)
-{
-    stats_.onScheduled(1);
+//void JobManager::scheduleJobHandle(TaskCategory taskCategory,JobId jobId,Job&& job);
+//
+//void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, JobHandle& depedentHandle)
+//{
+//    stats_.onScheduled(1);
+//
+//    auto index = getJobIndex(jobId);
+//    
+//    auto& jobInfo = jobStorage.getJobInfo(index);
+//
+//    jobInfo.taskCategory = taskCategory;
+//
+//    addDependent(jobId, depedentHandle);
+//
+//    if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
+//        enqueue(taskCategory, std::move(job));
+//    }else{
+//        auto& func = jobStorage.getFunc(index);
+//        func = std::move(job);
+//    }
+//}
+//
+//void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles)
+//{
+//    stats_.onScheduled(1);
+//
+//    auto index = getJobIndex(jobId);
+//
+//    auto& jobInfo = jobStorage.getJobInfo(index);
+//
+//    jobInfo.taskCategory = taskCategory;
+//
+//    for(int i = 0;i<depedentHandles.size();i++){
+//        addDependent(jobId, depedentHandles[i]);
+//    }
+//
+//    if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
+//        enqueue(taskCategory,std::move(job));
+//    }
+//    else {
+//        auto& func = jobStorage.getFunc(index);
+//        func = std::move(job);
+//    }
+//}
 
-    auto index = getJobIndex(jobId);
-    auto& jobInfo = jobStorage.getJobInfo(index);
-    
-    jobInfo.taskCategory = taskCategory;
-
-    enqueue(taskCategory,std::move(job));
-}
-
-void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, JobHandle& depedentHandle)
-{
-    stats_.onScheduled(1);
-
-    auto index = getJobIndex(jobId);
-    
-    auto& jobInfo = jobStorage.getJobInfo(index);
-
-    jobInfo.taskCategory = taskCategory;
-
-    addDependent(jobId, depedentHandle);
-
-    if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
-        enqueue(taskCategory, std::move(job));
-    }else{
-        auto& func = jobStorage.getFunc(index);
-        func = std::move(job);
-    }
-}
-
-void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles)
-{
-    stats_.onScheduled(1);
-
-    auto index = getJobIndex(jobId);
-
-    auto& jobInfo = jobStorage.getJobInfo(index);
-
-    jobInfo.taskCategory = taskCategory;
-
-    for(int i = 0;i<depedentHandles.size();i++){
-        addDependent(jobId, depedentHandles[i]);
-    }
-
-    if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
-        enqueue(taskCategory,std::move(job));
-    }
-    else {
-        auto& func = jobStorage.getFunc(index);
-        func = std::move(job);
-    }
-}
-
-void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory,JobId jobId, std::vector<Job>&& jobs)
-{
-    ASSERT(TaskCategory::Parallel==taskCategory,"parallelJob only");
-
-    stats_.onScheduled(1);
-
-    auto index = getJobIndex(jobId);
-    auto& jobInfo = jobStorage.getJobInfo(index);
-
-    jobInfo.taskCategory = taskCategory;
-
-    ASSERT(!jobs.empty(),"jobs is empty");
-
-    for(int i = 0;i<jobs.size();i++){
-        enqueue(taskCategory,std::move(jobs[i]));
-    }
-}
+//void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory,JobId jobId, std::vector<Job>&& jobs)
+//{
+//    ASSERT(TaskCategory::Parallel==taskCategory,"parallelJob only");
+//
+//    stats_.onScheduled(1);
+//
+//    auto index = getJobIndex(jobId);
+//    auto& jobInfo = jobStorage.getJobInfo(index);
+//
+//    jobInfo.taskCategory = taskCategory;
+//
+//    ASSERT(!jobs.empty(),"jobs is empty");
+//
+//    for(int i = 0;i<jobs.size();i++){
+//        enqueue(taskCategory,std::move(jobs[i]));
+//    }
+//}
+//
+//void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory, JobId jobId, std::vector<Job>&& jobs,JobHandle& depedentHandle)
+//{
+//    ASSERT(TaskCategory::Parallel == taskCategory, "parallelJob only");
+//
+//    stats_.onScheduled(1);
+//
+//    auto index = getJobIndex(jobId);
+//    auto& jobInfo = jobStorage.getJobInfo(index);
+//
+//    jobInfo.taskCategory = taskCategory;
+//
+//    ASSERT(!jobs.empty(), "jobs is empty");
+//
+//    addDependent(jobId, depedentHandle);
+//
+//    if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
+//        for (int i = 0; i < jobs.size(); i++) {
+//            enqueue(taskCategory, std::move(jobs[i]));
+//        }
+//    }
+//    else {
+//        auto& func = jobStorage.getFunc(index);
+//        //func = std::move(job);
+//    }
+//}
 
 //JobHandle JobManager::scheduleJobHandle(JobId jobId, JobHandle& handle)
 //{
@@ -254,61 +237,6 @@ void JobManager::completedJob(const size_t workerId,JobId jobId)
 //    }
 //}
 
-
-void JobManager::popGlobalBackGroundQueue() {
-    //if (globalBackGroudQueue.empty()) return; // グローバルキューが空の場合終了
-
-    //auto startTime = getStartFrameTime();
-    /*auto elapsed_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - startTime).count();*/
-
-    auto chunkClamp = std::make_pair(1,100);
-
-    //処理する全て
-    //size_t popBGNum = calculatePOPBGJobs(frameTimeMs, elapsed_ms,avg_ExecuteJobTime);
-
-    //if(popBGNum <= 0) return;// 処理時間が残っていない
-
-    //ASSERT(popBGNum <= globalBackGroudQueue.size(), "do not upper than globalQueue.Size()");
-
-    //size_t rawJobs = popBGNum / getThreadSize(); //一つのワーカーの処理するジョブ数
-
-    //backGroundCounter.fetch_add(popBGNum, std::memory_order_acq_rel);
-
-    //繰り上げ分入れるために最後を除いたワーカー分、まずはpopする
-    size_t workerNum = getThreadSize() - 1;
-
-    ASSERT(false,"BackGroundJOb not work");
-
-    //for (size_t t = 0; t < workerNum; ++t) {
-    //    //chunk
-    //    for(int j = 0; j < rawJobs;j++){
-    //        if (auto task = try_popGlobalBackGroundQueue()) {
-    //            // グローバルから取り出して各待機キューに割り当て
-    //            workers[t]->schedule(JobCategory::BackGround,std::move(*task));
-    //        }
-    //        else {
-    //            return; // グローバルキューが空になった場合終了
-    //        }
-    //    }
-    //}
-
-    // 最後の分は繰り上げ分入れる
-    //auto lastPopNum = popBGNum - (rawJobs * workerNum);
-    //
-    //// 最後だけ
-    //for(int i = 0;i < lastPopNum;i++){
-    //    // chunk分
-    //    if (auto task = try_popGlobalBackGroundQueue()) {
-    //        // グローバルから取り出す
-    //        workers[workerNum]->schedule(JobCategory::BackGround, std::move(*task));
-    //    }
-    //    else {
-    //        return; // グローバルキューが空になった場合終了
-    //    }
-    //}   
-}
-
 namespace {
     thread_local std::vector<JobId> reuseBuffer;
 }
@@ -355,6 +283,19 @@ void JobManager::processDependents(const size_t workerID,const JobId parentId)
     //        }
     //    }
     //}
+}
+
+bool JobManager::getFlushChunk(ChunkMeta& chunk)
+{
+    if (currentBatchChunk.isEmpty())return false;
+
+    std::lock_guard<std::mutex> lk(batchMutex);
+
+    if (currentBatchChunk.isEmpty())return false;
+
+    chunk = std::move(currentBatchChunk);
+    currentBatchChunk.jobs.reserve(batchmaxchunksize);
+    return true;
 }
 
 void JobManager::enqueue(TaskCategory taskCategory,Job&&job){
@@ -430,11 +371,14 @@ void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& 
 {
     auto& entry = getJobInfo(childIndex);
 
-    auto& job = getJob(childIndex);
+    auto& jobs = getFuncs(childIndex);
+
+    //バッチジョブ用
     if (entry.taskCategory == TaskCategory::Batch) {
         std::lock_guard<std::mutex> lk(batchMutex);
 
-        currentBatchChunk.jobs.push_back(std::move(job));
+        currentBatchChunk.jobs.push_back(std::move(jobs[0]));
+        jobs.pop_back();
 
         if (currentBatchChunk.jobs.size() >= batchmaxchunksize) {
             if(workerID == MAIN_THREAD_ID){//メインスレッドのID
@@ -447,11 +391,34 @@ void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& 
         }
 
         return;
+    }else if(entry.taskCategory == TaskCategory::Parallel){//パラレルジョブ用
+        std::vector<Job>swapJobs;
+        swapJobs.swap(jobs);
+
+        
+        if (workerID == MAIN_THREAD_ID) {
+            for (int i = 0; i < swapJobs.size(); i++) {
+                ChunkMeta chunk = ChunkMeta();
+                chunk.jobs.push_back(std::move(swapJobs[i]));
+                chunkQueue.enqueue(chunkToken, std::move(chunk));
+            }
+
+        }else {
+            for (int i = 0; i < swapJobs.size(); i++) {
+                ChunkMeta chunk = ChunkMeta();
+                chunk.jobs.push_back(std::move(swapJobs[i]));
+                workers[workerID]->enqueue(std::move(chunk));
+            }
+        }
+
+        return;
     }
 
+    //通常ジョブ用
     ChunkMeta chunk = ChunkMeta();
 
-    chunk.jobs.push_back(std::move(job));
+    chunk.jobs.push_back(std::move(jobs[0]));
+    jobs.pop_back();
 
     if (workerID == MAIN_THREAD_ID) {
         chunkQueue.enqueue(chunkToken, std::move(chunk));

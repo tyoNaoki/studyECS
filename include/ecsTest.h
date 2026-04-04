@@ -75,7 +75,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_jobSystem",1);
+	RUN_TEST("test_chainBigJobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -376,17 +376,17 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.initialize(100,7, std::move(recorder));
 
-	/*size_t resultSize = 100;
+	size_t resultSize = 100;
 
 	size_t batchSize = 10;
 
-	size_t workerCount = 2;*/
+	size_t workerCount = 2;
 
-	size_t resultSize = 10'0000;
+	/*size_t resultSize = 10'0000;
 
 	size_t batchSize = 1000;
 
-	size_t workerCount = 7;
+	size_t workerCount = 7;*/
 
 	auto parallelJob = TestParallelJob::create(resultSize);
 
@@ -406,55 +406,40 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
 }
-//
-//struct TestVoidParallelJob
-//	: public ECS::JobSystem::IParallelJob<TestVoidParallelJob> {
-//
-//	std::vector<int>resultData;
-//
-//	inline void Execute(size_t index) {
-//		resultData[index] = index * index;
-//	}
-//};
-//
-//TEST_CASE_ORDER(test_bigVoidJobSystem) {
-//	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
-//	auto& js = ECS::JobSystem::JobManager::Instance();
-//	js.Initialize(8, std::move(recorder));
-//
-//	size_t resultSize = 10'000'000;
-//
-//	size_t batchSize = 1000;
-//
-//	char name = 'A';
-//
-//	auto parallelJob = std::make_shared<TestVoidParallelJob>();
-//
-//	parallelJob->resultData.resize(resultSize);
-//
-//	auto globalStart = ECS::JobSystem::now();
-//
-//	auto handle = parallelJob->schedule(resultSize, batchSize, 8);
-//
-//	handle.second.wait();
-//
-//	// 5) テスト終了時刻を記録＆全体持続時間を計算
-//	auto globalEnd = ECS::JobSystem::now();
-//	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
-//	std::cout << "Total duration: "
-//		<< globalDuration << " ms\n";
-//
-//	assertTrue(js.checkRanAllJobInJobQueues(), "JobSystem Valid Test");
-//	assertTrue(!js.isAbort(), "JobSystem Work Test");
-//
-//	parallelJob->resultData[10] = 10;
-//
-//	// 6) ログを取り出してスレッド別タイムラインを出力
-//	auto& dataMap = js.getRecorder()->getDataMap();
-//	ECS::JobSystem::printTimelines(dataMap, globalStart, globalDuration);
-//
-//	//future = parallelJob->schedule(resultSize, batchSize, 8);
-//}
+
+TEST_CASE_ORDER(test_chainBigJobSystem) {
+	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
+	auto& jm = ECS::JobSystem::JobManager::Instance();
+	jm.initialize(100, 7, std::move(recorder));
+
+	size_t resultSize = 100;
+
+	size_t batchSize = 10;
+
+	size_t workerCount = 2;
+
+	auto testIJob = TestDelayParticalJob::create("A",4);
+
+	auto handle = testIJob->scheduleIJob();
+
+	auto parallelJob = TestParallelJob::create(resultSize);
+
+	parallelJob->schedule(resultSize, batchSize, workerCount,handle);
+
+	std::printf("ParallelJob %zu Start is %d\n", jm.getStats().scheduledJobCount(), resultSize / batchSize);
+
+	auto globalStart = ECS::JobSystem::now();
+
+	jm.start();
+
+	jm.getStats().waitForAll();
+
+	// 5) テスト終了時刻を記録＆全体持続時間を計算
+	auto globalEnd = ECS::JobSystem::now();
+	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
+	std::cout << "Total duration: "
+		<< globalDuration << " ms\n";
+}
 
 TEST_CASE(test_sort_empty) {
 	std::vector<int> v;
@@ -550,7 +535,6 @@ TEST_CASE(world_event_test)
 	};
 
 	ECS::EVENT::Signal bus;                     // EventType = int
-	
 	
 	// 読み取り専用のListener
 	bus.connect([](const Apple* a) {
