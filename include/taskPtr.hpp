@@ -414,73 +414,51 @@ public:
 
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
-        auto jobId = jm.emplaceJobID();
-        auto setter = std::make_shared<Inner>();
 
-        auto context = std::make_shared<Context>(self,jobId,setter);
-
-        auto work = [context](const size_t workerId) { executeIJob(context->self.get(),context->jobId,context->setter.get(),workerId);};
-        Job job(std::move(work));
-
-        jm.scheduleJobHandle(taskCategory,jobId,std::move(job));
-        
-        auto handle = JobHandle::createHandle(jobId, std::move(setter));
-
-        return handle;
+        return jm.scheduleJobHandle(self, taskCategory);
     }
 
     JobHandle scheduleIJob(JobHandle& dependentHandle,TaskCategory taskCategory = TaskCategory::Normal) {
 
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
-        auto jobId = jm.emplaceJobID();
-        auto setter = std::make_shared<Inner>();
 
-        auto context = std::make_shared<Context>(self, jobId, setter);
-
-        auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
-        Job job(std::move(work));
-
-        jm.scheduleJobHandle(taskCategory, jobId, std::move(job), dependentHandle);
-
-        auto handle = JobHandle::createHandle(jobId, std::move(setter));
-
-        return handle;
+        return jm.scheduleJobHandle(self, taskCategory, dependentHandle);
     }
 
-    JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal) {
-
+    JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal){
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
-        auto jobId = jm.emplaceJobID();
-        auto setter = std::make_shared<Inner>();
 
-        auto context = std::make_shared<Context>(self, jobId, setter);
+        return jm.scheduleJobHandle(self, taskCategory, dependentHandles);
+    }
 
-        auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
-        Job job(std::move(work));
+    //JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal) {
 
-        jm.scheduleJobHandle(taskCategory, jobId, std::move(job), dependentHandles);
+    //    std::shared_ptr<Derived> self = shared_this();
+    //    auto& jm = JobManager::Instance();
+    //    auto jobId = jm.emplaceJobID();
+    //    auto setter = std::make_shared<Inner>();
 
-        auto handle = JobHandle::createHandle(jobId, std::move(setter));
+    //    auto context = std::make_shared<Context>(self, jobId, setter);
 
-        return handle;
+    //    auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
+    //    Job job(std::move(work));
+
+    //    //jm.scheduleJobHandle(taskCategory, jobId, std::move(job), dependentHandles);
+
+    //    auto handle = JobHandle::createHandle(jobId, std::move(setter));
+
+    //    return handle;
+    //}
+
+    inline void execute() {
+        // Derived の Execute() を呼び出し
+        //static_cast<Derived*>(this)->Execute(index);
+        ASSERT(false, "Derived class not found Execute() member function!!");
     }
 
 private:
-    static void executeIJob(Derived* self,JobId jobId,Inner*setter,const size_t workerID) {
-        self->execute();
-        setter->setReady(true);
-
-        auto& jm = JobManager::Instance();
-
-        //依存解決
-        jm.processDependents(workerID,jobId);
-
-        //cleanUP用
-        jm.completedJob(workerID,jobId);
-    };
-
     void applyCommands() {
 
         if (commands.empty()) return;
@@ -498,11 +476,11 @@ private:
 
 protected:
 
-    inline void execute() {
-        // Derived の Execute() を呼び出し
-        //static_cast<Derived*>(this)->Execute(index);
-        ASSERT(false, "Derived class not found Execute() member function!!");
-    }
+    //inline void execute() {
+    //    // Derived の Execute() を呼び出し
+    //    //static_cast<Derived*>(this)->Execute(index);
+    //    ASSERT(false, "Derived class not found Execute() member function!!");
+    //}
 
     //friend class JobManager;
 
@@ -518,26 +496,7 @@ template<typename Derived>
 struct IParallelJob : public std::enable_shared_from_this<Derived>{
 
 private:
-    struct Context {
-        std::shared_ptr<Derived> self;
-        JobId jobId;
-        size_t total, batchSize, numBatches, chunkBatches;
-        std::atomic<size_t>* nextBatch;
-        std::shared_ptr<Inner> setter;
-
-        Context(std::atomic<size_t>* next)
-            : total(0), batchSize(0), numBatches(0), chunkBatches(0), nextBatch(next), setter(nullptr, 0) {}
-
-        Context(std::shared_ptr<Derived> s,
-            JobId Id,
-            size_t t, size_t b, size_t n,
-            size_t c,
-            std::atomic<size_t>* next,
-            std::shared_ptr<Inner> set)
-            : self(s), jobId(Id), total(t), batchSize(b), numBatches(n), chunkBatches(c), nextBatch(next), setter(std::move(set)) {}
-
-        ~Context() {};
-    };
+    
 
 protected:
     IParallelJob() = default;
@@ -555,89 +514,21 @@ public:
 
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
-        auto jobId = jm.emplaceJobID();
-        auto setter = std::make_shared<Inner>();
 
-        const size_t numBatches = (total + batchSize - 1) / batchSize;
+        return jm.scheduleParalellJobHandle<Derived>(self,total,batchSize,workerCount);
+    }
 
-        const size_t threadSize = jm.getThreadSize();
-        const size_t workerNum = std::min({threadSize,workerCount,numBatches});
+    JobHandle schedule(const size_t total, const size_t batchSize, const size_t workerCount,JobHandle& dependentHandle) {
+        ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
 
-        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
+        std::shared_ptr<Derived> self = shared_this();
+        auto& jm = JobManager::Instance();
 
-        taskCounter = numBatches;
-
-        nextBatch_.store(0, std::memory_order_relaxed);
-
-        auto ctx = std::make_shared<Context>(
-            shared_this()
-            , jobId
-            , total
-            , batchSize
-            , numBatches
-            , chunkBatches
-            , &nextBatch_
-            , setter
-            );
-
-        std::vector<Job>jobs;
-        jobs.reserve(workerNum);
-
-        // ワーカー数分だけ Task を作成して登録
-        for (size_t w = 0; w < workerNum; ++w) {
-            auto work = [ctx](const size_t workerId) { workerEntry(ctx->self.get(),ctx->jobId,ctx->setter.get(),ctx->batchSize,ctx->numBatches,ctx->total,ctx->chunkBatches,workerId); };
-
-            Job job(std::move(work));
-
-            jobs.push_back(std::move(job));
-        }
-
-        jm.scheduleParalellJobHandle(TaskCategory::Parallel,jobId,std::move(jobs));
-
-        auto handle = JobHandle::createHandle(jobId, std::move(setter));
-
-        return handle;
+        return jm.scheduleParalellJobHandle(self,total, batchSize, workerCount, dependentHandle);
     }
 
     void AddRequeset(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
-    }
-   
-private:
-    static void workerEntry(Derived* self,JobId jobId,Inner* setter,size_t batchSize,size_t numBatches,size_t total,size_t chunkBatches,size_t workerID) {
-
-        while (true) {
-            //回数見直し、バッチ回数に合わせる。応じて変える
-            //numBatchesも
-            const size_t idx = self->nextBatch_.fetch_add(chunkBatches, std::memory_order_relaxed);
-
-            if(idx >= numBatches) return;
-
-            const size_t taken = std::min(chunkBatches, numBatches - idx);
-
-            for (size_t b = 0; b < taken; ++b) {
-                const size_t start = (idx + b) * batchSize;
-
-                ASSERT(start < total,"IParallelJob workerEntry : start >= total");
-
-                const size_t len = std::min(batchSize, total - start);
-
-                self->ExecuteBatch(start,len,self);
-                
-                if (self->taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
-                    setter->setReady(true);
-                    
-                    auto& jm = JobManager::Instance();
-
-                    //依存解決
-                    jm.processDependents(workerID, jobId);
-
-                    //cleanUP用
-                    jm.completedJob(workerID, jobId);
-                    return;
-                }
-            }
-        }
     }
 
     inline void Execute(size_t index) {
@@ -645,6 +536,53 @@ private:
         //static_cast<Derived*>(this)->Execute(index);
         ASSERT(false, "Derived class not found Execute(size_t) member function!!");
     }
+
+    inline void ExecuteBatch(const size_t start, const size_t len, Derived* self) {
+        for (size_t i = start; i < start + len; ++i) {
+            self->Execute(i);
+        }
+    }
+
+    std::atomic<size_t> nextBatch_{ 0 };
+
+    std::atomic<size_t> taskCounter{ 0 };
+   
+private:
+    //static void workerEntry(Derived* self,JobId jobId,Inner* setter,size_t batchSize,size_t numBatches,size_t total,size_t chunkBatches,size_t workerID) {
+
+    //    while (true) {
+    //        //回数見直し、バッチ回数に合わせる。応じて変える
+    //        //numBatchesも
+    //        const size_t idx = self->nextBatch_.fetch_add(chunkBatches, std::memory_order_relaxed);
+
+    //        if(idx >= numBatches) return;
+
+    //        const size_t taken = std::min(chunkBatches, numBatches - idx);
+
+    //        for (size_t b = 0; b < taken; ++b) {
+    //            const size_t start = (idx + b) * batchSize;
+
+    //            ASSERT(start < total,"IParallelJob workerEntry : start >= total");
+
+    //            const size_t len = std::min(batchSize, total - start);
+
+    //            self->ExecuteBatch(start,len,self);
+    //            
+    //            if (self->taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
+    //                setter->setReady(true);
+    //                
+    //                auto& jm = JobManager::Instance();
+
+    //                //依存解決
+    //                jm.processDependents(workerID, jobId);
+
+    //                //cleanUP用
+    //                jm.completedJob(workerID, jobId);
+    //                return;
+    //            }
+    //        }
+    //    }
+    //}
 
     void applyCommands() {
 
@@ -657,12 +595,10 @@ private:
         commands.clear();
     }
 
+    
+
 protected:
-    inline void ExecuteBatch(const size_t start,const size_t len,Derived*self) {
-        for (size_t i = start; i < start + len; ++i) {
-            self->Execute(i);
-        }
-    }
+    
 
     std::shared_ptr<Derived> shared_this()
     {
@@ -670,10 +606,8 @@ protected:
     }
 
 private:
-    std::atomic<size_t> nextBatch_{ 0 };
-
-    std::atomic<size_t> taskCounter{0};
-
+    
+    
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
 };

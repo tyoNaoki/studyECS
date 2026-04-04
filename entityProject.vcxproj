@@ -66,6 +66,9 @@
     <ClInclude Include="include\ThreadSafeQueue.h" />
     <ClInclude Include="include\typeList.hpp" />
     <ClInclude Include="include\World.h" />
+    <ClInclude Include="Schedule.hpp" />
+    <ClInclude Include="SystemBase.hpp" />
+    <ClInclude Include="SystemGroup.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>

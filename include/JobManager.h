@@ -130,7 +130,7 @@ namespace ECS::JobSystem{
             return jobInfos[index];
         }
 
-        Job& getFunc(JobIndex index){
+        std::vector<Job>& getFuncs(JobIndex index){
             return jobs[index];
         }
 
@@ -227,7 +227,7 @@ namespace ECS::JobSystem{
     private:
         //関数ポインター,IJobBase*dataが入っている
         std::vector<JobEntry>jobInfos;
-        std::vector<Job>jobs;
+        std::vector<std::vector<Job>>jobs;
         std::vector<DependentNode>dependents;
 
         //JobIdのリスト
@@ -343,11 +343,35 @@ class JobManager
     JobManager& operator=(const JobManager&) = delete;
 
     struct Executor {
-        void runJob(const size_t workerId, JobId* Id);
-
-        void runSlot(const size_t workerId, JobId* begin, JobId* end);
-
         void runChunk(const size_t workerId, ChunkMeta&& chunk);
+    };
+
+    template<typename Derived>
+    struct JobContext {
+        std::shared_ptr<Derived>self;
+        JobId jobId;
+        std::shared_ptr<Inner>setter;
+
+        JobContext(std::shared_ptr<Derived> s,
+            JobId Id,
+            std::shared_ptr<Inner>set) :self(s), jobId(Id), setter(set) {}
+    };
+
+    template<typename Derived>
+    struct ParallelJobContext {
+        std::shared_ptr<Derived> self;
+        JobId jobId;
+        size_t total, batchSize, numBatches, chunkBatches;
+        std::shared_ptr<Inner> setter;
+
+        ParallelJobContext(std::shared_ptr<Derived> s,
+            JobId Id,
+            size_t t, size_t b, size_t n,
+            size_t c,
+            std::shared_ptr<Inner> set)
+            : self(s), jobId(Id), total(t), batchSize(b), numBatches(n), chunkBatches(c),setter(std::move(set)) {}
+
+        ~ParallelJobContext() {};
     };
 
 public:
@@ -392,56 +416,202 @@ public:
         localLogBuffer.clear();
     }
 
-    bool containsJob(const JobId jobId) const{
-        return jobStorage.containsJob(jobId);
+    template<typename Derived>
+    JobHandle scheduleJobHandle(std::shared_ptr<Derived>self,TaskCategory taskCategory) {
+        stats_.onScheduled(1);
+
+        JobId id = emplaceJobID();
+        auto setter = std::make_shared<Inner>();
+
+        using ContextT = JobContext<Derived>;
+        auto context = std::make_shared<ContextT>(self, id, setter);
+
+        auto index = getJobIndex(id);
+        auto& jobInfo = jobStorage.getJobInfo(index);
+        jobInfo.taskCategory = taskCategory;
+
+        Job task([context](const size_t workerId) {
+            executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId);
+            });
+
+        enqueue(taskCategory, std::move(task));
+
+        return JobHandle::createHandle(id,std::move(setter));
     }
 
-    //ここに
-    /*template<
-        typename T,
-        typename... Args
-    >
-    TaskFuture<T> createJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime,Args&&... args){
-        JobId id = jobStorage.emplaceJobData<T>(std::forward<Args>(args)...);
-        jobStorage.createJobFunction<T>(id);
+    template<typename Derived>
+    JobHandle scheduleJobHandle(std::shared_ptr<Derived>self,TaskCategory taskCategory,JobHandle& depedentHandle){
+        stats_.onScheduled(1);
 
-        auto&entry = jobStorage.getJobEntry(id);
-        entry.jobCategory = JC;
-        entry.taskCategory = TC;
+        JobId id = emplaceJobID();
+        auto setter = std::make_shared<Inner>();
 
-        return TaskFuture<T>(id);
-    }*/
+        using ContextT = JobContext<Derived>;
+        auto context = std::make_shared<ContextT>(self, id, setter);
 
-    //template<
-    //    typename T,
-    //    typename... Args
-    //>
-    //    T createIJob(TaskCategory TC = TaskCategory::Easy, JobCategory JC = JobCategory::RealTime, Args&&... args) {
-    // JobId id = jobStorage.emplaceJobID();
-    //    //jobStorage.createJobFunction<T>(id);
-    // auto& entry = jm.getJobEntry(id);
-    //entry.jobCategory = JC;
-    //entry.taskCategory = TC;
+        auto index = getJobIndex(id);
+        auto& jobInfo = jobStorage.getJobInfo(index);
+        jobInfo.taskCategory = taskCategory;
 
-    //    //T job(std::forward<Args>(args)...); 
+        Job task([context](const size_t workerId) {
+            executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId);
+            });
+    
+        addDependent(id, depedentHandle);
+    
+        if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
+            enqueue(taskCategory, std::move(task));
+        }else{
+            auto& func = jobStorage.getFuncs(index);
+            func.push_back(std::move(task));
+        }
 
-    //    return job;
-    //}
-
-    //job = JobHandle.dependents(handle1,handle2);
-
-    JobId emplaceJobID() {
-        return jobStorage.emplaceJobId();
+        return JobHandle::createHandle(id, std::move(setter));
     }
 
-    void scheduleJobHandle(TaskCategory taskCategory,JobId jobId, Job&&job);
+    template<typename Derived>
+    JobHandle scheduleJobHandle(std::shared_ptr<Derived>self, TaskCategory taskCategory, std::vector<JobHandle>& depedentHandles){
+        stats_.onScheduled(1);
 
-    void scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job,JobHandle& depedentHandle);
+        JobId id = emplaceJobID();
+        auto setter = std::make_shared<Inner>();
 
-    void scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles);
+        using ContextT = JobContext<Derived>;
+        auto context = std::make_shared<ContextT>(self, id, setter);
 
-    void scheduleParalellJobHandle(TaskCategory taskCategory,JobId jobId, std::vector<Job>&& jobs);
+        auto index = getJobIndex(id);
+        auto& jobInfo = jobStorage.getJobInfo(index);
+        jobInfo.taskCategory = taskCategory;
 
+        Job task([context](const size_t workerId) {
+            executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId);
+            });
+
+        for (int i = 0; i < depedentHandles.size(); i++) {
+            addDependent(id, depedentHandles[i]);
+        }
+
+        if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
+            enqueue(taskCategory, std::move(task));
+        }
+        else {
+            auto& func = jobStorage.getFuncs(index);
+            func.push_back(std::move(task));
+        }
+
+        return JobHandle::createHandle(id, std::move(setter));
+    }
+
+    template<typename Derived>
+    JobHandle scheduleParalellJobHandle(std::shared_ptr<Derived>self, const size_t total, const size_t batchSize, const size_t workerCount)
+    {
+        stats_.onScheduled(1);
+
+        auto jobId = emplaceJobID();
+        auto setter = std::make_shared<Inner>();
+
+        const size_t numBatches = (total + batchSize - 1) / batchSize;
+
+        const size_t threadSize = getThreadSize();
+        const size_t workerNum = std::min({ threadSize,workerCount,numBatches });
+
+        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
+
+        self->taskCounter = numBatches;
+
+        self->nextBatch_.store(0, std::memory_order_relaxed);
+
+        using ContextT = ParallelJobContext<Derived>;
+        auto ctx = std::make_shared<ContextT>(
+            self
+            , jobId
+            , total
+            , batchSize
+            , numBatches
+            , chunkBatches
+            , setter
+            );
+
+        auto index = getJobIndex(jobId);
+        auto& jobInfo = jobStorage.getJobInfo(index);
+        jobInfo.taskCategory = TaskCategory::Parallel;
+
+        // ワーカー数分だけ Task を作成して登録
+        for (size_t w = 0; w < workerNum; ++w) {
+            auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+
+            Job job(std::move(work));
+
+            enqueue(TaskCategory::Parallel, std::move(job));
+        }
+
+        return JobHandle::createHandle(jobId, std::move(setter));
+    }
+
+    //パラレルジョブの依存関係
+    template<typename Derived>
+    JobHandle scheduleParalellJobHandle(std::shared_ptr<Derived>self, const size_t total, const size_t batchSize, const size_t workerCount,JobHandle& depedentHandle)
+    {
+        stats_.onScheduled(1);
+
+        auto jobId = emplaceJobID();
+        auto setter = std::make_shared<Inner>();
+
+        const size_t numBatches = (total + batchSize - 1) / batchSize;
+
+        const size_t threadSize = getThreadSize();
+        const size_t workerNum = std::min({ threadSize,workerCount,numBatches });
+
+        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
+
+        self->taskCounter = numBatches;
+
+        self->nextBatch_.store(0, std::memory_order_relaxed);
+
+        using ContextT = ParallelJobContext<Derived>;
+        auto ctx = std::make_shared<ContextT>(
+            self
+            , jobId
+            , total
+            , batchSize
+            , numBatches
+            , chunkBatches
+            , setter
+            );
+
+        auto index = getJobIndex(jobId);
+        auto& jobInfo = jobStorage.getJobInfo(index);
+        jobInfo.taskCategory = TaskCategory::Parallel;
+
+        //依存解決用
+        addDependent(jobId, depedentHandle);
+
+        // ワーカー数分だけ Task を作成して登録
+        if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
+            
+            for (size_t w = 0; w < workerNum; ++w) {
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+
+                Job job(std::move(work));
+
+                enqueue(TaskCategory::Parallel, std::move(job));
+            }
+        }
+        else {
+            auto& funcs = jobStorage.getFuncs(index);
+
+            for (size_t w = 0; w < workerNum; ++w) {
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+
+                Job job(std::move(work));
+                
+                funcs.push_back(std::move(job));
+            }
+        }
+
+        return JobHandle::createHandle(jobId, std::move(setter));
+    }
+    
     //parallelJob用のscheduleも用意しておく。
     //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
     // 
@@ -474,17 +644,12 @@ public:
     //削除予定リストに追加、jobIdをNULLIDに変更
     void completedJob(const size_t workerId,JobId jobId);
 
-    //バックグラウンドで動かすJobを詰めたストレージからchunkをpopする
-    void popGlobalBackGroundQueue();
-
     //ワーカーの数取得
     const size_t getThreadSize() const{ return threadSize;}
 
     bool stealChunk(ChunkMeta&chunk){
         return chunkQueue.try_dequeue(chunk);
     }
-
-public:
 
     bool isInitialized(){
         return initFlag;
@@ -496,30 +661,24 @@ public:
     }
 
     JobEntry& getJobEntry(const JobId& jobId) {
-        ASSERT(jobStorage.containsJob(jobId),"jobId is NULL or Deleted ID");
+        ASSERT(containsJob(jobId),"jobId is NULL or Deleted ID");
 
         return jobStorage.getJobInfo(getJobIndex(jobId));
     }
 
-    bool containsJob(const JobId& jobId){
+    bool containsJob(const JobId& jobId) const{
         return jobStorage.containsJob(jobId);
     }
 
     void processDependents(const size_t workerID,const JobId parent);
 
-    bool getFlushChunk(ChunkMeta& chunk){
-        if (currentBatchChunk.isEmpty())return false;
-
-        std::lock_guard<std::mutex> lk(batchMutex);
-
-        if(currentBatchChunk.isEmpty())return false;
-
-        chunk = std::move(currentBatchChunk);
-        currentBatchChunk.jobs.reserve(batchmaxchunksize);
-        return true;
-    }
+    bool getFlushChunk(ChunkMeta& chunk);
 
 private:
+    JobId emplaceJobID() {
+        return jobStorage.emplaceJobId();
+    }
+
     //タスクストレージにジョブを追加する
     void enqueue(TaskCategory taskCategory,Job&&job);
 
@@ -538,8 +697,8 @@ private:
         return jobStorage.getJobInfo(index);
     }
 
-    Job& getJob(const JobIndex index){
-        return jobStorage.getFunc(index);
+    std::vector<Job>& getFuncs(const JobIndex index){
+        return jobStorage.getFuncs(index);
     }
 
     DependentNode& getDependents(const JobIndex index){
@@ -547,6 +706,56 @@ private:
     }
 
     void scheduleDependentHandle(const size_t workerID,const JobIndex& childIndex);
+
+    template<typename Derived>
+    static void executeIJob(Derived* self, JobId jobId, Inner* setter, const size_t workerID) {
+        self->execute();
+        setter->setReady(true);
+
+        auto& jm = JobManager::Instance();
+        //依存解決
+        jm.processDependents(workerID, jobId);
+
+        //cleanUP用
+        jm.completedJob(workerID, jobId);
+    };
+
+    template<typename Derived>
+    static void executeIParallelJob(Derived* self, JobId jobId, Inner* setter, size_t batchSize, size_t numBatches, size_t total, size_t chunkBatches, size_t workerID) {
+
+        while (true) {
+            //回数見直し、バッチ回数に合わせる。応じて変える
+            //numBatchesも
+            const size_t idx = self->nextBatch_.fetch_add(chunkBatches, std::memory_order_relaxed);
+
+            if (idx >= numBatches) return;
+
+            const size_t taken = std::min(chunkBatches, numBatches - idx);
+
+            for (size_t b = 0; b < taken; ++b) {
+                const size_t start = (idx + b) * batchSize;
+
+                ASSERT(start < total, "IParallelJob workerEntry : start >= total");
+
+                const size_t len = std::min(batchSize, total - start);
+
+                self->ExecuteBatch(start, len, self);
+
+                if (self->taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
+                    setter->setReady(true);
+
+                    auto& jm = JobManager::Instance();
+
+                    //依存解決
+                    jm.processDependents(workerID, jobId);
+
+                    //cleanUP用
+                    jm.completedJob(workerID, jobId);
+                    return;
+                }
+            }
+        }
+    }
 
 private:
     double avg_JobTimeMs = 1.0f;
@@ -587,6 +796,7 @@ private:
 
     moodycamel::ConcurrentQueue<ChunkMeta>chunkQueue;
     moodycamel::ConcurrentQueue<JobId>completedJobQueue;
+
     moodycamel::ProducerToken chunkToken;
     moodycamel::ProducerToken completedJobToken;
 
