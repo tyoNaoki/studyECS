@@ -394,7 +394,6 @@ void JobManager::scheduleDependentHandle(const size_t workerID, const JobIndex& 
     }else if(entry.taskCategory == TaskCategory::Parallel){//パラレルジョブ用
         std::vector<Job>swapJobs;
         swapJobs.swap(jobs);
-
         
         if (workerID == MAIN_THREAD_ID) {
             for (int i = 0; i < swapJobs.size(); i++) {

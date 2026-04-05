@@ -75,7 +75,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_chainBigJobSystem",1);
+	RUN_TEST("test_bigJobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -371,6 +371,19 @@ struct TestParallelJob
 	}
 };
 
+struct TestPrintParallelJob
+	: public ECS::JobSystem::IParallelJob<TestPrintParallelJob>
+{
+	std::vector<int>results;
+	std::string name;
+
+	TestPrintParallelJob(size_t size,std::string n) : results(size, 0),name(n) {};
+
+	inline void Execute(size_t index) {
+		std::printf("%s TestPrintParallelJob[%zu] Executed \n",name.c_str(),index);
+	}
+};
+
 TEST_CASE_ORDER(test_bigJobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
@@ -406,40 +419,70 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
 }
-
-TEST_CASE_ORDER(test_chainBigJobSystem) {
-	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
-	auto& jm = ECS::JobSystem::JobManager::Instance();
-	jm.initialize(100, 7, std::move(recorder));
-
-	size_t resultSize = 100;
-
-	size_t batchSize = 10;
-
-	size_t workerCount = 2;
-
-	auto testIJob = TestDelayParticalJob::create("A",4);
-
-	auto handle = testIJob->scheduleIJob();
-
-	auto parallelJob = TestParallelJob::create(resultSize);
-
-	parallelJob->schedule(resultSize, batchSize, workerCount,handle);
-
-	std::printf("ParallelJob %zu Start is %d\n", jm.getStats().scheduledJobCount(), resultSize / batchSize);
-
-	auto globalStart = ECS::JobSystem::now();
-
-	jm.start();
-
-	jm.getStats().waitForAll();
-
-	// 5) テスト終了時刻を記録＆全体持続時間を計算
-	auto globalEnd = ECS::JobSystem::now();
-	int  globalDuration = ECS::JobSystem::duration(globalStart, globalEnd);
-	std::cout << "Total duration: "
-		<< globalDuration << " ms\n";
-}
+//
+//TEST_CASE_ORDER(test_chainBigJobSystem) {
+//	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
+//	auto& jm = ECS::JobSystem::JobManager::Instance();
+//	jm.initialize(100, 7, std::move(recorder));
+//
+//	size_t resultSize = 5;
+//
+//	size_t batchSize = 1;
+//
+//	size_t workerCount = 2;
+//
+//	jm.start();
+//
+//	/*複数依存(fan - in)
+//		A → B*/
+//	{
+//		auto testIJob = TestDelayParticalJob::create("A", 2);
+//
+//		auto handle = testIJob->scheduleIJob();
+//
+//		auto parallelJob = TestPrintParallelJob::create(resultSize, "B");
+//
+//		parallelJob->schedule(resultSize, batchSize, workerCount, handle);
+//	}
+//
+//	jm.getStats().waitForAll();
+//
+//	/*複数依存(fan - in)
+//		A, B → C*/
+//	{
+//		auto testIJob = TestDelayParticalJob::create("A", 2);
+//
+//		auto handle = testIJob->scheduleIJob();
+//
+//		auto testIJob2 = TestDelayParticalJob::create("B", 4);
+//
+//		auto handle2 = testIJob2->scheduleIJob();
+//
+//		std::vector<ECS::JobSystem::JobHandle>handles;
+//		handles.push_back(handle);
+//		handles.push_back(handle2);
+//
+//		auto parallelJob = TestPrintParallelJob::create(resultSize,"C");
+//
+//		parallelJob->schedule(resultSize, batchSize, workerCount, handles);
+//	}
+//
+//	jm.getStats().waitForAll();
+//
+//	/*複数依存(fan - in)
+//		A → B*/
+//	{
+//		auto parallelJob = TestPrintParallelJob::create(resultSize, "A");
+//
+//		auto handle = parallelJob->schedule(resultSize, batchSize, workerCount);
+//
+//		auto parallelJob2 = TestPrintParallelJob::create(resultSize,"B");
+//
+//		parallelJob2->schedule(resultSize, batchSize, workerCount, handle);
+//	}
+//
+//	jm.getStats().waitForAll();
+//}
 
 TEST_CASE(test_sort_empty) {
 	std::vector<int> v;

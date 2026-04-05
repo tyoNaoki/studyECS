@@ -527,6 +527,15 @@ public:
         return jm.scheduleParalellJobHandle(self,total, batchSize, workerCount, dependentHandle);
     }
 
+    JobHandle schedule(const size_t total, const size_t batchSize, const size_t workerCount, std::vector<JobHandle>& dependentHandles) {
+        ASSERT(total > 0 && batchSize > 0, "parallelJob schedule total or batchSize is zero");
+
+        std::shared_ptr<Derived> self = shared_this();
+        auto& jm = JobManager::Instance();
+
+        return jm.scheduleParalellJobHandle(self, total, batchSize, workerCount, dependentHandles);
+    }
+
     void AddRequeset(std::function<void(Derived&)>&& fn) {
         commands.emplace_back(std::move(fn));
     }
@@ -542,48 +551,8 @@ public:
             self->Execute(i);
         }
     }
-
-    std::atomic<size_t> nextBatch_{ 0 };
-
-    std::atomic<size_t> taskCounter{ 0 };
    
 private:
-    //static void workerEntry(Derived* self,JobId jobId,Inner* setter,size_t batchSize,size_t numBatches,size_t total,size_t chunkBatches,size_t workerID) {
-
-    //    while (true) {
-    //        //回数見直し、バッチ回数に合わせる。応じて変える
-    //        //numBatchesも
-    //        const size_t idx = self->nextBatch_.fetch_add(chunkBatches, std::memory_order_relaxed);
-
-    //        if(idx >= numBatches) return;
-
-    //        const size_t taken = std::min(chunkBatches, numBatches - idx);
-
-    //        for (size_t b = 0; b < taken; ++b) {
-    //            const size_t start = (idx + b) * batchSize;
-
-    //            ASSERT(start < total,"IParallelJob workerEntry : start >= total");
-
-    //            const size_t len = std::min(batchSize, total - start);
-
-    //            self->ExecuteBatch(start,len,self);
-    //            
-    //            if (self->taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
-    //                setter->setReady(true);
-    //                
-    //                auto& jm = JobManager::Instance();
-
-    //                //依存解決
-    //                jm.processDependents(workerID, jobId);
-
-    //                //cleanUP用
-    //                jm.completedJob(workerID, jobId);
-    //                return;
-    //            }
-    //        }
-    //    }
-    //}
-
     void applyCommands() {
 
         if (commands.empty()) return;
@@ -598,8 +567,6 @@ private:
     
 
 protected:
-    
-
     std::shared_ptr<Derived> shared_this()
     {
         return std::enable_shared_from_this<Derived>::shared_from_this();
