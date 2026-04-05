@@ -362,6 +362,8 @@ class JobManager
         std::shared_ptr<Derived> self;
         JobId jobId;
         size_t total, batchSize, numBatches, chunkBatches;
+        std::atomic<size_t> nextBatch{ 0 };
+        std::atomic<size_t> taskCounter{ 0 };
         std::shared_ptr<Inner> setter;
 
         ParallelJobContext(std::shared_ptr<Derived> s,
@@ -369,7 +371,7 @@ class JobManager
             size_t t, size_t b, size_t n,
             size_t c,
             std::shared_ptr<Inner> set)
-            : self(s), jobId(Id), total(t), batchSize(b), numBatches(n), chunkBatches(c),setter(std::move(set)) {}
+            : self(s), jobId(Id), total(t), batchSize(b), numBatches(n), chunkBatches(c),nextBatch(0),taskCounter(numBatches),setter(std::move(set)) {}
 
         ~ParallelJobContext() {};
     };
@@ -517,9 +519,9 @@ public:
 
         size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
 
-        self->taskCounter = numBatches;
+        //self->taskCounter = numBatches;
 
-        self->nextBatch_.store(0, std::memory_order_relaxed);
+        //self->nextBatch_.store(0, std::memory_order_relaxed);
 
         using ContextT = ParallelJobContext<Derived>;
         auto ctx = std::make_shared<ContextT>(
@@ -538,7 +540,7 @@ public:
 
         // ワーカー数分だけ Task を作成して登録
         for (size_t w = 0; w < workerNum; ++w) {
-            auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+            auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches,ctx->nextBatch,ctx->taskCounter,workerId); };
 
             Job job(std::move(work));
 
@@ -564,9 +566,9 @@ public:
 
         size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
 
-        self->taskCounter = numBatches;
+        //self->taskCounter = numBatches;
 
-        self->nextBatch_.store(0, std::memory_order_relaxed);
+        //self->nextBatch_.store(0, std::memory_order_relaxed);
 
         using ContextT = ParallelJobContext<Derived>;
         auto ctx = std::make_shared<ContextT>(
@@ -611,35 +613,70 @@ public:
 
         return JobHandle::createHandle(jobId, std::move(setter));
     }
-    
-    //parallelJob用のscheduleも用意しておく。
-    //JobHandle scheduleParalellJobHandle(std::shared_ptr<Inner>inner,JobCategory jobCategory, JobId jobId, std::vector<Job>&&jobs)
-    // 
-    //JobHandle scheduleJobHandle(JobId jobId, JobHandle& handle);
 
-    //JobHandle scheduleJobHandle(JobId jobId,std::vector<JobHandle>&jobHandles);
+    template<typename Derived>
+    JobHandle scheduleParalellJobHandle(std::shared_ptr<Derived>self, const size_t total, const size_t batchSize, const size_t workerCount, std::vector<JobHandle>& depedentHandles)
+    {
+        stats_.onScheduled(1);
 
-    //JobHandle scheduleJobHandle(JobId jobId,Job&&job, std::vector<JobHandle>& jobHandles);
+        auto jobId = emplaceJobID();
+        auto setter = std::make_shared<Inner>();
 
-//    void scheduleDependentHandles(std::vector<JobId>&&jobs) {
-//
-//#ifdef DEBUG
-//        //jobsのスケジュール済みかどうかチェック
-//        ASSERT(!jobs.empty(),"jobs is empty");
-//
-//        for(size_t i = 0;i<jobs.size();i++){
-//            auto& entry = getJobEntry(jobs[i].jobId);
-//            ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-//        }
-//
-//#endif // DEBUG
-//
-//        auto&entry = getJobEntry(jobs[0]);
-//
-//        taskStorage.enqueue(entry.taskCategory, std::move(jobs));
-//
-//        popChunks();
-//    }
+        const size_t numBatches = (total + batchSize - 1) / batchSize;
+
+        const size_t threadSize = getThreadSize();
+        const size_t workerNum = std::min({ threadSize,workerCount,numBatches });
+
+        size_t chunkBatches = std::clamp(numBatches / (8 * workerNum), size_t(1), size_t(64));
+
+        //self->taskCounter = numBatches;
+
+        //self->nextBatch_.store(0, std::memory_order_relaxed);
+
+        using ContextT = ParallelJobContext<Derived>;
+        auto ctx = std::make_shared<ContextT>(
+            self
+            , jobId
+            , total
+            , batchSize
+            , numBatches
+            , chunkBatches
+            , setter
+            );
+
+        auto index = getJobIndex(jobId);
+        auto& jobInfo = jobStorage.getJobInfo(index);
+        jobInfo.taskCategory = TaskCategory::Parallel;
+
+        //依存解決用
+        for (int i = 0; i < depedentHandles.size(); i++) {
+            addDependent(jobId, depedentHandles[i]);
+        }
+
+        // ワーカー数分だけ Task を作成して登録
+        if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
+
+            for (size_t w = 0; w < workerNum; ++w) {
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+
+                Job job(std::move(work));
+
+                enqueue(TaskCategory::Parallel, std::move(job));
+            }
+        }
+        else {
+            auto& funcs = jobStorage.getFuncs(index);
+
+            for (size_t w = 0; w < workerNum; ++w) {
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+
+                Job job(std::move(work));
+                funcs.push_back(std::move(job));
+            }
+        }
+
+        return JobHandle::createHandle(jobId, std::move(setter));
+    }
 
     //削除予定リストに追加、jobIdをNULLIDに変更
     void completedJob(const size_t workerId,JobId jobId);
@@ -721,12 +758,12 @@ private:
     };
 
     template<typename Derived>
-    static void executeIParallelJob(Derived* self, JobId jobId, Inner* setter, size_t batchSize, size_t numBatches, size_t total, size_t chunkBatches, size_t workerID) {
+    static void executeIParallelJob(Derived* self, JobId jobId, Inner* setter, size_t batchSize, size_t numBatches, size_t total, size_t chunkBatches, std::atomic<size_t>& nextBatch, std::atomic<size_t>& taskCounter,size_t workerID) {
 
         while (true) {
             //回数見直し、バッチ回数に合わせる。応じて変える
             //numBatchesも
-            const size_t idx = self->nextBatch_.fetch_add(chunkBatches, std::memory_order_relaxed);
+            const size_t idx = nextBatch.fetch_add(chunkBatches, std::memory_order_relaxed);
 
             if (idx >= numBatches) return;
 
@@ -741,7 +778,7 @@ private:
 
                 self->ExecuteBatch(start, len, self);
 
-                if (self->taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
+                if (taskCounter.fetch_sub(taken, std::memory_order_relaxed) == taken) {
                     setter->setReady(true);
 
                     auto& jm = JobManager::Instance();
