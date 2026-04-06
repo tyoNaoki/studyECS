@@ -377,25 +377,11 @@ private:
 template<typename Derived>
 struct IJob : public std::enable_shared_from_this<Derived>{
 
-private:
-    struct  Context
-    {
-        std::shared_ptr<Derived> self;
-        std::shared_ptr<Inner>setter;
-        JobId jobId;
-
-        Context(std::shared_ptr<Derived> s,
-        JobId Id,
-        std::shared_ptr<Inner>set):self(s),jobId(Id),setter(set){}
-    };
-
 protected:
     IJob() = default;
 
 public:
-    virtual ~IJob(){
-        //std::printf("JobID %zu deleted \n",getJobIndex(jobId));
-    };
+    virtual ~IJob() = default;
 
     template<typename... Args>
     static std::shared_ptr<Derived> create(Args&&... args){
@@ -563,8 +549,6 @@ private:
 
         commands.clear();
     }
-
-    
 
 protected:
     std::shared_ptr<Derived> shared_this()

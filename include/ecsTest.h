@@ -369,6 +369,8 @@ struct TestParallelJob
 		//results[index] = index * index;
 		std::printf("%zu is result is %d \n",index, results[index]);
 	}
+
+	
 };
 
 struct TestPrintParallelJob
@@ -382,6 +384,10 @@ struct TestPrintParallelJob
 	inline void Execute(size_t index) {
 		std::printf("%s TestPrintParallelJob[%zu] Executed \n",name.c_str(),index);
 	}
+
+	~TestPrintParallelJob() {
+		std::printf("%s deleted \n", name.c_str());
+	}
 };
 
 TEST_CASE_ORDER(test_bigJobSystem) {
@@ -389,9 +395,15 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.initialize(100,7, std::move(recorder));
 
-	size_t resultSize = 100;
+	/*size_t resultSize = 100;
 
 	size_t batchSize = 10;
+
+	size_t workerCount = 2;*/
+
+	size_t resultSize = 5;
+
+	size_t batchSize = 1;
 
 	size_t workerCount = 2;
 
@@ -400,10 +412,11 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	size_t batchSize = 1000;
 
 	size_t workerCount = 7;*/
+	{
+		auto parallelJob = TestPrintParallelJob::create(resultSize, "A");
 
-	auto parallelJob = TestParallelJob::create(resultSize);
-
-	auto handle = parallelJob->schedule(resultSize, batchSize, workerCount);
+		auto handle = parallelJob->schedule(resultSize, batchSize, workerCount);
+	}
 
 	std::printf("ParallelJob %zu Start is %d\n", jm.getStats().scheduledJobCount(),resultSize/batchSize);
 
@@ -1325,6 +1338,8 @@ struct testBasicStorageComponent {
 
 //çÏê¨ÉeÉXÉg
 TEST_CASE(test_create_group) {
+	ECS::World world;
+
 	struct A {int x = 0;};
 	struct B {int x = 10;};
 	struct C {int x = 20;};
@@ -1343,16 +1358,16 @@ TEST_CASE(test_create_group) {
 		isPrintDespawnLog = true;
 	};
 
-	ECS::world().entityPoolConstructor().append(spawnLog);
-	ECS::world().entityPoolDestructor().append(destroyLog);
-	auto emptyEntity = ECS::world().spawnEmpty();
-	ECS::world().despawn(emptyEntity);
+	world.entityPoolConstructor().append(spawnLog);
+	world.entityPoolDestructor().append(destroyLog);
+	auto emptyEntity = world.spawnEmpty();
+	world.despawn(emptyEntity);
 
-	auto entity = ECS::world().spawn<A,C,D>();
-	auto entity1 = ECS::world().spawn<A, B,tagA>(A{ 1 });
-	auto entity2 = ECS::world().spawn<A,B,tagA>("Apple", A{ 2 });
-	auto entity3 = ECS::world().spawn<A,C>();
-	auto entity4 = ECS::world().spawn<A,B,C,D>("Banana", A{ 4 });
+	auto entity = world.spawn<A,C,D>();
+	auto entity1 = world.spawn<A, B,tagA>(A{ 1 });
+	auto entity2 = world.spawn<A,B,tagA>("Apple", A{ 2 });
+	auto entity3 = world.spawn<A,C>();
+	auto entity4 = world.spawn<A,B,C,D>("Banana", A{ 4 });
 
 	assertTrue(isPrintSpawnLog, "entityPoolConstructor() print Log on Spawn Entity");
 	assertTrue(isPrintDespawnLog, "entityPoolDestructor() print Log on Despawn Entity");
@@ -1366,10 +1381,10 @@ TEST_CASE(test_create_group) {
 
 	//componentPool.
 	
-	auto& aPool = ECS::world().getComponentPool<C>();
+	auto& aPool = world.getComponentPool<C>();
 	assertTrue(aPool.hasData(), "A struct is dataPool");
-	ECS::world().emplaceOrUpdateComponent<tagA>(entity);
-	auto& tagAPool = ECS::world().getComponentPool<tagA>();
+	world.emplaceOrUpdateComponent<tagA>(entity);
+	auto& tagAPool = world.getComponentPool<tagA>();
 	assertTrue(!tagAPool.hasData(),"tagA struct is emptyPool");
 
 	auto testOnUpdateFunction = ([](const EntityID& entity) {
@@ -1457,7 +1472,7 @@ TEST_CASE(test_create_group) {
 	//assertTrue(group2.contains(entity1), "group2.contains(entity1) is true");
 	//assertTrue(!group2.contains(entity3), "group2.contains(entity3) is false");
 
-	auto sortGroup = ECS::world().group<A>(ECS::get<B>);
+	auto sortGroup = world.group<A>(ECS::get<B>);
 	auto poolA = sortGroup.getComponentPool<A>();
 
 	auto& entity1afterRef = poolA->GetRef(entity1);
@@ -1624,13 +1639,15 @@ TEST_CASE_DISABLED(testGroupIdentifiers) {
 
 TEST_CASE(entityTest)
 {
+	ECS::World world;
+
 	Position position = Position(0.0f, 5.0f);
-	auto entity = ECS::world().spawn("", position, Velocity(5.0f, 0.1f));
-	auto entity2 = ECS::world().spawnEmpty();
+	auto entity = world.spawn("", position, Velocity(5.0f, 0.1f));
+	auto entity2 = world.spawnEmpty();
 
 	//auto entity2 = ECS::sWorld.spawnEmpty();
-	ECS::world().emplaceOrUpdateComponent<Velocity>(entity2, 1.0f, 0.5f);
-	ECS::world().emplaceOrUpdateComponent<Position>(entity2);
+	world.emplaceOrUpdateComponent<Velocity>(entity2, 1.0f, 0.5f);
+	world.emplaceOrUpdateComponent<Position>(entity2);
 	//auto comp = ECS::world().getComponent<Position>(entity);
 
 	//auto view2 = view.Exclude<Position>();
@@ -1642,7 +1659,7 @@ TEST_CASE(entityTest)
 		std::tie(a) = packed[i].components;
 	}
 	*/
-	auto view = ECS::world().View<Position, Velocity>();
+	auto view = world.View<Position, Velocity>();
 	//auto view2 = view->Exclude<Position>();
 
 	for (auto& x : *view)
@@ -1725,7 +1742,7 @@ TEST_CASE(test_hopscotchHashMap){
 
 bool executeTimeTest()
 {
-	auto& world = ECS::world();
+	auto world = ECS::World();
 	auto start_creation = std::chrono::high_resolution_clock::now();
 
 	for (size_t i = 0; i < 1000000; i++)
@@ -1740,7 +1757,7 @@ bool executeTimeTest()
 
 	auto start_modification = std::chrono::high_resolution_clock::now();
 
-	for (auto [entity, transform] : ECS::world().View<TransformComponent>()->each()) {
+	for (auto [entity, transform] : world.View<TransformComponent>()->each()) {
 		transform._x += 1.0f;
 		transform._y += 1.0f;
 		transform._z += 1.0f;

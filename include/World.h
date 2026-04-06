@@ -158,12 +158,9 @@ public:
     template <typename... Get>
     std::unique_ptr<SceneView<Get...>>  
     View() {
-        if constexpr (sizeof...(Get) > 0) {
-            return std::make_unique<SceneView<Get...>>();
-        }
-        else {
-            ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
-        }
+        ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
+
+        return std::make_unique<SceneView<Get...>>(*this);
     }
 
     template<typename... Owned, typename... Get, typename... Exclude, COMPONENT::StorageType S = COMPONENT::StorageType::EventType>
@@ -312,17 +309,7 @@ private:
         (m_groups[bit].erase(std::remove(m_groups[bit].begin(), m_groups[bit].end(), entities), m_groups[bit].end()), ...);
     }
     */
-    
-   
 };
-
-static World& world() {
-    static World sWorld;
-    static std::mutex mutex;
-
-    std::lock_guard<std::mutex> lock(mutex); // スレッドセーフ
-    return sWorld;
-}
 
 template<typename Pack>
 class SceneViewIterator {
@@ -354,6 +341,7 @@ private:
     std::vector<ISparseSet*> m_excludedPools;
     //std::vector<Pack<Get...>>packedEntities;
     std::vector<Pack>packedEntities;
+    World& world;
 
     // Sparse set with the smallest number of components,
     // basis for ForEach iterations.
@@ -431,7 +419,9 @@ public:
     //iterator begin() { return m_entities.begin(); }
     //iterator end() { return m_entities.end(); }
 
-    SceneView() : m_viewPools{ ECS::world().getComponentPoolPtr<Get>()... }
+    SceneView() = delete;
+
+    SceneView(ECS::World& world_) : world(world_),m_viewPools{ world_.getComponentPoolPtr<Get>()... }
     {
         //ASSERT(componentTypes::size != m_viewPools.size(), "Component type list and pool array size mismatch");
         // 最小のプールを探す
@@ -449,7 +439,7 @@ public:
     }
 
     SceneView(const SceneView& other, std::vector<ISparseSet*> excludedPools)
-        : m_smallest(other.m_smallest),m_viewPools(other.m_viewPools), m_excludedPools(excludedPools) {
+        : m_smallest(other.m_smallest),m_viewPools(other.m_viewPools), m_excludedPools(excludedPools),world(other.world){
 
         createPacked();
     }
@@ -457,7 +447,7 @@ public:
     //取得しいるコンポーネントEntityをさらに絞り込む
     template <typename... ExcludedComponents>
     std::unique_ptr<SceneView> Exclude() {
-        std::vector<ISparseSet*> excludedPools = { world().getComponentPoolPtr<ExcludedComponents>()... };
+        std::vector<ISparseSet*> excludedPools = { world.getComponentPoolPtr<ExcludedComponents>()... };
 
         return std::make_unique<SceneView>(*this, excludedPools);
     }
@@ -544,7 +534,6 @@ public:
             }
         }
     }
-
 };
 
 
