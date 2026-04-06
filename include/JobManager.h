@@ -171,12 +171,6 @@ namespace ECS::JobSystem{
             return jobIds[index] == id;
         }
 
-        //template<class T>
-        //static void Invoke(IJobBase* raw) {
-        //    //static_cast<T*>(raw)->Execute();
-        //    //raw->Execute();
-        //}
-
         JobId allocateJobId() {
             if(!freeIds.empty()){
                 // removeの時以外でfreeIdsが使用されないので、ロックレスで問題なし
@@ -201,29 +195,6 @@ namespace ECS::JobSystem{
             std::swap(dependents[job].dependents, dependents[job2].dependents);
         }
 
-        //void removeJob(JobId& id) {
-        //    JobId removeId = jobIds[getJobIndex(id)];
-        //    JobIndex removeIndex = getJobIndex(removeId);
-
-        //    std::lock_guard<std::mutex> lk(lock);
-
-        //    //すでに無効
-        //    ASSERT(jobData.empty() || removeIndex >= jobData.size(),"this id is NULL");
-
-        //    jobIds.back() = removeId;
-
-        //    std::swap(jobData[removeIndex], jobData.back());
-        //    std::swap(jobIds[removeIndex], jobIds.back());
-
-        //    jobData.pop_back();
-        //    jobIds.pop_back();
-        //    //dependentLocks.pop_back();
-
-        //    sparse[id] = NULL_JOB_INDEX;
-        //    freeIds.push_back(id);
-        //    id = NULL_JOB_ID;
-        //}
-
     private:
         //関数ポインター,IJobBase*dataが入っている
         std::vector<JobEntry>jobInfos;
@@ -244,30 +215,10 @@ namespace ECS::JobSystem{
     };
 
     /// <summary>
-    /*pending	キューに積まれ、まだ取得・実行が始まっていないジョブ数	pushBottom() 後、popOrSteal() 前
-      running	ワーカーが取得し、現在実行中のジョブ数   popOrSteal() 成功直後 ～ 完了まで
-      completed	実行が終わり、後片付けや結果格納も含めて完了したジョブ数	runChunk / runJob() 実行後*/
+    /*scheduled : スケジュールをされ、まだ取得・実行が始まっていないジョブ数*/
     /// </summary>
     class JobStats {
         friend class JobManager;
-
-        // pending の増減
-        //void onEnqueued(const JobCategory cat, size_t count) noexcept {
-        //    pending_[size_t(cat)].fetch_add(count, std::memory_order_release);
-        //}
-
-        //void onDequeued(const JobCategory cat, size_t count) noexcept {
-        //    size_t c = pending_[size_t(cat)].fetch_sub(count, std::memory_order_release);
-
-        //    if (c < count) {
-        //        std::printf("pending count %zu, sub count is %zu\n", c, count);
-        //    }
-        //}
-
-        //// running の増減
-        //void onStart(const JobCategory cat, size_t count) noexcept {
-        //    running_[size_t(cat)].fetch_add(count, std::memory_order_release);
-        //}
 
         void onJobFinish( size_t count) noexcept;
 
@@ -282,22 +233,6 @@ namespace ECS::JobSystem{
         size_t scheduledJobCount() const noexcept{
             return scheduled.load(std::memory_order_acquire);
         }
-
-       /* size_t pendingJobCount(const JobCategory cat) const noexcept{
-            return pending_[size_t(cat)].load(std::memory_order_acquire);
-        }
-
-        size_t runningJobCount(const JobCategory cat) const noexcept {
-            return running_[size_t(cat)].load(std::memory_order_acquire);
-        }
-
-        size_t completedJobCount(const JobCategory cat) const noexcept {
-            return completed_[size_t(cat)].load(std::memory_order_acquire);
-        }
-
-        size_t notCompletedJobCount(const JobCategory cat)const noexcept{
-            return pending_[size_t(cat)].load(std::memory_order_acquire) + running_[size_t(cat)].load(std::memory_order_acquire);
-        }*/
 
     private:
         // 各状態のカテゴリ別カウンタ
@@ -710,6 +645,11 @@ public:
     void processDependents(const size_t workerID,const JobId parent);
 
     bool getFlushChunk(ChunkMeta& chunk);
+
+    //必ず最後のフレーム時に呼ぶようにする
+    void cleanUpMainThreadOnLastFrame(){
+        jobStorage.cleanup(completedJobQueue);
+    }
 
 private:
     JobId emplaceJobID() {

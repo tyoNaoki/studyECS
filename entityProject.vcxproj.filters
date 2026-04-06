@@ -152,13 +152,13 @@
     <ClInclude Include="include\World.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SystemBase.hpp">
+    <ClInclude Include="include\Schedule.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="SystemGroup.hpp">
+    <ClInclude Include="include\SystemBase.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Schedule.hpp">
+    <ClInclude Include="include\SystemGroup.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

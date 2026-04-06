@@ -55,20 +55,20 @@
     <ClInclude Include="include\OrderedQueueList.hpp" />
     <ClInclude Include="include\Scene.h" />
     <ClInclude Include="include\SceneView.h" />
+    <ClInclude Include="include\Schedule.hpp" />
     <ClInclude Include="include\Signal.hpp" />
     <ClInclude Include="include\SparseHopscotch.h" />
     <ClInclude Include="include\SparseSet.h" />
     <ClInclude Include="include\Storage.hpp" />
     <ClInclude Include="include\StorageMixin.hpp" />
+    <ClInclude Include="include\SystemBase.hpp" />
+    <ClInclude Include="include\SystemGroup.hpp" />
     <ClInclude Include="include\taskPtr.hpp" />
     <ClInclude Include="include\TaskQueue.h" />
     <ClInclude Include="include\TestFramework.hpp" />
     <ClInclude Include="include\ThreadSafeQueue.h" />
     <ClInclude Include="include\typeList.hpp" />
     <ClInclude Include="include\World.h" />
-    <ClInclude Include="Schedule.hpp" />
-    <ClInclude Include="SystemBase.hpp" />
-    <ClInclude Include="SystemGroup.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
