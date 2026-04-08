@@ -18,6 +18,7 @@
 #include "Signal.hpp"
 #include "JobManager.h"
 #include "taskPtr.hpp"
+#include "Schedule.hpp"
 
 using namespace ECS::test;
 
@@ -75,7 +76,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_bigJobSystem",1);
+	RUN_TEST("test_SystemSchedule",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -83,6 +84,56 @@ int test()
 	//RUN_PRIORITY_TESTS(false);
 
 	return 0;
+}
+
+struct TestSystemA : ECS::System::SystemBase {
+	void update() override{
+		std::printf("%s is updated",name.c_str());
+	};
+
+	std::string name = "A";
+};
+
+struct TestSystemB : ECS::System::SystemBase {
+	void update() override {
+		std::printf("%s is updated", name.c_str());
+	};
+
+	std::string name = "B";
+};
+
+struct TestSystemC : ECS::System::SystemBase {
+	void update() override {
+		std::printf("%s is updated", name.c_str());
+	};
+	std::string name = "C";
+};
+
+struct TestSystemD : ECS::System::SystemBase {
+	void update() override {
+		std::printf("%s is updated", name.c_str());
+	};
+	std::string name = "D";
+};
+
+struct TestSystemE : ECS::System::SystemBase {
+	void update() override {
+		std::printf("%s is updated", name.c_str());
+	};
+	std::string name = "E";
+};
+
+struct TestSystemF : ECS::System::SystemBase {
+	void update() override {
+		std::printf("%s is updated", name.c_str());
+	};
+	std::string name = "F";
+};
+
+TEST_CASE_PRIORITY(test_SystemSchedule) {
+	auto world = ECS::World();
+
+	//ECS::Schedule::Schedule scheduler;
 }
 
 int generateRandomInt(int minNum, int maxNum) {
