@@ -3,21 +3,6 @@
 
 namespace ECS::Schedule {
 
-    struct SystemHandle {
-        uint32_t systemIndex;
-        uint32_t systemVersion;
-
-        SystemHandle(uint32_t index, uint32_t version) : systemIndex(index), systemVersion(version){}
-        SystemHandle():systemIndex(NULL_SYSTEM_INDEX),systemVersion(0){}
-    };
-
-    
-    inline bool isSystemValid(SystemHandle& handle) {
-        return handle.systemIndex != 0xFFFFFFFFu; // ç≈ëÂílÇ∆î‰ärÇ∑ÇÈ
-    }
-
-    inline uint32_t NULL_SYSTEM_INDEX = 0xFFFFFFFFu;
-
     enum class SystemGroupTag {
         initialization,
         simulation,
@@ -25,21 +10,23 @@ namespace ECS::Schedule {
     };
 
 struct Schedule {
+    Schedule() = default;
+
     ECS::System::SystemGroup initialization;
     ECS::System::SystemGroup simulation;
     ECS::System::SystemGroup presentation;
 
-    void add(SystemGroupTag tag,SystemHandle systemHandle){
+    void addSystem(SystemGroupTag tag, ECS::System::SystemBase* system){
         switch (tag)
         {
         case ECS::Schedule::SystemGroupTag::initialization:
-            //initialization.add()
+            initialization.add(system);
             break;
         case ECS::Schedule::SystemGroupTag::simulation:
-            //simulation.add()
+            simulation.add(system);
             break;
         case ECS::Schedule::SystemGroupTag::presentation:
-            //presentation.add()
+            presentation.add(system);
             break;
         default:
             break;
@@ -52,12 +39,10 @@ struct Schedule {
         presentation.sort();
     }
 
-    SystemHandle update(){
-        SystemHandle handle;
-
-        handle = initialization.update(handle);
-        handle = simulation.update(handle);
-        handle = presentation.update(handle);
+    void update(){
+        initialization.update();
+        simulation.update();
+        presentation.update();
     };
 };
 

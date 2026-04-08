@@ -21,6 +21,7 @@
 #include "ComponentPoolManager.hpp"
 #include "EventQueue.hpp"
 #include "Signal.hpp"
+#include "SystemGroup.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
@@ -43,6 +44,25 @@ public:
     World() = default;
 
     //static std::vector<std::string>m_componentNames;
+
+    template<typename T,typename... Args>
+    T* createSystem(Args&&... args){
+        static_assert(std::is_base_of_v<ECS::System::SystemBase, T>,
+            "T must inherit from SystemBase");
+
+        auto sys = std::make_unique<T>(std::forward<Args>(args)...);
+
+        sys->id = systemPool.size();
+        sys->world = *this;
+
+        systemPool.emplace_back(std::move(sys));
+
+        return sys.get();
+    }
+
+    ECS::System::SystemBase* getSystem(ECS::System::SystemID handle) {
+        return systemPool[handle].get();
+    }
     
     //Entity作製時に何か関数を紐づけたい場合
     auto& entityPoolConstructor() {
@@ -260,6 +280,8 @@ private:
     EntityPool entityPool;
 
     COMPONENT::ComponentPoolManager<MAX_COMPONENTS> componentPoolManager;
+
+    std::vector<std::unique_ptr<ECS::System::SystemBase>> systemPool;
 
     //コンポーネントデータが格納される
     //componentのクラスごとにindexが振られ、entityIDとcomponentクラスに対応した値が返される.

@@ -1,16 +1,24 @@
 #pragma once
 #include <vector>
-#include "Schedule.hpp"
 
 namespace ECS::System{
+
+    using SystemID = size_t;
+    class World;
 
     struct SystemBase {
         virtual ~SystemBase() = default;
         virtual bool shouldRun() const{return true;}
-        virtual ECS::Schedule::SystemHandle update(ECS::Schedule::SystemHandle input) = 0;
+        virtual void update() = 0;
 
-        std::vector<ECS::Schedule::SystemHandle> before;
-        std::vector<ECS::Schedule::SystemHandle> after;
+        std::vector<SystemBase*> before;
+        std::vector<SystemBase*> after;
+        SystemID systemId;
+        World& world;
+
+    protected:
+        SystemBase(World& w) : world(w) {}
+        
     };
 
 }
