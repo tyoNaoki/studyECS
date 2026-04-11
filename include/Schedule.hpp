@@ -1,49 +1,47 @@
 #pragma once
-#include "SystemGroup.hpp"
+#include "InitializationGroup.h"
+#include "SimulationGroup.hpp"
+#include "PresentationGroup.hpp"
+#include "CleanUpGroup.hpp"
 
 namespace ECS::Schedule {
 
     enum class SystemGroupTag {
         initialization,
         simulation,
-        presentation
+        presentation,
+        cleanup
     };
 
 struct Schedule {
-    Schedule() = default;
-
-    ECS::System::SystemGroup initialization;
-    ECS::System::SystemGroup simulation;
-    ECS::System::SystemGroup presentation;
-
-    void addSystem(SystemGroupTag tag, ECS::System::SystemBase* system){
-        switch (tag)
-        {
-        case ECS::Schedule::SystemGroupTag::initialization:
-            initialization.add(system);
-            break;
-        case ECS::Schedule::SystemGroupTag::simulation:
-            simulation.add(system);
-            break;
-        case ECS::Schedule::SystemGroupTag::presentation:
-            presentation.add(system);
-            break;
-        default:
-            break;
-        }
+    Schedule(ECS::World&w) : world(w){
+        initialization = world.createGroup<System::InitializationGroup>();
+        simulation = world.createGroup<System::SimulationGroup>();
+        presentation = world.createGroup<System::PresentationGroup>();
+        cleanup = world.createGroup<System::CleanUpGroup>();
     }
 
-    void sort(){
-        initialization.sort();
-        simulation.sort();
-        presentation.sort();
+    ECS::System::SystemID initialization;
+    ECS::System::SystemID simulation;
+    ECS::System::SystemID presentation;
+    ECS::System::SystemID cleanup;
+
+    ECS::World& world;
+
+    void sort(ECS::World& world){
+        world.getSystem(initialization).groupClass->sort(world);
+        world.getSystem(simulation).groupClass->sort(world);
+        world.getSystem(presentation).groupClass->sort(world);
+        world.getSystem(cleanup).groupClass->sort(world);
     }
 
-    void update(){
-        initialization.update();
-        simulation.update();
-        presentation.update();
+    void update(ECS::World& world){
+        world.getSystem(initialization).groupClass->onUpdate(world);
+        world.getSystem(simulation).groupClass->onUpdate(world);
+        world.getSystem(presentation).groupClass->onUpdate(world);
+        world.getSystem(cleanup).groupClass->onUpdate(world);
     };
+
 };
 
 }

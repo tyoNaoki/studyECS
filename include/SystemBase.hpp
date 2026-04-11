@@ -1,24 +1,23 @@
 #pragma once
 #include <vector>
+#include <memory>
 
-namespace ECS::System{
-
-    using SystemID = size_t;
+namespace ECS{
     class World;
+    
+    using SystemFn = void(*)(World&);
 
-    struct SystemBase {
-        virtual ~SystemBase() = default;
-        virtual bool shouldRun() const{return true;}
-        virtual void update() = 0;
+namespace System{
 
-        std::vector<SystemBase*> before;
-        std::vector<SystemBase*> after;
-        SystemID systemId;
-        World& world;
-
-    protected:
-        SystemBase(World& w) : world(w) {}
-        
+    class SystemGroup;
+    using SystemID = size_t;
+    
+    struct SystemEntry {
+        SystemFn fn;
+        std::unique_ptr<SystemGroup>groupClass;
+        std::vector<SystemID> before;
+        std::vector<SystemID> after;
+        SystemID id;
     };
-
+}
 }
