@@ -25,11 +25,13 @@
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\Scene.cpp" />
     <ClCompile Include="src\SceneView.cpp" />
+    <ClCompile Include="src\SystemGroup.cpp" />
     <ClCompile Include="src\TaskQueue.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\CallbackList.hpp" />
     <ClInclude Include="include\ChunkAllocator.h" />
+    <ClInclude Include="include\CleanUpGroup.hpp" />
     <ClInclude Include="include\Component.h" />
     <ClInclude Include="include\ComponentPoolManager.hpp" />
     <ClInclude Include="include\DebugHelpr.h" />
@@ -44,6 +46,7 @@
     <ClInclude Include="include\group.hpp" />
     <ClInclude Include="include\HashFunctions.hpp" />
     <ClInclude Include="include\HopscotchHashMap.h" />
+    <ClInclude Include="include\InitializationGroup.h" />
     <ClInclude Include="include\intrusive_ptr.h" />
     <ClInclude Include="include\JobBarrier.h" />
     <ClInclude Include="include\JobDebugger.h" />
@@ -53,16 +56,18 @@
     <ClInclude Include="include\JobRecorder.h" />
     <ClInclude Include="include\JobWorker.h" />
     <ClInclude Include="include\OrderedQueueList.hpp" />
+    <ClInclude Include="include\PresentationGroup.hpp" />
     <ClInclude Include="include\Scene.h" />
     <ClInclude Include="include\SceneView.h" />
     <ClInclude Include="include\Schedule.hpp" />
     <ClInclude Include="include\Signal.hpp" />
+    <ClInclude Include="include\SimulationGroup.hpp" />
     <ClInclude Include="include\SparseHopscotch.h" />
     <ClInclude Include="include\SparseSet.h" />
     <ClInclude Include="include\Storage.hpp" />
     <ClInclude Include="include\StorageMixin.hpp" />
     <ClInclude Include="include\SystemBase.hpp" />
-    <ClInclude Include="include\SystemGroup.hpp" />
+    <ClInclude Include="include\SystemGroup.h" />
     <ClInclude Include="include\taskPtr.hpp" />
     <ClInclude Include="include\TaskQueue.h" />
     <ClInclude Include="include\TestFramework.hpp" />

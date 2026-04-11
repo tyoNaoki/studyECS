@@ -86,54 +86,53 @@ int test()
 	return 0;
 }
 
-struct TestSystemA : ECS::System::SystemBase {
-	void update() override{
-		std::printf("%s is updated",name.c_str());
-	};
-
-	std::string name = "A";
-};
-
-struct TestSystemB : ECS::System::SystemBase {
-	void update() override {
-		std::printf("%s is updated", name.c_str());
-	};
-
-	std::string name = "B";
-};
-
-struct TestSystemC : ECS::System::SystemBase {
-	void update() override {
-		std::printf("%s is updated", name.c_str());
-	};
-	std::string name = "C";
-};
-
-struct TestSystemD : ECS::System::SystemBase {
-	void update() override {
-		std::printf("%s is updated", name.c_str());
-	};
-	std::string name = "D";
-};
-
-struct TestSystemE : ECS::System::SystemBase {
-	void update() override {
-		std::printf("%s is updated", name.c_str());
-	};
-	std::string name = "E";
-};
-
-struct TestSystemF : ECS::System::SystemBase {
-	void update() override {
-		std::printf("%s is updated", name.c_str());
-	};
-	std::string name = "F";
-};
+void TestSystemA(ECS::World&world){
+	std::printf("A is updated\n");
+}
+void TestSystemB(ECS::World& world) {
+	std::printf("B is updated\n");
+}
+void TestSystemC(ECS::World& world) {
+	std::printf("C is updated\n");
+}
+void TestSystemD(ECS::World& world) {
+	std::printf("D is updated\n");
+}
+void TestSystemE(ECS::World& world) {
+	std::printf("E is updated\n");
+}
+void TestSystemF(ECS::World& world) {
+	std::printf("F is updated\n");
+}
 
 TEST_CASE_PRIORITY(test_SystemSchedule) {
 	auto world = ECS::World();
 
-	//ECS::Schedule::Schedule scheduler;
+	auto scheduler = ECS::Schedule::Schedule(world);
+
+	auto A = world.addSystem<ECS::System::InitializationGroup>(TestSystemA);
+	auto B = world.addSystem<ECS::System::InitializationGroup>(TestSystemB);
+	auto C = world.addSystem<ECS::System::InitializationGroup>(TestSystemC);
+	auto D = world.addSystem<ECS::System::InitializationGroup>(TestSystemD);
+	auto E = world.addSystem<ECS::System::InitializationGroup>(TestSystemE);
+	auto F = world.addSystem<ECS::System::InitializationGroup>(TestSystemF);
+
+	// A Å® E
+	world.addBefore(A, E);   // A ÇÕ E ÇÊÇËëO
+
+	// E Å® F
+	world.addAfter(E, F);    // F ÇÕ E ÇÃå„
+
+	// F Å® D
+	world.addBefore(F, D);   // F ÇÕ D ÇÊÇËëO
+
+	// D Å® C
+	world.addAfter(D, C);    // C ÇÕ D ÇÃå„
+
+	// C Å® B
+	world.addAfter(C, B);   // C ÇÕ B ÇÊÇËëO
+
+	scheduler.update(world);
 }
 
 int generateRandomInt(int minNum, int maxNum) {

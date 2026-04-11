@@ -21,7 +21,8 @@
 #include "ComponentPoolManager.hpp"
 #include "EventQueue.hpp"
 #include "Signal.hpp"
-#include "SystemGroup.hpp"
+#include "SystemBase.hpp"
+#include "SystemGroup.h"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
@@ -45,23 +46,63 @@ public:
 
     //static std::vector<std::string>m_componentNames;
 
-    template<typename T,typename... Args>
-    T* createSystem(Args&&... args){
-        static_assert(std::is_base_of_v<ECS::System::SystemBase, T>,
-            "T must inherit from SystemBase");
+    ECS::System::SystemID createSystem(ECS::SystemFn fn) {
+        ECS::System::SystemID id = systemInfos.size();
+        systemInfos.emplace_back();
+        auto&systemInfo = getSystem(id);
+        systemInfo.fn = fn;
+        systemInfo.id = id;
 
-        auto sys = std::make_unique<T>(std::forward<Args>(args)...);
-
-        sys->id = systemPool.size();
-        sys->world = *this;
-
-        systemPool.emplace_back(std::move(sys));
-
-        return sys.get();
+        return id;
     }
 
-    ECS::System::SystemBase* getSystem(ECS::System::SystemID handle) {
-        return systemPool[handle].get();
+    template<typename T>
+    ECS::System::SystemID createGroup() {
+        ECS::System::SystemID id = systemInfos.size();
+        systemInfos.emplace_back();
+        auto& systemInfo = getSystem(id);
+        systemInfo.id = id;
+        systemInfo.groupClass = std::make_unique<T>();
+
+        tagToGroup[typeid(T)] = id;
+
+        return id;
+    }
+
+    ECS::System::SystemEntry& getSystem(ECS::System::SystemID id) {
+        return systemInfos[id];
+    }
+
+    template<typename Tag>
+    ECS::System::SystemID addSystem(SystemFn fn)
+    {
+        auto it = tagToGroup.find(typeid(Tag));
+        if (it == tagToGroup.end())
+            throw std::runtime_error("Group not found for tag");
+
+        ECS::System::SystemID gid = it->second;
+        auto id = createSystem(fn);
+
+        systemInfos[gid].groupClass->addSystem(id);
+        return id;
+    }
+
+    void addAfter(ECS::System::SystemID before, ECS::System::SystemID after){
+        auto& sBefore = getSystem(before);
+        auto& sAfter = getSystem(after);
+
+        // before → after
+        sBefore.after.push_back(after);
+        sAfter.before.push_back(before);
+    }
+
+    void addBefore(ECS::System::SystemID before, ECS::System::SystemID after) {
+        auto& sBefore = getSystem(before);
+        auto& sAfter = getSystem(after);
+
+        // before → after
+        sAfter.before.push_back(before);
+        sBefore.after.push_back(after);
     }
     
     //Entity作製時に何か関数を紐づけたい場合
@@ -281,7 +322,9 @@ private:
 
     COMPONENT::ComponentPoolManager<MAX_COMPONENTS> componentPoolManager;
 
-    std::vector<std::unique_ptr<ECS::System::SystemBase>> systemPool;
+    std::vector<ECS::System::SystemEntry> systemInfos;
+
+    std::unordered_map<std::type_index, ECS::System::SystemID> tagToGroup;
 
     //コンポーネントデータが格納される
     //componentのクラスごとにindexが振られ、entityIDとcomponentクラスに対応した値が返される.
