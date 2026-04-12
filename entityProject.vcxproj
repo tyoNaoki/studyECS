@@ -19,19 +19,24 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\CleanUpGroup.cpp" />
     <ClCompile Include="src\EntityPool.cpp" />
+    <ClCompile Include="src\InitializationGroup.cpp" />
     <ClCompile Include="src\JobManager.cpp" />
     <ClCompile Include="src\JobWorker.cpp" />
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\PresentationGroup.cpp" />
     <ClCompile Include="src\Scene.cpp" />
     <ClCompile Include="src\SceneView.cpp" />
+    <ClCompile Include="src\Schedule.cpp" />
+    <ClCompile Include="src\SimulationGroup.cpp" />
     <ClCompile Include="src\SystemGroup.cpp" />
     <ClCompile Include="src\TaskQueue.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\CallbackList.hpp" />
     <ClInclude Include="include\ChunkAllocator.h" />
-    <ClInclude Include="include\CleanUpGroup.hpp" />
+    <ClInclude Include="include\CleanUpGroup.h" />
     <ClInclude Include="include\Component.h" />
     <ClInclude Include="include\ComponentPoolManager.hpp" />
     <ClInclude Include="include\DebugHelpr.h" />
@@ -56,12 +61,13 @@
     <ClInclude Include="include\JobRecorder.h" />
     <ClInclude Include="include\JobWorker.h" />
     <ClInclude Include="include\OrderedQueueList.hpp" />
-    <ClInclude Include="include\PresentationGroup.hpp" />
+    <ClInclude Include="include\PreInitializationGroup.h" />
+    <ClInclude Include="include\PresentationGroup.h" />
     <ClInclude Include="include\Scene.h" />
     <ClInclude Include="include\SceneView.h" />
-    <ClInclude Include="include\Schedule.hpp" />
+    <ClInclude Include="include\Schedule.h" />
     <ClInclude Include="include\Signal.hpp" />
-    <ClInclude Include="include\SimulationGroup.hpp" />
+    <ClInclude Include="include\SimulationGroup.h" />
     <ClInclude Include="include\SparseHopscotch.h" />
     <ClInclude Include="include\SparseSet.h" />
     <ClInclude Include="include\Storage.hpp" />

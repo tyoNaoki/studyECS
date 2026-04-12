@@ -12,10 +12,14 @@ namespace System{
         std::vector<ECS::System::SystemID> systems;
 
     public:
+        virtual ~SystemGroup() = default;
+
         void addSystem(SystemID s){
             systems.push_back(s);
             dirty = true;
         };
+
+        virtual void onCreate(ECS::World& world){}
 
         virtual void onUpdate(ECS::World& world);
 
@@ -26,12 +30,10 @@ namespace System{
         };
 
     protected:
+        
         bool dirty = true;
         std::vector<ECS::System::SystemID> sorted;
-
-        
     private:
-
         void topologicalSort(ECS::World& world, SystemGroup& group);
     };
 

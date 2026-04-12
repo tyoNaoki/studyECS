@@ -18,7 +18,7 @@
 #include "Signal.hpp"
 #include "JobManager.h"
 #include "taskPtr.hpp"
-#include "Schedule.hpp"
+#include "Schedule.h"
 
 using namespace ECS::test;
 
@@ -105,17 +105,19 @@ void TestSystemF(ECS::World& world) {
 	std::printf("F is updated\n");
 }
 
+namespace ECS::System{
+	struct Initialization{};
+}
+
 TEST_CASE_PRIORITY(test_SystemSchedule) {
 	auto world = ECS::World();
 
-	auto scheduler = ECS::Schedule::Schedule(world);
-
-	auto A = world.addSystem<ECS::System::InitializationGroup>(TestSystemA);
-	auto B = world.addSystem<ECS::System::InitializationGroup>(TestSystemB);
-	auto C = world.addSystem<ECS::System::InitializationGroup>(TestSystemC);
-	auto D = world.addSystem<ECS::System::InitializationGroup>(TestSystemD);
-	auto E = world.addSystem<ECS::System::InitializationGroup>(TestSystemE);
-	auto F = world.addSystem<ECS::System::InitializationGroup>(TestSystemF);
+	auto A = world.addSystem<ECS::System::Initialization>(TestSystemA);
+	auto B = world.addSystem<ECS::System::Initialization>(TestSystemB);
+	auto C = world.addSystem<ECS::System::Initialization>(TestSystemC);
+	auto D = world.addSystem<ECS::System::Initialization>(TestSystemD);
+	auto E = world.addSystem<ECS::System::Initialization>(TestSystemE);
+	auto F = world.addSystem<ECS::System::Initialization>(TestSystemF);
 
 	// A Å® E
 	world.addBefore(A, E);   // A ÇÕ E ÇÊÇËëO
@@ -132,7 +134,8 @@ TEST_CASE_PRIORITY(test_SystemSchedule) {
 	// C Å® B
 	world.addAfter(C, B);   // C ÇÕ B ÇÊÇËëO
 
-	scheduler.update(world);
+	float dt = 0;
+	world.update(dt);
 }
 
 int generateRandomInt(int minNum, int maxNum) {
