@@ -5,7 +5,12 @@ void ECS::System::SystemGroup::onUpdate(ECS::World& world){
     if (dirty) sort(world);
 
     for (int i = 0; i < sorted.size(); i++) {
-        world.getSystem(sorted[i]).fn(world);
+        auto& entry = world.getSystem(sorted[i]);
+        if (entry.fn) {
+            entry.fn(world);
+        }else{
+            entry.groupClass->onUpdate(world);
+        }
     }
 }
 

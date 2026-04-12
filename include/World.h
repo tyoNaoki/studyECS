@@ -22,9 +22,16 @@
 #include "EventQueue.hpp"
 #include "Signal.hpp"
 #include "SystemBase.hpp"
-#include "SystemGroup.h"
+#include "Schedule.h"
 
 constexpr size_t MAX_COMPONENTS = 64;
+
+struct TimeData {
+    float deltaTime = 0.0f;
+    float fixedDeltaTime = 1.0f / 50.0f; // 50Hz
+    float accumulator = 0.0f;
+    float time = 0.0f;
+};
 
 namespace ECS {
     
@@ -42,7 +49,10 @@ private:
     //using storage_for_type = typename StorageFor<Type, S>::type;
 
 public:
-    World() = default;
+    World(){
+        scheduleGroupID = createSystemGroup<ECS::System::Schedule, ECS::System::Schedule>();
+        getSystem(scheduleGroupID).groupClass->onCreate(*this);
+    }
 
     //static std::vector<std::string>m_componentNames;
 
@@ -56,16 +66,40 @@ public:
         return id;
     }
 
-    template<typename T>
-    ECS::System::SystemID createGroup() {
+    //template<typename T>
+    //ECS::System::SystemID createGroup() {
+    //    ECS::System::SystemID id = systemInfos.size();
+    //    systemInfos.emplace_back();
+    //    auto& systemInfo = getSystem(id);
+    //    systemInfo.id = id;
+    //    systemInfo.groupClass = std::make_unique<T>();  // 引数なし
+
+    //    tagToGroup[typeid(T)] = id;
+    //    return id;
+    //}
+
+    //template<typename T>
+    //ECS::System::SystemID createGroup(World&world) {
+    //    ECS::System::SystemID id = systemInfos.size();
+    //    systemInfos.emplace_back();
+    //    auto& systemInfo = getSystem(id);
+    //    systemInfo.id = id;
+    //    systemInfo.groupClass = std::make_unique<T>(world);  // 引数なし
+
+    //    tagToGroup[typeid(T)] = id;
+    //    return id;
+    //}
+
+    template<typename T,typename Tag,typename... Args>
+    ECS::System::SystemID createSystemGroup(Args&&... args) {
         ECS::System::SystemID id = systemInfos.size();
         systemInfos.emplace_back();
         auto& systemInfo = getSystem(id);
         systemInfo.id = id;
-        systemInfo.groupClass = std::make_unique<T>();
 
-        tagToGroup[typeid(T)] = id;
+        systemInfo.groupClass = std::make_unique<T>(std::forward<Args>(args)...);
 
+        tagToGroup[typeid(Tag)] = id;
         return id;
     }
 
@@ -277,6 +311,13 @@ public:
         return componentPoolManager.getComponentPoolPtr<T>();
     };
 
+    void update(float dt){
+        time.deltaTime = dt;
+        time.time += dt;
+
+        getSystem(scheduleGroupID).groupClass->onUpdate(*this);
+    }
+
 private:
     //tuple から Expected に変換可能な最初の要素を返し、
     //見つからなければ Expected{} を返す再帰テンプレート
@@ -316,23 +357,22 @@ private:
     }
 
 private:
+    TimeData time;
     //EntityIDをSparseSetで再利用できるようにしている.
     //再利用時、ID(EntityIndex(32bit),Version(32bit)が組み合わされて発行される
     EntityPool entityPool;
 
+    //Entity毎のコンポーネントを管理する
     COMPONENT::ComponentPoolManager<MAX_COMPONENTS> componentPoolManager;
 
+    //システム
     std::vector<ECS::System::SystemEntry> systemInfos;
-
     std::unordered_map<std::type_index, ECS::System::SystemID> tagToGroup;
 
-    //コンポーネントデータが格納される
-    //componentのクラスごとにindexが振られ、entityIDとcomponentクラスに対応した値が返される.
-    //std::vector<std::unique_ptr<ISparseSet>> m_componentPools;
+    //中枢システムグループをまとめたもの
+    ECS::System::SystemID scheduleGroupID;
 
-    //各エンティティのComponentBitSet
-    //SparseSet<ComponentBitSet>m_entityMasks;
-
+    //ECSのコンポーネントを回すためのグループ
     ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>m_groups;
 
     //引数は絶対にBorrowで渡す

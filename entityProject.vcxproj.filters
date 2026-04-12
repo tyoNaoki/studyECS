@@ -39,6 +39,21 @@
     <ClCompile Include="src\SystemGroup.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\InitializationGroup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\SimulationGroup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\PresentationGroup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\CleanUpGroup.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\Schedule.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\CallbackList.hpp">
@@ -155,7 +170,7 @@
     <ClInclude Include="include\World.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\Schedule.hpp">
+    <ClInclude Include="include\Schedule.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\SystemBase.hpp">
@@ -167,13 +182,16 @@
     <ClInclude Include="include\InitializationGroup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\SimulationGroup.hpp">
+    <ClInclude Include="include\SimulationGroup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\PresentationGroup.hpp">
+    <ClInclude Include="include\PresentationGroup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\CleanUpGroup.hpp">
+    <ClInclude Include="include\CleanUpGroup.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\PreInitializationGroup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
