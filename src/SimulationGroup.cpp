@@ -3,31 +3,50 @@
 
 void ECS::System::SimulationGroup::onCreate(ECS::World& world)
 {
-    preUpdateID = world.createSystemGroup<SystemGroup, PreUpdate>();
-    addSystem(preUpdateID);
+    auto tempSystemID = world.createSystemGroup<SystemGroup, PreUpdate>();
+    preUpdateID = world.getSystem(tempSystemID).groupID;
 
-    fixedStepSimulationID = world.createSystemGroup<SystemGroup, FixedUpdate>();
-    addSystem(fixedStepSimulationID);
+    tempSystemID = world.createSystemGroup<SystemGroup, FixedUpdate>();
+    fixedStepSimulationID = world.getSystem(tempSystemID).groupID;
 
-    updateID = world.createSystemGroup<SystemGroup, Update>();
-    addSystem(updateID);
+    tempSystemID = world.createSystemGroup<SystemGroup, Update>();
+    updateID = world.getSystem(tempSystemID).groupID;
 
-    postUpdateID = world.createSystemGroup<SystemGroup, PostUpdate>();
-    addSystem(postUpdateID);
+    tempSystemID = world.createSystemGroup<SystemGroup, PostUpdate>();
+    postUpdateID = world.getSystem(tempSystemID).groupID;
 
-    lateSimulationID = world.createSystemGroup<SystemGroup, LateUpdate>();
-    addSystem(lateSimulationID);
+    tempSystemID = world.createSystemGroup<SystemGroup, LateUpdate>();
+    lateSimulationID = world.getSystem(tempSystemID).groupID;
 }
 
 void ECS::System::SimulationGroup::onUpdate(ECS::World& world)
 {
     if (dirty) sort(world);
 
-    world.getSystem(preUpdateID).groupClass->onUpdate(world);
+    world.getSystemGroup(preUpdateID)->onUpdate(world);
 
+    auto& time = world.getTime();
+    time.accumulator += time.deltaTime;
+    while (time.accumulator >= time.fixedDeltaTime)
     {
-
+        world.getSystemGroup(fixedStepSimulationID)->onUpdate(world);
+        time.accumulator -= time.fixedDeltaTime;
     }
-    //専用固有ロジック
-    //fixedUpdateだけ固有フレームで回すようにする。
+
+    world.getSystemGroup(updateID)->onUpdate(world);
+    world.getSystemGroup(postUpdateID)->onUpdate(world);
+    world.getSystemGroup(lateSimulationID)->onUpdate(world);
+
+    if(sorted.size()==0) return;
+
+    //ソート済みのものを実行
+    for (int i = 0; i < sorted.size(); i++) {
+        auto& entry = world.getSystem(sorted[i]);
+        if (entry.fn) {
+            entry.fn(world);
+        }
+        else {
+            world.getSystemGroup(entry.groupID)->onUpdate(world);
+        }
+    }
 }

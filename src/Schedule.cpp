@@ -16,10 +16,10 @@ void ECS::System::Schedule::onCreate(World& world)
     addSystem(presentation);
     addSystem(cleanup);
 
-    world.getSystem(initialization).groupClass->onCreate(world);
-    world.getSystem(simulation).groupClass->onCreate(world);
-    world.getSystem(presentation).groupClass->onCreate(world);
-    world.getSystem(cleanup).groupClass->onCreate(world);
+    world.getSystemGroup(world.getSystem(initialization).groupID)->onCreate(world);
+    world.getSystemGroup(world.getSystem(simulation).groupID)->onCreate(world);
+    world.getSystemGroup(world.getSystem(presentation).groupID)->onCreate(world);
+    world.getSystemGroup(world.getSystem(cleanup).groupID)->onCreate(world);
 
     world.addBefore(initialization, simulation);
     world.addBefore(simulation, presentation);
