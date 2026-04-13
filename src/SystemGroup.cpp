@@ -9,7 +9,7 @@ void ECS::System::SystemGroup::onUpdate(ECS::World& world){
         if (entry.fn) {
             entry.fn(world);
         }else{
-            entry.groupClass->onUpdate(world);
+            world.getSystemGroup(entry.groupID)->onUpdate(world);
         }
     }
 }

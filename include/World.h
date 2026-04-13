@@ -50,8 +50,9 @@ private:
 
 public:
     World(){
-        scheduleGroupID = createSystemGroup<ECS::System::Schedule, ECS::System::Schedule>();
-        getSystem(scheduleGroupID).groupClass->onCreate(*this);
+        auto systemID = createSystemGroup<ECS::System::Schedule, ECS::System::Schedule>();
+        scheduleGroupID = getSystem(systemID).groupID;
+        getSystemGroup(scheduleGroupID)->onCreate(*this);
     }
 
     //static std::vector<std::string>m_componentNames;
@@ -66,30 +67,6 @@ public:
         return id;
     }
 
-    //template<typename T>
-    //ECS::System::SystemID createGroup() {
-    //    ECS::System::SystemID id = systemInfos.size();
-    //    systemInfos.emplace_back();
-    //    auto& systemInfo = getSystem(id);
-    //    systemInfo.id = id;
-    //    systemInfo.groupClass = std::make_unique<T>();  // 引数なし
-
-    //    tagToGroup[typeid(T)] = id;
-    //    return id;
-    //}
-
-    //template<typename T>
-    //ECS::System::SystemID createGroup(World&world) {
-    //    ECS::System::SystemID id = systemInfos.size();
-    //    systemInfos.emplace_back();
-    //    auto& systemInfo = getSystem(id);
-    //    systemInfo.id = id;
-    //    systemInfo.groupClass = std::make_unique<T>(world);  // 引数なし
-
-    //    tagToGroup[typeid(T)] = id;
-    //    return id;
-    //}
-
     template<typename T,typename Tag,typename... Args>
     ECS::System::SystemID createSystemGroup(Args&&... args) {
         ECS::System::SystemID id = systemInfos.size();
@@ -97,9 +74,10 @@ public:
         auto& systemInfo = getSystem(id);
         systemInfo.id = id;
 
-        systemInfo.groupClass = std::make_unique<T>(std::forward<Args>(args)...);
+        systemInfo.groupID = systemGroups.size();
+        systemGroups.emplace_back(std::make_unique<T>(std::forward<Args>(args)...));
 
-        tagToGroup[typeid(Tag)] = id;
+        tagToGroup[typeid(Tag)] = systemInfo.groupID;
         return id;
     }
 
@@ -107,17 +85,22 @@ public:
         return systemInfos[id];
     }
 
+    ECS::System::SystemGroup* getSystemGroup(ECS::System::GroupID id) {
+        return systemGroups[id].get();
+    }
+
     template<typename Tag>
     ECS::System::SystemID addSystem(SystemFn fn)
     {
         auto it = tagToGroup.find(typeid(Tag));
-        if (it == tagToGroup.end())
-            throw std::runtime_error("Group not found for tag");
+        if (it == tagToGroup.end()){
+            ASSERT(false, "Group not found for tag");
+        }
 
         ECS::System::SystemID gid = it->second;
         auto id = createSystem(fn);
 
-        systemInfos[gid].groupClass->addSystem(id);
+        systemGroups[gid]->addSystem(id);
         return id;
     }
 
@@ -315,7 +298,11 @@ public:
         time.deltaTime = dt;
         time.time += dt;
 
-        getSystem(scheduleGroupID).groupClass->onUpdate(*this);
+        getSystemGroup(scheduleGroupID)->onUpdate(*this);
+    }
+
+    TimeData& getTime(){
+        return time;
     }
 
 private:
@@ -367,6 +354,7 @@ private:
 
     //システム
     std::vector<ECS::System::SystemEntry> systemInfos;
+    std::vector<std::unique_ptr<ECS::System::SystemGroup>>systemGroups;
     std::unordered_map<std::type_index, ECS::System::SystemID> tagToGroup;
 
     //中枢システムグループをまとめたもの
