@@ -1,7 +1,6 @@
 #pragma once
 #undef max
 
-#include <atomic>
 #include "Entity.h"
 #include <vector>
 #include <array>
@@ -66,7 +65,6 @@ private:
     DenseContainer m_dense; // 密テーブル
     size_t first_free = std::numeric_limits<size_t>::max();// 空きスロット (`SIZE_MAX` なら満杯)
     size_t n_free = 0;
-    std::atomic<uint32_t> n_reserved;
 };
 
 }//namespace ECS

@@ -27,12 +27,6 @@
     <ClCompile Include="src\main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\Scene.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="src\SceneView.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="src\TaskQueue.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -56,19 +50,10 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\CallbackList.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\ChunkAllocator.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Component.h">
+    <ClInclude Include="include\CallbackListMT.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\ComponentPoolManager.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\DebugHelpr.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\ecsTest.h">
@@ -83,13 +68,10 @@
     <ClInclude Include="include\EntityPool.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\Event.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="include\Event.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\EventDispatcher.hpp">
+    <ClInclude Include="include\EventDispatcherST.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\EventQueue.hpp">
@@ -129,12 +111,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\OrderedQueueList.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\Scene.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="include\SceneView.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="include\Signal.hpp">
@@ -193,6 +169,15 @@
     </ClInclude>
     <ClInclude Include="include\PreInitializationGroup.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\CallBackListST.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\EventDispatcherMT.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\IEvent.hpp">
+      <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

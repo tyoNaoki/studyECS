@@ -5,24 +5,24 @@
 #include <tuple>
 #include <functional>
 #include <algorithm>
-#include <mutex>
-#include<vector>
+#include <vector>
 #include <bitset>
 #include <type_traits>
 #include <utility>
+
+#include "TestFramework.hpp"
 #include "Entity.h"
 #include "EntityPool.h"
-#include "TestFramework.hpp"
 #include "SparseSet.h"
 #include "HopscotchHashMap.h"
 #include "Storage.hpp"
 #include "group.hpp"
 #include "typeList.hpp"
 #include "ComponentPoolManager.hpp"
-#include "EventQueue.hpp"
-#include "Signal.hpp"
 #include "SystemBase.hpp"
 #include "Schedule.h"
+#include "IEvent.hpp"
+#include "EventDispatcherST.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
@@ -49,7 +49,17 @@ private:
     //using storage_for_type = typename StorageFor<Type, S>::type;
 
 public:
-    World(){
+    World() = default;
+
+    // ムーブを許可
+    World(World&&) noexcept = default;
+    World& operator=(World&&) noexcept = default;
+
+    // コピーは禁止
+    World(const World&) = delete;
+    World& operator=(const World&) = delete;
+
+    void initialize(){
         auto systemID = createSystemGroup<ECS::System::Schedule, ECS::System::Schedule>();
         scheduleGroupID = getSystem(systemID).groupID;
         getSystemGroup(scheduleGroupID)->onCreate(*this);
@@ -229,9 +239,9 @@ public:
         return componentPoolManager.has<Components...>(entity);
     }
 
-    auto& worldEvent(){
+    /*auto& worldEvent(){
         return m_WorldEvents;
-    }
+    }*/
     
     template <typename... Get>
     std::unique_ptr<SceneView<Get...>>  
@@ -250,8 +260,10 @@ public:
 
         std::shared_ptr<handler_type> handler{};
 
+        return group_type{};
+
         //groupsを見て、存在するか確認。
-        if(auto ptr = m_groups.find(group_type::group_id())){
+        if(auto ptr = groups.find(group_type::group_id())){
             return group_type{};
         }
 
@@ -272,16 +284,16 @@ public:
                 // Exclude 用
                 std::forward_as_tuple(getComponentPool<Exclude>()...)
                 );
-            ASSERT(std::all_of(m_groups.cbegin(),m_groups.cend(),[](const auto data) { return !(data->owned(ecs_map::type_hash<Owned>()) || ...); }), "Conflicting groups");
+            ASSERT(std::all_of(groups.cbegin(), groups.cend(),[](const auto data) { return !(data->owned(ecs_map::type_hash<Owned>()) || ...); }), "Conflicting groups");
         }
        
-        m_groups.insert(group_type::group_id(),handler);
+        groups.insert(group_type::group_id(),handler);
         return {*handler};
     }
 
     size_t getGroupSize() noexcept
     {
-        return m_groups.size();
+        return groups.size();
     }
 
     template <typename T>
@@ -361,13 +373,16 @@ private:
     ECS::System::SystemID scheduleGroupID;
 
     //ECSのコンポーネントを回すためのグループ
-    ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>m_groups;
+    ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>groups;
+
+    ECS::EVENT::EventDispatcher_Single<EVENT::WorldEventType, void(const EVENT::EventPointer&),EVENT::EventPolicy> worldEvents;
 
     //引数は絶対にBorrowで渡す
     //appendListner<Borrow<const T>><(BorrowMut<T>>(HashID,std::funciton([参照する変数](template<>に合わせる)))
     //publish(クラスハッシュID + &item)
     //dispatch(),dispatchOne,dispatch(ハッシュID)
-    EVENT::Signal m_WorldEvents;
+    
+    //EVENT::Signal m_WorldEvents;
 
     /*
     template <typename... EntityIDs>

@@ -18,7 +18,6 @@
 #include "TaskQueue.h"
 #include "taskPtr.hpp"
 #include "HashFunctions.hpp"
-#include "CallbackList.hpp"
 #include "JobWorker.h"
 
 #include "moodycamel\concurrentqueue.h"
@@ -97,7 +96,6 @@ namespace ECS::JobSystem{
             jobStorageMaxSize = size;
             jobInfos.resize(size);
 
-            //ここが原因 nullptrで初期化できない
             jobs.resize(size);
             dependents.resize(size);
 
@@ -160,6 +158,7 @@ namespace ECS::JobSystem{
 
         //cleanUp時に呼ぶ //メインスレッド専用
         void cleanup(moodycamel::ConcurrentQueue<JobId>& completedJobs) {
+            
             JobId jobId;
             while (completedJobs.try_dequeue(jobId)) {
                 removeJob(jobId);
@@ -220,7 +219,7 @@ namespace ECS::JobSystem{
     class JobStats {
         friend class JobManager;
 
-        void onJobFinish( size_t count) noexcept;
+        void onJobFinish(size_t count) noexcept;
 
     public:
         void onScheduled(size_t count) noexcept {
@@ -338,19 +337,6 @@ public:
         if(initFlag){
             barrier.start();
         }
-    }
-
-    template<typename... Args>
-    void log(const Args&... args) {
-        (localLogBuffer << ... << args) << "\n";
-    }
-
-    // フレーム終端や waitForAll で呼ぶ
-    void flushLogs() {
-        std::lock_guard<std::mutex> lk(logMutex_);
-        std::cout << localLogBuffer.str();
-        localLogBuffer.str("");
-        localLogBuffer.clear();
     }
 
     template<typename Derived>
@@ -648,6 +634,8 @@ public:
 
     //必ず最後のフレーム時に呼ぶようにする
     void cleanUpMainThreadOnLastFrame(){
+        if(!initFlag||isAbort())return;
+
         jobStorage.cleanup(completedJobQueue);
     }
 
@@ -664,8 +652,6 @@ private:
     void abort();
 
     size_t getNextQueueIndex();
-
-    size_t calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime);
 
     //依存関係追加
     void addDependent(const JobId& child, JobHandle& parent);
@@ -735,16 +721,9 @@ private:
     }
 
 private:
-    double avg_JobTimeMs = 1.0f;
-    double avg_ExecuteJobTime = 0.1;
-
     JobStats stats_;
 
     size_t threadSize;
-    
-    //ログ出力
-    std::mutex logMutex_;
-    inline static thread_local std::ostringstream localLogBuffer;
 
     //std::vector<std::unique_ptr<JobQueue>> localQueues;
 

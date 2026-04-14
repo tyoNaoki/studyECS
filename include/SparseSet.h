@@ -2,7 +2,6 @@
 
 #undef max
 
-#include <atomic>
 #include "Entity.h"
 #include <vector>
 #include <array>
@@ -345,7 +344,6 @@ private:
     std::vector<Sparse> m_sparsePages; // 疎テーブル
     std::vector<T> m_dense; // 密テーブル
     std::vector<EntityID>m_denseToEntity;
-    std::atomic<uint32_t> n_reserved;
 };
 
 template<typename T>
@@ -823,7 +821,6 @@ public:
 private:
     std::vector<Sparse> m_sparsePages; // 疎テーブル
     std::vector<EntityID>m_denseToEntity;
-    std::atomic<uint32_t> n_reserved;
 };
 
 

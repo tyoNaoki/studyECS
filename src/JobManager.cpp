@@ -49,164 +49,6 @@ JobManager::~JobManager()
     if (!initFlag)return;
 }
 
-//void JobManager::scheduleJobHandle(TaskCategory taskCategory,JobId jobId,Job&& job);
-//
-//void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, JobHandle& depedentHandle)
-//{
-//    stats_.onScheduled(1);
-//
-//    auto index = getJobIndex(jobId);
-//    
-//    auto& jobInfo = jobStorage.getJobInfo(index);
-//
-//    jobInfo.taskCategory = taskCategory;
-//
-//    addDependent(jobId, depedentHandle);
-//
-//    if(jobInfo.inDegree.load(std::memory_order_relaxed) == 0){
-//        enqueue(taskCategory, std::move(job));
-//    }else{
-//        auto& func = jobStorage.getFunc(index);
-//        func = std::move(job);
-//    }
-//}
-//
-//void JobManager::scheduleJobHandle(TaskCategory taskCategory, JobId jobId, Job&& job, std::vector<JobHandle>& depedentHandles)
-//{
-//    stats_.onScheduled(1);
-//
-//    auto index = getJobIndex(jobId);
-//
-//    auto& jobInfo = jobStorage.getJobInfo(index);
-//
-//    jobInfo.taskCategory = taskCategory;
-//
-//    for(int i = 0;i<depedentHandles.size();i++){
-//        addDependent(jobId, depedentHandles[i]);
-//    }
-//
-//    if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
-//        enqueue(taskCategory,std::move(job));
-//    }
-//    else {
-//        auto& func = jobStorage.getFunc(index);
-//        func = std::move(job);
-//    }
-//}
-
-//void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory,JobId jobId, std::vector<Job>&& jobs)
-//{
-//    ASSERT(TaskCategory::Parallel==taskCategory,"parallelJob only");
-//
-//    stats_.onScheduled(1);
-//
-//    auto index = getJobIndex(jobId);
-//    auto& jobInfo = jobStorage.getJobInfo(index);
-//
-//    jobInfo.taskCategory = taskCategory;
-//
-//    ASSERT(!jobs.empty(),"jobs is empty");
-//
-//    for(int i = 0;i<jobs.size();i++){
-//        enqueue(taskCategory,std::move(jobs[i]));
-//    }
-//}
-//
-//void JobManager::scheduleParalellJobHandle(TaskCategory taskCategory, JobId jobId, std::vector<Job>&& jobs,JobHandle& depedentHandle)
-//{
-//    ASSERT(TaskCategory::Parallel == taskCategory, "parallelJob only");
-//
-//    stats_.onScheduled(1);
-//
-//    auto index = getJobIndex(jobId);
-//    auto& jobInfo = jobStorage.getJobInfo(index);
-//
-//    jobInfo.taskCategory = taskCategory;
-//
-//    ASSERT(!jobs.empty(), "jobs is empty");
-//
-//    addDependent(jobId, depedentHandle);
-//
-//    if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
-//        for (int i = 0; i < jobs.size(); i++) {
-//            enqueue(taskCategory, std::move(jobs[i]));
-//        }
-//    }
-//    else {
-//        auto& func = jobStorage.getFunc(index);
-//        //func = std::move(job);
-//    }
-//}
-
-//JobHandle JobManager::scheduleJobHandle(JobId jobId, JobHandle& handle)
-//{
-//    auto& entry = getJobEntry(jobId);
-//
-//    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-//
-//    //いずれ、自動でtaskCategoryを算出できるようにする
-//    stats_.onScheduled(entry.jobCategory, 1);
-//    entry.inner = std::make_shared<Inner>();
-//
-//    addDependent(jobId, handle);
-//
-//    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-//        enqueue(entry.taskCategory, entry.jobCategory, jobId);
-//    }else{
-//          //待機ジョブに登録
-//size_t waitJobIndex = jobStorage.emplaceWaitJob();
-//auto& entry = jobStorage.getWaitJob(waitJobIndex);
-//entry.jobCategory = jobCategory;
-//entry.taskCategory = taskCategory;
-//  
-//      }
-//
-//    return JobHandle::createHandle(jobId, entry.inner);
-//}
-
-//JobHandle JobManager::scheduleJobHandle(JobId jobId, std::vector<JobHandle>& jobHandles)
-//{
-//    auto& entry = getJobEntry(jobId);
-//
-//    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-//
-//    //いずれ、自動でtaskCategoryを算出できるようにする
-//    stats_.onScheduled(entry.jobCategory, 1);
-//    entry.inner = std::make_shared<Inner>();
-//
-//    for (auto& parent : jobHandles) {
-//        addDependent(jobId, parent.jobId);
-//    }
-//
-//    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-//        enqueue(entry.taskCategory, entry.jobCategory, jobId);
-//    }
-//
-//    return JobHandle::createHandle(jobId, entry.inner);
-//}
-//
-//JobHandle JobManager::scheduleJobHandle(JobId jobId, Job&& job, std::vector<JobHandle>& jobHandles)
-//{
-//    auto& entry = getJobEntry(jobId);
-//
-//    ASSERT(!entry.inner || entry.inner->ready, "this job is scheduled");
-//
-//    //いずれ、自動でtaskCategoryを算出できるようにする
-//    stats_.onScheduled(entry.jobCategory, 1);
-//    entry.inner = std::make_shared<Inner>();
-//    entry.job = std::move(job);
-//
-//    for (auto& parent : jobHandles) {
-//        addDependent(jobId, parent.jobId);
-//    }
-//
-//    if (entry.data->inDegree.load(std::memory_order_acquire) == 0) {
-//        enqueue(entry.taskCategory, entry.jobCategory, jobId);
-//    }
-//
-//    return JobHandle::createHandle(jobId, entry.inner);
-//}
-
 void JobManager::completedJob(const size_t workerId,JobId jobId)
 {
     stats_.onJobFinish(1);
@@ -218,24 +60,6 @@ void JobManager::completedJob(const size_t workerId,JobId jobId)
 
     workers[workerId]->completedJob(jobId);
 }
-
-//TaskPtr JobManager::pushJobWaitQueue(Job&& job, int degree, JobCategory cat)
-//{
-//    auto task = new Task(job, 0, cat);
-//    TaskPtr taskPtr{ std::move(task) };
-//
-//    switch (cat)
-//    {
-//    case JobCategory::RealTime:
-//        pushRealTimeJobWaitQueue(std::move(taskPtr));
-//        break;
-//    case JobCategory::BackGround:
-//        pushBackGroudGlobalQueue(std::move(taskPtr));
-//        break;
-//    default:
-//        break;
-//    }
-//}
 
 namespace {
     thread_local std::vector<JobId> reuseBuffer;
@@ -345,18 +169,6 @@ size_t JobManager::getNextQueueIndex()
     return nextQueue.fetch_add(1, std::memory_order_relaxed) % workers.size();
 }
 
-size_t JobManager::calculatePOPBGJobs(double target_ms, double elapsed_ms,double avgJobTime) {
-    ASSERT(avgJobTime > 0.0, "calculateBGJobs avgJobTime <= 0.0");
-
-    // 残り時間
-    double remaining_ms = target_ms - elapsed_ms;
-    if (remaining_ms <= safetyMarginMs||remaining_ms <= avgJobTime) return 0.0; // 十分な残り時間がない場合終了
-
-    /*return static_cast<size_t>(std::min(std::floor(remaining_ms / avgJobTime), static_cast<double>(globalBackGroudQueue.size())));*/
-
-    return 0;
-}
-
 void JobManager::addDependent(const JobId& child, JobHandle& parent)
 {
     ASSERT(child != parent.getJobId(), "addDependent() do not use childJob and childJob");
@@ -453,12 +265,6 @@ void JobStats::waitForAll()
 
         cv_.wait(lk);
     }
-}
-
-bool JobHandle::isComplete() const
-{
-    ////実行可否
-    return inner->isReady();
 }
 
 void JobHandle::Complete() const

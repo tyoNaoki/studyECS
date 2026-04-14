@@ -1,9 +1,5 @@
 #pragma once
-#include "TestFramework.hpp"
-#include "Scene.h"
-#include "Component.h"
-#include "World.h"
-#include "SceneView.h"
+
 #include <tuple>
 #include <iostream>
 #include <chrono>
@@ -11,14 +7,20 @@
 #include <memory>
 #include <string>
 #include <cassert>
+#include <random>
+
+#include "World.h"
+#include "TestFramework.hpp"
+
+//HASH MAP TEST
 #include "HopscotchHashMap.h"
 #include "SparseHopscotch.h"
-#include <random>
+
+//EVENT TEST
 #include "EventQueue.hpp"
 #include "Signal.hpp"
+
 #include "JobManager.h"
-#include "taskPtr.hpp"
-#include "Schedule.h"
 
 using namespace ECS::test;
 
@@ -86,9 +88,6 @@ int test()
 	return 0;
 }
 
-void TestSystemA(ECS::World&world){
-	std::printf("A is updated\n");
-}
 void TestSystemB(ECS::World& world) {
 	std::printf("B is updated\n");
 }
@@ -106,33 +105,39 @@ void TestSystemF(ECS::World& world) {
 }
 
 namespace ECS::System{
+	struct PreInitialization{};
 	struct Initialization{};
 }
 
 TEST_CASE_PRIORITY(test_SystemSchedule) {
-	auto world = ECS::World();
+	ECS::World world;
 
-	auto A = world.addSystem<ECS::System::Initialization>(TestSystemA);
-	auto B = world.addSystem<ECS::System::Initialization>(TestSystemB);
-	auto C = world.addSystem<ECS::System::Initialization>(TestSystemC);
+	world = ECS::World();
+
+	world.initialize();
+
+	auto A = world.addSystem<ECS::System::PreInitialization>([](ECS::World& w) {
+		std::printf("A is updated\n");
+		});
+	auto C = world.addSystem<ECS::System::PreInitialization>(TestSystemC);
+	auto B = world.addSystem<ECS::System::PreInitialization>(TestSystemB);
+
+	auto F = world.addSystem<ECS::System::Initialization>(TestSystemF);
 	auto D = world.addSystem<ECS::System::Initialization>(TestSystemD);
 	auto E = world.addSystem<ECS::System::Initialization>(TestSystemE);
-	auto F = world.addSystem<ECS::System::Initialization>(TestSystemF);
+	
 
-	// A → E
-	world.addBefore(A, E);   // A は E より前
+	// A → B
+	world.addBefore(A, B); 
+
+	// B → C
+	world.addAfter(B, C);    // F は E の後
+
+	// D → E
+	world.addBefore(D, E);   // F は D より前
 
 	// E → F
-	world.addAfter(E, F);    // F は E の後
-
-	// F → D
-	world.addBefore(F, D);   // F は D より前
-
-	// D → C
-	world.addAfter(D, C);    // C は D の後
-
-	// C → B
-	world.addAfter(C, B);   // C は B より前
+	world.addAfter(E, F);    // C は D の後
 
 	float dt = 0;
 	world.update(dt);
@@ -443,6 +448,7 @@ struct TestPrintParallelJob
 	}
 };
 
+//パラレルジョブテスト
 TEST_CASE_ORDER(test_bigJobSystem) {
 	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
 	auto& jm = ECS::JobSystem::JobManager::Instance();
@@ -485,70 +491,71 @@ TEST_CASE_ORDER(test_bigJobSystem) {
 	std::cout << "Total duration: "
 		<< globalDuration << " ms\n";
 }
-//
-//TEST_CASE_ORDER(test_chainBigJobSystem) {
-//	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
-//	auto& jm = ECS::JobSystem::JobManager::Instance();
-//	jm.initialize(100, 7, std::move(recorder));
-//
-//	size_t resultSize = 5;
-//
-//	size_t batchSize = 1;
-//
-//	size_t workerCount = 2;
-//
-//	jm.start();
-//
-//	/*複数依存(fan - in)
-//		A → B*/
-//	{
-//		auto testIJob = TestDelayParticalJob::create("A", 2);
-//
-//		auto handle = testIJob->scheduleIJob();
-//
-//		auto parallelJob = TestPrintParallelJob::create(resultSize, "B");
-//
-//		parallelJob->schedule(resultSize, batchSize, workerCount, handle);
-//	}
-//
-//	jm.getStats().waitForAll();
-//
-//	/*複数依存(fan - in)
-//		A, B → C*/
-//	{
-//		auto testIJob = TestDelayParticalJob::create("A", 2);
-//
-//		auto handle = testIJob->scheduleIJob();
-//
-//		auto testIJob2 = TestDelayParticalJob::create("B", 4);
-//
-//		auto handle2 = testIJob2->scheduleIJob();
-//
-//		std::vector<ECS::JobSystem::JobHandle>handles;
-//		handles.push_back(handle);
-//		handles.push_back(handle2);
-//
-//		auto parallelJob = TestPrintParallelJob::create(resultSize,"C");
-//
-//		parallelJob->schedule(resultSize, batchSize, workerCount, handles);
-//	}
-//
-//	jm.getStats().waitForAll();
-//
-//	/*複数依存(fan - in)
-//		A → B*/
-//	{
-//		auto parallelJob = TestPrintParallelJob::create(resultSize, "A");
-//
-//		auto handle = parallelJob->schedule(resultSize, batchSize, workerCount);
-//
-//		auto parallelJob2 = TestPrintParallelJob::create(resultSize,"B");
-//
-//		parallelJob2->schedule(resultSize, batchSize, workerCount, handle);
-//	}
-//
-//	jm.getStats().waitForAll();
-//}
+
+//パラレルジョブに依存関係追加
+TEST_CASE_ORDER(test_chainBigJobSystem) {
+	auto recorder = std::make_unique<ECS::JobSystem::TimelineRecorder>();
+	auto& jm = ECS::JobSystem::JobManager::Instance();
+	jm.initialize(100, 7, std::move(recorder));
+
+	size_t resultSize = 5;
+
+	size_t batchSize = 1;
+
+	size_t workerCount = 2;
+
+	jm.start();
+
+	/*複数依存(fan - in)
+		A → B*/
+	{
+		auto testIJob = TestDelayParticalJob::create("A", 2);
+
+		auto handle = testIJob->scheduleIJob();
+
+		auto parallelJob = TestPrintParallelJob::create(resultSize, "B");
+
+		parallelJob->schedule(resultSize, batchSize, workerCount, handle);
+	}
+
+	jm.getStats().waitForAll();
+
+	/*複数依存(fan - in)
+		A, B → C*/
+	{
+		auto testIJob = TestDelayParticalJob::create("A", 2);
+
+		auto handle = testIJob->scheduleIJob();
+
+		auto testIJob2 = TestDelayParticalJob::create("B", 4);
+
+		auto handle2 = testIJob2->scheduleIJob();
+
+		std::vector<ECS::JobSystem::JobHandle>handles;
+		handles.push_back(handle);
+		handles.push_back(handle2);
+
+		auto parallelJob = TestPrintParallelJob::create(resultSize,"C");
+
+		parallelJob->schedule(resultSize, batchSize, workerCount, handles);
+	}
+
+	jm.getStats().waitForAll();
+
+	/*複数依存(fan - in)
+		A → B*/
+	{
+		auto parallelJob = TestPrintParallelJob::create(resultSize, "A");
+
+		auto handle = parallelJob->schedule(resultSize, batchSize, workerCount);
+
+		auto parallelJob2 = TestPrintParallelJob::create(resultSize,"B");
+
+		parallelJob2->schedule(resultSize, batchSize, workerCount, handle);
+	}
+
+	jm.getStats().waitForAll();
+}
 
 TEST_CASE(test_sort_empty) {
 	std::vector<int> v;
@@ -1122,7 +1129,7 @@ TEST_CASE(testDispatch){
 // The first template parameter int is the event type,
 // the event type can be any type such as std::string, int, etc.
 // The second is the prototype of the listener.
-	ECS::EVENT::EventDispatcher<int, void()> dispatcher;
+	ECS::EVENT::EventDispatcher_Multi<int, void()> dispatcher;
 
 	// Add a listener. As the type of dispatcher,
 	// here 3 and 5 is the event type,
@@ -1163,7 +1170,7 @@ TEST_CASE(testDispatch){
 	std::cout << std::endl;
 	
 	// The listener has two parameters.
-	ECS::EVENT::EventDispatcher<int, void(const std::string&, const bool)> dispatcher2;
+	ECS::EVENT::EventDispatcher_Multi<int, void(const std::string&, const bool)> dispatcher2;
 
 	dispatcher2.appendListener(3, [](const std::string& s, const bool b) {
 		std::cout << std::boolalpha << "Got event 3, s is " << s << " b is " << b << std::endl;
@@ -1197,7 +1204,7 @@ TEST_CASE(testDispatch){
 		}
 	};
 
-	ECS::EVENT::EventDispatcher<
+	ECS::EVENT::EventDispatcher_Multi<
 		std::string,
 		void(const MyEvent&, bool),
 		MyEventPolicies
@@ -1236,7 +1243,7 @@ struct testCallbackFunctionClass {
 // テスト関数
 TEST_CASE(testCallbackList) {
 
-	using CL = ECS::EVENT::CallbackList<std::string(const bool&, const std::string&)>;
+	using CL = ECS::EVENT::CallbackList_Multi<std::string(const bool&, const std::string&)>;
 	CL callbackList;
 
 	auto handle1 = callbackList.append([](const bool& flag, const std::string& message) -> std::string {

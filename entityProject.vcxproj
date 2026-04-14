@@ -26,28 +26,25 @@
     <ClCompile Include="src\JobWorker.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\PresentationGroup.cpp" />
-    <ClCompile Include="src\Scene.cpp" />
-    <ClCompile Include="src\SceneView.cpp" />
     <ClCompile Include="src\Schedule.cpp" />
     <ClCompile Include="src\SimulationGroup.cpp" />
     <ClCompile Include="src\SystemGroup.cpp" />
     <ClCompile Include="src\TaskQueue.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\CallbackList.hpp" />
-    <ClInclude Include="include\ChunkAllocator.h" />
+    <ClInclude Include="include\CallbackListMT.hpp" />
+    <ClInclude Include="include\CallBackListST.hpp" />
     <ClInclude Include="include\CleanUpGroup.h" />
-    <ClInclude Include="include\Component.h" />
     <ClInclude Include="include\ComponentPoolManager.hpp" />
-    <ClInclude Include="include\DebugHelpr.h" />
     <ClInclude Include="include\ecsTest.h" />
     <ClInclude Include="include\Entity.h" />
     <ClInclude Include="include\EntityEventMixin.hpp" />
     <ClInclude Include="include\EntityPool.h" />
-    <ClInclude Include="include\Event.h" />
     <ClInclude Include="include\Event.hpp" />
-    <ClInclude Include="include\EventDispatcher.hpp" />
+    <ClInclude Include="include\EventDispatcherMT.hpp" />
+    <ClInclude Include="include\EventDispatcherST.hpp" />
     <ClInclude Include="include\EventQueue.hpp" />
+    <ClInclude Include="include\IEvent.hpp" />
     <ClInclude Include="include\group.hpp" />
     <ClInclude Include="include\HashFunctions.hpp" />
     <ClInclude Include="include\HopscotchHashMap.h" />
@@ -63,8 +60,6 @@
     <ClInclude Include="include\OrderedQueueList.hpp" />
     <ClInclude Include="include\PreInitializationGroup.h" />
     <ClInclude Include="include\PresentationGroup.h" />
-    <ClInclude Include="include\Scene.h" />
-    <ClInclude Include="include\SceneView.h" />
     <ClInclude Include="include\Schedule.h" />
     <ClInclude Include="include\Signal.hpp" />
     <ClInclude Include="include\SimulationGroup.h" />

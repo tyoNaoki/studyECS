@@ -1,9 +1,8 @@
-#ifndef ECS_EVENTDISPATCHER_HPP
-#define ECS_EVENTDISPATCHER_HPP
+#ifndef ECS_EVENTDISPATCHERST_HPP
+#define ECS_EVENTDISPATCHERST_HPP
 
-#include "CallbackList.hpp"
+#include "CallbackListST.hpp"
 #include <unordered_map>
-#include "HopscotchHashMap.h"
 
 namespace ECS {
 
@@ -13,12 +12,12 @@ template<
 	typename Prototype,
 	typename Policies = void
 	>
-class EventDispatcher;
+class EventDispatcher_Single;
 
 template<typename EventType, typename ReturnType, typename... Args, typename Policies>
-class EventDispatcher<EventType, ReturnType(Args...), Policies> {
+class EventDispatcher_Single<EventType, ReturnType(Args...), Policies> {
 public:
-	using CallBacks = CallbackList<ReturnType(Args...)>;
+	using CallBacks = CallbackList_Single<ReturnType(Args...)>;
 	using CallbackType = std::function<ReturnType(Args...)>;
 	using Handle = typename CallBacks::Handle;
 	
