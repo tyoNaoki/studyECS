@@ -11,23 +11,6 @@ namespace ECS::JobSystem{
 
 class JobManager;
 
-    struct Logger {
-        inline static thread_local std::ostringstream localLogBuffer;
-        inline static std::mutex outMutex;
-
-        template<typename... Args>
-        static void log(const Args&... args) {
-            (localLogBuffer << ... << args) << "\n";
-        }
-
-        static void flushLogs() {
-            std::lock_guard<std::mutex> lk(outMutex);
-            std::cout << localLogBuffer.str();
-            localLogBuffer.str("");
-            localLogBuffer.clear();
-        }
-    };
-
 struct GeneralPolicy{
 
     template<typename LocalQ>
@@ -224,8 +207,12 @@ inline void Worker<LocalQueue,WorkerPolicy>::run()
     while (running.load(std::memory_order_relaxed)) {
         if(policy_(workerId,chunkQueue)){
 
+            
+#ifdef DEBUG
             //ログ出力
             //DebugLog(category);
+#endif // !DEBUG
+            
         }
     }
 }
@@ -238,10 +225,11 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
     auto& stats = JobManager::Instance().getStats();
     while(stats.scheduledJobCount() > 0){
 
-        //bool operator()(JobCategory&executeCategory,size_t workerId,LocalQ& localQ, StealQs& stealQs,size_t queueSize,RealTimeTasks& rt, BackGroundTasks& bg)
         if (policy_(workerId,chunkQueue)) {
+#ifdef DEBUG
             //ログ出力
-            DebugLog();
+            //DebugLog(category);
+#endif // !DEBUG
         }
     }
 }

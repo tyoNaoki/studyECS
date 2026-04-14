@@ -1,6 +1,6 @@
 #ifndef ECS_STORAGEMIXIN_HPP
 #define ECS_STORAGEMIXIN_HPP
-#include "CallbackList.hpp"
+#include "CallbackListST.hpp"
 #include "Entity.h"
 
 namespace ECS{
@@ -21,12 +21,12 @@ namespace COMPONENT{
         void notify_destroy(EntityID entity) { destroy(entity); }
 
     private:
-        using CallbackType = EVENT::CallbackList<void(const EntityID)>;
+        using CallbackType = EVENT::CallbackList_Single<void(const EntityID)>;
 
     private:
-        EVENT::CallbackList<void(const EntityID)> construct;
-        EVENT::CallbackList<void(const EntityID)> update;
-        EVENT::CallbackList<void(const EntityID)> destroy;
+        EVENT::CallbackList_Single<void(const EntityID)> construct;
+        EVENT::CallbackList_Single<void(const EntityID)> update;
+        EVENT::CallbackList_Single<void(const EntityID)> destroy;
     };
 
 }//namespace COMPONENT_STORAGE

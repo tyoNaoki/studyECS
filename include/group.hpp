@@ -8,7 +8,6 @@
 #include <algorithm>
 #include "Entity.h"
 #include "Storage.hpp"
-#include "TestFramework.hpp"
 #include "HashFunctions.hpp"
 #include "typeList.hpp"
 #include "World.h"
@@ -226,7 +225,6 @@ class Group_handler final :public IHandler {
     }
     
     void push_on_construct(const EntityID entt) {
-        //std::cout << "push_on_construct() : " << GetEntityIndex(entt) << std::endl;
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) 
             && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
@@ -235,8 +233,6 @@ class Group_handler final :public IHandler {
     }
 
     void push_on_destroy(const EntityID entt) {
-        //std::cout << "push_on_destroy() : " << GetEntityIndex(entt) << " entity" << std::endl;
-
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (0u + ... + cpool->ContainsEntity(entt)) == 1u; }, filter)) {
             swap_elements(len++, entt);
@@ -244,8 +240,6 @@ class Group_handler final :public IHandler {
     }
 
     void remove_if(const EntityID entt){
-        //std::cout << "remove_if() : " << GetEntityIndex(entt) << " entity" << std::endl;
-
         if (pools[0u]->ContainsEntity(entt) && (pools[0u]->Index(entt) < len)) {
             swap_elements(--len, entt);
         }

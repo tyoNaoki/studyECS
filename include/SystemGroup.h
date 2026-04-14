@@ -31,7 +31,7 @@ namespace System{
 
     protected:
         
-        bool dirty = true;
+        bool dirty = false;
         std::vector<ECS::System::SystemID> sorted;
     private:
         void topologicalSort(ECS::World& world, SystemGroup& group);

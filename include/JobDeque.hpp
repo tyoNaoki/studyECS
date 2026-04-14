@@ -8,21 +8,6 @@
 
 namespace ECS::JobSystem {
 
-    /*struct PushResult {
-        PushStatus status;
-        Chunk notPushed;
-    };
-
-    struct PopResult {
-        PopStatus status;
-        Chunk value;
-    };
-
-    struct StealResult {
-        StealStatus status;
-        Chunk value;
-    };*/
-
     enum class PushStatus {
         Success,    // 正常にpushできた
         WouldBlock, // ロック中で進めない
@@ -305,30 +290,6 @@ namespace ECS::JobSystem {
             test::saveLog("[%s] queue=%zu : bottom=%zu, top=%zu", where,queueIndex, b, t);
             ASSERT(b >= t,"deque invariant violated");
         }
-
-        //void checkInvariants() {
-        //    size_t t = top.load(std::memory_order_acquire);
-        //    size_t b = bottom.load(std::memory_order_acquire);
-        //    size_t cnt = count.load(std::memory_order_acquire);
-
-        //    // 基本の不変条件
-        //    ASSERT(t <= b,
-        //        "Invariant failed: top > bottom"
-        //        "  top=" << t
-        //        << " bottom=" << b);
-
-        //    ASSERT(b - t <= capacity,
-        //        "Invariant failed: queue size exceeds capacity"
-        //        "  size(b-t)=" << (b - t)
-        //        << " capacity=" << capacity);
-
-        //    ASSERT(cnt == b - t,
-        //        "Invariant failed: element counter mismatch"
-        //        " element count=" << cnt
-        //        << " expected(b-t)=" << (b - t)
-        //        << "  top=" << t
-        //        << " bottom=" << b);
-        //}
 
     private:
         const size_t capacity;

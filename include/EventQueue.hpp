@@ -2,7 +2,7 @@
 #define ECS_EVENTQUEUE_HPP
 
 #include "OrderedQueueList.hpp"
-#include "EventDispatcher.hpp"
+#include "EventDispatcherMT.hpp"
 #include <vector>
 
 namespace ECS {
@@ -15,9 +15,9 @@ class EventQueueBase;
 
 template<typename EventType, typename ReturnType, typename... Args, typename Policies>
 class EventQueueBase<EventType, ReturnType(Args...), Policies> :
-	public EventDispatcher<EventType, ReturnType(Args...), Policies> {
+	public EventDispatcher_Multi<EventType, ReturnType(Args...), Policies> {
 private:
-	using super = EventDispatcher<EventType, ReturnType(Args...), Policies>;
+	using super = EventDispatcher_Multi<EventType, ReturnType(Args...), Policies>;
 
 	using CallbackType = typename super::CallbackType;
 	using CallBackListType = typename super::CallBacks;

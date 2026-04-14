@@ -7,10 +7,8 @@
 #include <variant>
 #include <memory>
 #include <array>
-#include "intrusive_ptr.h"
 #include "TestFramework.hpp"
 #include "HashFunctions.hpp"
-#include "CallbackList.hpp"
 #include <optional>
 
 namespace ECS::JobSystem{
@@ -188,140 +186,6 @@ public:
     }
 };
 
-//
-//struct Task {
-//    Job job;
-//    std::atomic<int>   inDegree{ 0 };
-//    intrusive_ptr<Task> nextDependent;
-//    std::mutex taskMutex;
-//    JobCategory category;
-//    std::atomic<uint32_t> refCount;
-//
-//    Task(Job jb, int degree,JobCategory category)
-//        : refCount(0)
-//        , job(std::move(jb))
-//        , inDegree(degree)
-//        , nextDependent(nullptr)
-//        ,category(category)
-//    {}
-//
-//    void add_ref() { refCount.fetch_add(1, std::memory_order_relaxed); }
-//
-//    void release() {
-//        if (refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-//
-//           delete this;
-//        }
-//    }
-//
-//    void addDependent(Task* parent) {
-//        // 自身を親の先頭に差し込む
-//        nextDependent = parent->nextDependent;
-//        parent->nextDependent = this;
-//        inDegree.fetch_add(1);
-//    }
-//};
-
-//template<typename T>
-//struct SettableParallelJobFuture {
-//
-//    explicit SettableParallelJobFuture(std::shared_ptr<FutureInner<T>> i, std::shared_ptr<std::atomic<size_t>> count)
-//        : inner(std::move(i)),counter(count){}
-//
-//    static auto create(size_t batchCount) {
-//        auto ptr = std::make_shared<FutureInner<T>>();
-//        auto parallelCount = std::make_shared<std::atomic<size_t>>(batchCount);
-//        return std::make_pair(
-//            SettableParallelJobFuture<T>{ ptr,parallelCount },
-//            ParallelJobFuture{ ptr }
-//        );
-//    }
-//
-//    // 結果なしの通知だけ
-//    size_t sub_counter() const {
-//        return counter->fetch_sub(1, std::memory_order_acq_rel);
-//    }
-//
-//    void set_value(T v) const {
-//        std::lock_guard lk(inner->mtx);
-//        inner->result = std::move(v);
-//        inner->ready = true;
-//    }
-//
-//    void set_exception(std::exception_ptr e) {
-//        std::lock_guard lk(inner->mtx);
-//        inner->eptr = std::move(e);
-//        inner->ready = true;
-//    }
-//
-//private:
-//    std::shared_ptr<FutureInner<T>> inner;
-//    std::shared_ptr<std::atomic<size_t>> counter;
-//};
-//
-//template<>
-//struct SettableParallelJobFuture<void> {
-//   
-//    explicit SettableParallelJobFuture(std::shared_ptr<FutureInner<void>> i, std::shared_ptr<std::atomic<size_t>> count)
-//        : inner(std::move(i)), counter(count) {}
-//
-//    static auto create(size_t batchCount) {
-//        auto ptr = std::make_shared<FutureInner<void>>();
-//        auto parallelCount = std::make_shared<std::atomic<size_t>>(batchCount);
-//        return std::make_pair(
-//            SettableParallelJobFuture<void>{ ptr, parallelCount },
-//            ParallelJobFuture{ ptr }
-//        );
-//    }
-//
-//    // 結果なしの通知だけ
-//    size_t sub_counter() const {
-//        return counter->fetch_sub(1, std::memory_order_acq_rel);
-//    }
-//
-//    void set_value() const {
-//        std::lock_guard lk(inner->mtx);
-//        inner->ready = true;
-//    }
-//
-//    void set_exception(std::exception_ptr e) {
-//        std::lock_guard lk(inner->mtx);
-//        inner->eptr = std::move(e);
-//        inner->ready = true;
-//    }
-//
-//private:
-//    std::shared_ptr<FutureInner<void>> inner;
-//    std::shared_ptr<std::atomic<size_t>> counter;
-//};
-//
-//template<typename S>
-//struct JobConnector {
-//    using Ptrs = decltype(S::field_ptrs());
-//    static constexpr size_t N = std::tuple_size_v<Ptrs>;
-//
-//    Ptrs ptrs_{ S::field_ptrs() };
-//
-//    // I番目のメンバポインタを取り出し
-//    template<size_t I>
-//    constexpr auto get() const noexcept {
-//        return std::get<I>(ptrs_);
-//    }
-//};
-
-struct DummyBuffer {};
-
-
-
-// 結果を持つ場合
-template<typename T>
-struct ResultHolder {
-protected:
-    T result;
-};
-
-template<typename T>
-struct TaskFuture;
 
 template<typename>
 struct IJob;
@@ -352,7 +216,9 @@ private:
 };
 
 struct JobHandle {
-    bool isComplete() const;
+    bool isComplete() const{
+        return inner->isReady();
+    };
 
     void Complete() const;
 

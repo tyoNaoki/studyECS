@@ -11,10 +11,10 @@ template<typename, typename...>
 struct Node;
 
 template<typename, typename...>
-class CallbackList;
+class CallbackList_Multi;
 
 template<typename ReturnType, typename... Args>
-class CallbackList<ReturnType(Args...)> {
+class CallbackList_Multi<ReturnType(Args...)> {
 public:
 	using CallbackType = std::function<ReturnType(Args...)>;
 	using RawFunctionType = ReturnType(*)(void*, Args...);  // ペイロード付き関数型

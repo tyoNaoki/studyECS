@@ -7,10 +7,10 @@
 
 void ECS::System::Schedule::onCreate(World& world)
 {
-    auto initialization = world.createSystemGroup<System::InitializationGroup, System::InitializationGroup>();
-    auto simulation = world.createSystemGroup<System::SimulationGroup, System::SimulationGroup>();
-    auto presentation = world.createSystemGroup<System::PresentationGroup, System::PresentationGroup>();
-    auto cleanup = world.createSystemGroup<System::CleanUpGroup, System::CleanUpGroup>();
+    auto initialization = world.createSystemGroup<InitializationGroup, InitializationGroup>();
+    auto simulation = world.createSystemGroup<SimulationGroup, SimulationGroup>();
+    auto presentation = world.createSystemGroup<PresentationGroup, PresentationGroup>();
+    auto cleanup = world.createSystemGroup<CleanUpGroup, CleanUpGroup>();
     addSystem(initialization);
     addSystem(simulation);
     addSystem(presentation);
@@ -24,4 +24,6 @@ void ECS::System::Schedule::onCreate(World& world)
     world.addBefore(initialization, simulation);
     world.addBefore(simulation, presentation);
     world.addBefore(presentation, cleanup);
+
+
 }

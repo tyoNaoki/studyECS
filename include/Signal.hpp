@@ -5,7 +5,7 @@
 #include <shared_mutex>
 #include <functional>
 #include <cstdint>
-#include "EventDispatcher.hpp"
+#include "EventDispatcherMT.hpp"
 #include <typeinfo>
 
 
@@ -27,9 +27,9 @@ namespace EVENT {
 		const std::type_info& type() const override { return typeid(T); }
 	};
 
-class Signal : private EventDispatcher<ecs_map::id_type,void(void*)>
+class Signal : private EventDispatcher_Multi<ecs_map::id_type,void(void*)>
 {
-	using Base = EventDispatcher<ecs_map::id_type, void(void*)>;
+	using Base = EventDispatcher_Multi<ecs_map::id_type, void(void*)>;
 	using HashID = ecs_map::id_type;
 	using RawArg = void*;
 	//using Event = std::pair<HashID, std::unique_ptr<IEventArg>>;

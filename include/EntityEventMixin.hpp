@@ -1,7 +1,7 @@
 #ifndef ECS_ENTITYEVENTMIXIN_HPP
 #define ECS_ENTITYEVENTMIXIN_HPP
 
-#include "CallbackList.hpp"
+#include "CallBackListST.hpp"
 
 namespace ECS{
 
@@ -16,11 +16,11 @@ namespace ECS{
         void notify_destroy(EntityID entity) { destroy(entity); }
 
     private:
-        using CallbackType = EVENT::CallbackList<void(const EntityID)>;
+        using CallbackType = EVENT::CallbackList_Single<void(const EntityID)>;
 
     private:
-        EVENT::CallbackList<void(const EntityID)> construct;
-        EVENT::CallbackList<void(const EntityID)> destroy;
+        EVENT::CallbackList_Single<void(const EntityID)> construct;
+        EVENT::CallbackList_Single<void(const EntityID)> destroy;
     };
 
 }// namespace ECS
