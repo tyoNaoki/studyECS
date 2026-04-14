@@ -14,15 +14,15 @@
 #include "Entity.h"
 #include "EntityPool.h"
 #include "SparseSet.h"
-#include "HopscotchHashMap.h"
+#include "Engine/Core/Containers/HopscotchHashMap.h"
 #include "Storage.hpp"
 #include "group.hpp"
 #include "typeList.hpp"
 #include "ComponentPoolManager.hpp"
-#include "SystemBase.hpp"
-#include "Schedule.h"
-#include "IEvent.hpp"
-#include "EventDispatcherST.hpp"
+#include "Engine\ECS\System\SystemBase.hpp"
+#include "Engine\ECS\System\SystemScheduler.h"
+#include "Engine\ECS\Events\IEvent.hpp"
+#include "Engine\ECS\Events\EventDispatcherST.hpp"
 
 constexpr size_t MAX_COMPONENTS = 64;
 
@@ -60,7 +60,7 @@ public:
     World& operator=(const World&) = delete;
 
     void initialize(){
-        auto systemID = createSystemGroup<ECS::System::Schedule, ECS::System::Schedule>();
+        auto systemID = createSystemGroup<ECS::System::SystemScheduler, ECS::System::SystemScheduler>();
         scheduleGroupID = getSystem(systemID).groupID;
         getSystemGroup(scheduleGroupID)->onCreate(*this);
     }

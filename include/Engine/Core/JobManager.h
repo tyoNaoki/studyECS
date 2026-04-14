@@ -12,12 +12,10 @@
 #include <utility>
 
 #include "JobRecorder.h"
-#include "JobDeque.hpp"
 #include "JobBarrier.h"
 #include "JobDebugger.h"
-#include "TaskQueue.h"
 #include "taskPtr.hpp"
-#include "HashFunctions.hpp"
+#include "Engine/Core/Containers/HashFunctions.hpp"
 #include "JobWorker.h"
 
 #include "moodycamel\concurrentqueue.h"
@@ -246,28 +244,7 @@ struct JobHandle;
 
 class JobManager
 {
-    //using JobQueue = Debug::DebugJobQueue<JobDeque<SliceChunk>>;
-    using JobQueue = JobDeque;
-
-    using StealResult = JobQueue::StealResult;
-
-    using PopResult = JobQueue::PopResult;
-
-    using PushResult = JobQueue::PushResult;
-
-    using GeneralWorker = Worker<JobQueue,GeneralPolicy>;
-
-    //âºÇ∆ÇµÇƒ60FPS
-    static constexpr float targetFPS = 60.0f;
-
-    //1ÉtÉåÅ[ÉÄÇ†ÇΩÇËÇÃéûä‘
-    static constexpr float frameTimeMs = 1000.0f / targetFPS;
-
-    static constexpr double safetyMarginMs = 1.5;
-
-    static constexpr double bgRatioMin = 0.10;
-
-    static constexpr double bgRatioMax = 0.50;
+    using GeneralWorker = Worker<GeneralPolicy>;
 
     JobManager() : chunkToken(chunkQueue),completedJobToken(completedJobQueue){}
 
@@ -513,7 +490,7 @@ public:
         if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
             
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
 
@@ -524,7 +501,7 @@ public:
             auto& funcs = jobStorage.getFuncs(index);
 
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
                 
@@ -578,7 +555,7 @@ public:
         if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
 
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
 
@@ -589,7 +566,7 @@ public:
             auto& funcs = jobStorage.getFuncs(index);
 
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
                 funcs.push_back(std::move(job));

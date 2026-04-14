@@ -1,5 +1,5 @@
-#include "InitializationGroup.h"
-#include "World.h"
+#include "Engine\ECS\System\InitializationGroup.h"
+#include "Engine\ECS\World.h"
 
 void ECS::System::InitializationGroup::onCreate(ECS::World& world)
 {

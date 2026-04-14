@@ -1,5 +1,6 @@
 #pragma once
 #include "TestFramework.hpp"
+#include <optional>
 
 namespace ECS::JobSystem::Debug {
 

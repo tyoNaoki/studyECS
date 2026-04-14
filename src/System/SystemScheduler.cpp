@@ -1,11 +1,11 @@
-#include "Schedule.h"
-#include "InitializationGroup.h"
-#include "SimulationGroup.h"
-#include "PresentationGroup.h"
-#include "CleanUpGroup.h"
-#include "World.h"
+#include "Engine\ECS\System\SystemScheduler.h"
+#include "Engine\ECS\System\InitializationGroup.h"
+#include "Engine\ECS\System\SimulationGroup.h"
+#include "Engine\ECS\System\PresentationGroup.h"
+#include "Engine\ECS\System\CleanUpGroup.h"
+#include "Engine\ECS\World.h"
 
-void ECS::System::Schedule::onCreate(World& world)
+void ECS::System::SystemScheduler::onCreate(World& world)
 {
     auto initialization = world.createSystemGroup<InitializationGroup, InitializationGroup>();
     auto simulation = world.createSystemGroup<SimulationGroup, SimulationGroup>();
