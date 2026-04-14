@@ -1,9 +1,6 @@
 #pragma once
-#include "JobDeque.hpp"
 #include "taskPtr.hpp"
-#include "TaskQueue.h"
 #include "JobBarrier.h"
-#include "ThreadSafeQueue.h"
 
 #include "moodycamel\concurrentqueue.h"
 
@@ -105,7 +102,6 @@ public:
 };
 
 template<
-    typename LocalQueue,
     typename WorkerPolicy = GeneralPolicy
     >
 class Worker : public IWorker{
@@ -171,16 +167,16 @@ private:
     std::thread     thread_;
 };
 
-template<typename LocalQueue,typename WorkerPolicy>
-inline Worker<LocalQueue,WorkerPolicy>::Worker(size_t id,JobBarrier&barrier, moodycamel::ConcurrentQueue<ChunkMeta>& chunkQ, moodycamel::ConcurrentQueue<JobId>& completedJobQ) : workerId(id),running(true), chunkQueue(chunkQ),chunkToken(chunkQ), completedJobQueue(completedJobQ),completeJobtoken(completedJobQ),
+template<typename WorkerPolicy>
+inline Worker<WorkerPolicy>::Worker(size_t id,JobBarrier&barrier, moodycamel::ConcurrentQueue<ChunkMeta>& chunkQ, moodycamel::ConcurrentQueue<JobId>& completedJobQ) : workerId(id),running(true), chunkQueue(chunkQ),chunkToken(chunkQ), completedJobQueue(completedJobQ),completeJobtoken(completedJobQ),
     thread_([this,&barrier]{
         barrier.wait();
         run();})
 {
 }
 
-template<typename LocalQueue,typename WorkerPolicy>
-inline Worker<LocalQueue,WorkerPolicy>::~Worker()
+template<typename WorkerPolicy>
+inline Worker<WorkerPolicy>::~Worker()
 {
     stop();
         
@@ -189,20 +185,20 @@ inline Worker<LocalQueue,WorkerPolicy>::~Worker()
     }
 }
 
-template<typename LocalQueue, typename WorkerPolicy>
-inline void Worker<LocalQueue, WorkerPolicy>::enqueue(ChunkMeta&& chunk)
+template<typename WorkerPolicy>
+inline void Worker<WorkerPolicy>::enqueue(ChunkMeta&& chunk)
 {
     chunkQueue.enqueue(chunkToken, std::move(chunk));
 }
 
-template<typename LocalQueue, typename WorkerPolicy>
-inline void Worker<LocalQueue, WorkerPolicy>::completedJob(JobId jobId)
+template<typename WorkerPolicy>
+inline void Worker<WorkerPolicy>::completedJob(JobId jobId)
 {
     completedJobQueue.enqueue(completeJobtoken,jobId);
 }
 
-template<typename LocalQueue,typename WorkerPolicy>
-inline void Worker<LocalQueue,WorkerPolicy>::run()
+template<typename WorkerPolicy>
+inline void Worker<WorkerPolicy>::run()
 {
     while (running.load(std::memory_order_relaxed)) {
         if(policy_(workerId,chunkQueue)){
@@ -217,14 +213,13 @@ inline void Worker<LocalQueue,WorkerPolicy>::run()
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy>
-inline void Worker<LocalQueue,WorkerPolicy>::stop()
+template<typename WorkerPolicy>
+inline void Worker<WorkerPolicy>::stop()
 {
     running.store(false, std::memory_order_relaxed);
 
     auto& stats = JobManager::Instance().getStats();
     while(stats.scheduledJobCount() > 0){
-
         if (policy_(workerId,chunkQueue)) {
 #ifdef DEBUG
             //ÉçÉOèoóÕ
@@ -234,8 +229,8 @@ inline void Worker<LocalQueue,WorkerPolicy>::stop()
     }
 }
 
-template<typename LocalQueue,typename WorkerPolicy>
-inline void Worker<LocalQueue,WorkerPolicy>::DebugLog()
+template<typename WorkerPolicy>
+inline void Worker<WorkerPolicy>::DebugLog()
 {
     auto&jm = JobManager::Instance();
 

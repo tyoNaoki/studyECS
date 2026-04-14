@@ -1,5 +1,5 @@
-#include "SystemGroup.h"
-#include "World.h"
+#include "Engine\ECS\System\SystemGroup.h"
+#include "Engine\ECS\World.h"
 
 void ECS::System::SystemGroup::onUpdate(ECS::World& world){
     if (dirty) sort(world);

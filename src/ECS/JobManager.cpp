@@ -1,7 +1,6 @@
-#include "JobManager.h"
-#include "taskPtr.hpp"
-#include "JobDeque.hpp"
-#include "JobWorker.h"
+#include "Engine/Core/JobManager.h"
+#include "Engine/Core/taskPtr.hpp"
+#include "Engine/Core/JobWorker.h"
 
 namespace ECS::JobSystem{
 

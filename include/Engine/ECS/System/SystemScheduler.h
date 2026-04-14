@@ -3,7 +3,7 @@
 
 namespace ECS::System {
 
-struct Schedule : public SystemGroup {
+struct SystemScheduler : public SystemGroup {
     void onCreate(World&world) override;
 };
 

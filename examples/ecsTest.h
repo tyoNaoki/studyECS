@@ -9,18 +9,18 @@
 #include <cassert>
 #include <random>
 
-#include "World.h"
+#include "Engine\ECS\World.h"
 #include "TestFramework.hpp"
 
 //HASH MAP TEST
-#include "HopscotchHashMap.h"
-#include "SparseHopscotch.h"
+#include "Engine/Core/Containers/HopscotchHashMap.h"
+#include "Engine/Core/Containers/SparseHopscotch.h"
 
 //EVENT TEST
-#include "EventQueue.hpp"
-#include "Signal.hpp"
+#include "Engine\ECS\Events\EventQueue.hpp"
+#include "Engine\ECS\Events\Signal.hpp"
 
-#include "JobManager.h"
+#include "Engine\Core\JobManager.h"
 
 using namespace ECS::test;
 
@@ -78,7 +78,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("test_SystemSchedule",1);
+	RUN_TEST("test_jobSystem",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);

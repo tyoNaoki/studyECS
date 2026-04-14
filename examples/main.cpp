@@ -1,5 +1,5 @@
 #include "DxLib.h"
-#include "exampleecsTest.h"
+#include "ecsTest.h"
 #include <iostream>
 #include <windows.h>
 

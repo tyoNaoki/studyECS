@@ -8,7 +8,7 @@
 #include <algorithm>
 #include "Entity.h"
 #include "Storage.hpp"
-#include "HashFunctions.hpp"
+#include "Engine/Core/Containers/HashFunctions.hpp"
 #include "typeList.hpp"
 #include "World.h"
 #include "SparseSet.h"

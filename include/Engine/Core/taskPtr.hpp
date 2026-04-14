@@ -8,7 +8,7 @@
 #include <memory>
 #include <array>
 #include "TestFramework.hpp"
-#include "HashFunctions.hpp"
+#include "Engine/Core/Containers/HashFunctions.hpp"
 #include <optional>
 
 namespace ECS::JobSystem{
@@ -185,6 +185,35 @@ public:
     }
 };
 
+struct ChunkMeta {
+    std::vector<Job> jobs;
+
+    size_t size() {
+        return jobs.size();
+    }
+
+    bool isEmpty() {
+        return size() == 0;
+    }
+
+    ChunkMeta() = default;
+
+    // ÉRÉsÅ[ã÷é~
+    ChunkMeta(const ChunkMeta&) = delete;
+    ChunkMeta& operator=(const ChunkMeta&) = delete;
+
+    // move ÇÃÇ›ãñâ¬
+    ChunkMeta(ChunkMeta&& other) noexcept
+        : jobs(std::move(other.jobs))
+    {}
+
+    ChunkMeta& operator=(ChunkMeta&& other) noexcept {
+        if (this != &other) {
+            jobs = std::move(other.jobs);
+        }
+        return *this;
+    }
+};
 
 template<typename>
 struct IJob;
