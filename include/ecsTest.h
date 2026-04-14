@@ -975,8 +975,6 @@ TEST_CASE(testEventQueue)
 	queue3.process();
 	}
 	
-	
-	
 	{
 
 		// This is the definition of event types

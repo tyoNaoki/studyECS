@@ -513,7 +513,7 @@ public:
         if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
             
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
 
@@ -524,7 +524,7 @@ public:
             auto& funcs = jobStorage.getFuncs(index);
 
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
                 
@@ -578,7 +578,7 @@ public:
         if (jobInfo.inDegree.load(std::memory_order_relaxed) == 0) {
 
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
 
@@ -589,7 +589,7 @@ public:
             auto& funcs = jobStorage.getFuncs(index);
 
             for (size_t w = 0; w < workerNum; ++w) {
-                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, workerId); };
+                auto work = [ctx](const size_t workerId) { executeIParallelJob(ctx->self.get(), ctx->jobId, ctx->setter.get(), ctx->batchSize, ctx->numBatches, ctx->total, ctx->chunkBatches, ctx->nextBatch, ctx->taskCounter, workerId); };
 
                 Job job(std::move(work));
                 funcs.push_back(std::move(job));

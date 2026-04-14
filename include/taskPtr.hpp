@@ -139,7 +139,6 @@ public:
     // 暗黙の bool 変換は禁止
     explicit operator bool() const noexcept = delete;
 };
-
 struct FutureInner {
     FutureInner() = default;
 
@@ -285,25 +284,6 @@ public:
         return jm.scheduleJobHandle(self, taskCategory, dependentHandles);
     }
 
-    //JobHandle scheduleIJob(std::vector<JobHandle>& dependentHandles, TaskCategory taskCategory = TaskCategory::Normal) {
-
-    //    std::shared_ptr<Derived> self = shared_this();
-    //    auto& jm = JobManager::Instance();
-    //    auto jobId = jm.emplaceJobID();
-    //    auto setter = std::make_shared<Inner>();
-
-    //    auto context = std::make_shared<Context>(self, jobId, setter);
-
-    //    auto work = [context](const size_t workerId) { executeIJob(context->self.get(), context->jobId, context->setter.get(), workerId); };
-    //    Job job(std::move(work));
-
-    //    //jm.scheduleJobHandle(taskCategory, jobId, std::move(job), dependentHandles);
-
-    //    auto handle = JobHandle::createHandle(jobId, std::move(setter));
-
-    //    return handle;
-    //}
-
     inline void execute() {
         // Derived の Execute() を呼び出し
         //static_cast<Derived*>(this)->Execute(index);
@@ -325,16 +305,6 @@ private:
     std::shared_ptr<Derived> shared_this(){
         return std::enable_shared_from_this<Derived>::shared_from_this();
     }
-
-protected:
-
-    //inline void execute() {
-    //    // Derived の Execute() を呼び出し
-    //    //static_cast<Derived*>(this)->Execute(index);
-    //    ASSERT(false, "Derived class not found Execute() member function!!");
-    //}
-
-    //friend class JobManager;
 
 private:
     // コマンドバッファ
@@ -424,116 +394,8 @@ protected:
 
 private:
     
-    
     // コマンドバッファ
     std::vector<std::function<void(Derived&)>> commands;
 };
-
-//
-//template<typename Derived,TaskCategory>
-//struct IJob
-//    : public std::enable_shared_from_this<Derived>
-//    , ResultHolder<ReturnType> {
-//    using Return_t = ReturnType;
-//
-//    using HasReturn = std::bool_constant<!std::is_same_v<Return_t, void>>;
-// 
-// using TaskPtr = intrusive_ptr<Task>;
-
-//using Data_t = ParallelJobData;
-//
-//using HasData = std::bool_constant<!std::is_same_v<Data_t, std::monostate>>;
-//
-//using Future_t = std::conditional_t<
-//    HasData::value,
-//    ParallelJobFuture<Data_t>,
-//    ParallelJobFuture<void>
-//>;
-//
-//using Setter_t = std::conditional_t<
-//    HasData::value,
-//    SettableParallelJobFuture<Data_t>,
-//    SettableParallelJobFuture<void>
-//>;
-//
-//    struct Context {
-//        std::shared_ptr<Derived> self;
-//
-//        Context(std::shared_ptr<Derived> s)
-//            : self(s) {}
-//    };
-//
-//public:
-//    template<typename... Args>
-//    static std::shared_ptr<Derived> Create(Args&&... args) {
-//        // make_shared で Derived を生成
-//        return std::make_shared<Derived>(std::forward<Args>(args)...);
-//    }
-//    
-//    void AddRequeset(std::function<void(Derived&)>&& fn) {
-//        commands.emplace_back(std::move(fn));
-//    }
-//
-//    JobHandle scheduleIJob(){
-//        auto* self = static_cast<Derived*>(this);
-//
-//        auto work = [self]() { ExecuteIJob(self); };
-//        Job job(std::move(work));
-//
-//        auto& jm = JobManager::Instance();
-//
-//        return jm.scheduleJobHandle(TaskCategory::Easy, JobCategory::RealTime, std::move(job));
-//    }
-//
-//    std::shared_ptr<Derived> shared_this()
-//    {
-//        return std::enable_shared_from_this<Derived>::shared_from_this();
-//    }
-//
-//protected:
-//    inline void Execute() {
-//        // Derived の Execute() を呼び出し
-//        //static_cast<Derived*>(this)->Execute(index);
-//        //ASSERT(false, "Derived class not found Execute() member function!!");
-//    }
-//
-//    
-//
-//private:
-//    IJob() = default;
-//
-//    static void ExecuteIJob(Derived* self) {
-//        ASSERT(self, "self is nullptr");
-//
-//        self->Execute();
-//    };
-//
-//    static void ExecuteIJob(std::shared_ptr<Context> ctx) {
-//        ASSERT(ctx->self, "self is nullptr");
-//    
-//        ctx->self->Execute();
-//        //ctx->self->setInner();
-//    };
-//
-//    void applyCommands() {
-//
-//        if(commands.empty()) return;
-//
-//        for (auto& fn : commands) {
-//            fn(static_cast<Derived&>(*this)); // 直接呼び出し
-//        }
-//
-//        commands.clear();
-//    }
-//
-//protected:
-//    using ResultHolder<ReturnType>::result;
-//
-//    friend struct TaskFuture<Derived>;
-//
-//private:
-//    // コマンドバッファ
-//    std::vector<std::function<void(Derived&)>> commands;
-//};
 
 }//namespace ECS::JobSystem
