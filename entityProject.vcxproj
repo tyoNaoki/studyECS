@@ -31,6 +31,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="examples\ecsTest.h" />
+    <ClInclude Include="examples\eventTest.h" />
+    <ClInclude Include="examples\hashMapTest.h" />
+    <ClInclude Include="examples\jobTest.h" />
+    <ClInclude Include="examples\SystemScheduleTest.h" />
     <ClInclude Include="include\Engine\Core\Containers\HashFunctions.hpp" />
     <ClInclude Include="include\Engine\Core\Containers\HopscotchHashMap.h" />
     <ClInclude Include="include\Engine\Core\Containers\SparseHopscotch.h" />
@@ -63,7 +67,6 @@
     <ClInclude Include="include\Engine\ECS\StorageMixin.hpp" />
     <ClInclude Include="include\Engine\ECS\System\CleanUpGroup.h" />
     <ClInclude Include="include\Engine\ECS\System\InitializationGroup.h" />
-    <ClInclude Include="include\Engine\ECS\System\PreInitializationGroup.h" />
     <ClInclude Include="include\Engine\ECS\System\PresentationGroup.h" />
     <ClInclude Include="include\Engine\ECS\System\SystemScheduler.h" />
     <ClInclude Include="include\Engine\ECS\System\SimulationGroup.h" />

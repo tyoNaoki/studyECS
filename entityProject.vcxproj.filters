@@ -149,9 +149,6 @@
     <ClInclude Include="include\Engine\ECS\System\InitializationGroup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\Engine\ECS\System\PreInitializationGroup.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="include\Engine\ECS\System\PresentationGroup.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -168,6 +165,18 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="examples\ecsTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="examples\jobTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="examples\SystemScheduleTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="examples\hashMapTest.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="examples\eventTest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
