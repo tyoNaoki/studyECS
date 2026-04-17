@@ -215,16 +215,16 @@ public:
 template<typename Type, std::size_t Owned, std::size_t Get, std::size_t Exclude>
 class Group_handler final :public IHandler {
 
-    using entityType = EntityID;
+    using entityType = Entity::EntityID;
     using handlerType = Type;
 
-    void swap_elements(const std::size_t pos, const EntityID entt) {
+    void swap_elements(const std::size_t pos, const Entity::EntityID entt) {
         for (size_type next{}; next < Owned; ++next) {
             pools[next]->swap_elements(pools[next]->GetEntity(pos), entt);
         }
     }
     
-    void push_on_construct(const EntityID entt) {
+    void push_on_construct(const Entity::EntityID entt) {
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) 
             && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
@@ -232,14 +232,14 @@ class Group_handler final :public IHandler {
         }
     }
 
-    void push_on_destroy(const EntityID entt) {
+    void push_on_destroy(const Entity::EntityID entt) {
         if (std::apply([entt, pos = len](auto* cpool, auto *...other) { return cpool->ContainsEntity(entt) && !(cpool->Index(entt) < pos) && (other->ContainsEntity(entt) && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (0u + ... + cpool->ContainsEntity(entt)) == 1u; }, filter)) {
             swap_elements(len++, entt);
         }
     }
 
-    void remove_if(const EntityID entt){
+    void remove_if(const Entity::EntityID entt){
         if (pools[0u]->ContainsEntity(entt) && (pools[0u]->Index(entt) < len)) {
             swap_elements(--len, entt);
         }
@@ -327,10 +327,10 @@ private:
 template<typename Type, std::size_t Get, std::size_t Exclude>
 class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
 
-    using entityType = EntityID;
+    using entityType = Entity::EntityID;
     using handlerType = Type;
 
-    void push_on_construct(const EntityID entt) {
+    void push_on_construct(const Entity::EntityID entt) {
         if (!contains(entt)
             && std::apply([entt](auto *...cpool) { return (cpool->ContainsEntity(entt) && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (!cpool->ContainsEntity(entt) && ...); }, filter)) {
@@ -338,7 +338,7 @@ class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
         }
     }
 
-    void push_on_destroy(const EntityID entt) {
+    void push_on_destroy(const Entity::EntityID entt) {
         if (!contains(entt)
             && std::apply([entt](auto *...cpool) { return (cpool->ContainsEntity(entt) && ...); }, pools)
             && std::apply([entt](auto *...cpool) { return (0u + ... + cpool->ContainsEntity(entt)) == 1u; }, filter)) {
@@ -346,7 +346,7 @@ class Group_handler<Type, 0u, Get, Exclude> final :public IHandler {
         }
     }
 
-    void remove_if(const EntityID entt) {
+    void remove_if(const Entity::EntityID entt) {
         auto newEnd = remove(elem.begin(), elem.end(), entt);
         elem.erase(newEnd, elem.end());
     }
@@ -367,11 +367,11 @@ public:
         first_events();
     }
 
-    std::vector<EntityID>& handle() noexcept {
+    std::vector<Entity::EntityID>& handle() noexcept {
         return elem;
     }
 
-    const std::vector<EntityID>& handle() const noexcept {
+    const std::vector<Entity::EntityID>& handle() const noexcept {
         return elem;
     }
 
@@ -433,7 +433,7 @@ public:
     }
 
 private:
-    bool contains(const EntityID& entt) const {
+    bool contains(const Entity::EntityID& entt) const {
         return std::find(elem.begin(), elem.end(), entt) != elem.end();
     }
 
@@ -456,7 +456,7 @@ private:
 private:
     std::array<handlerType*, Get> pools;
     std::array<handlerType*, Exclude> filter;
-    std::vector<EntityID> elem;
+    std::vector<Entity::EntityID> elem;
 };
 
 template<typename, typename, typename>
@@ -493,8 +493,8 @@ class Group<owned_t<>, get_t<Get...>, exclude_t<Exclude...>> {
 
 public:
     using handler = Group_handler<common_type, 0u, sizeof...(Get), sizeof...(Exclude)>;
-    using base_iterator = std::vector<EntityID>::const_iterator;
-    using reverse_iterator = std::vector<EntityID>::const_reverse_iterator;
+    using base_iterator = std::vector<Entity::EntityID>::const_iterator;
+    using reverse_iterator = std::vector<Entity::EntityID>::const_reverse_iterator;
     using iterator = group_iterator<base_iterator, owned_t<>, get_t<Get...>>;
     using iterable = iterable_adapter<iterator>;
 
@@ -508,7 +508,7 @@ public:
     Group(handler& ref) noexcept : m_handler(&ref) {
     }
 
-    const std::vector<EntityID>& handle()const noexcept{
+    const std::vector<Entity::EntityID>& handle()const noexcept{
         return m_handler->handle();
     }
 
@@ -548,20 +548,20 @@ public:
         return m_handler ? handle().rend() : reverse_iterator{};
     }
 
-    EntityID front() const noexcept {
+    Entity::EntityID front() const noexcept {
        return m_handler ? handle().front() : NULL_INDEX;
     }
 
-    EntityID back() const noexcept {
+    Entity::EntityID back() const noexcept {
         return m_handler ? handle().back() : NULL_INDEX;
     }
 
-    base_iterator find(const EntityID entt) const noexcept {
+    base_iterator find(const Entity::EntityID entt) const noexcept {
         return m_handler ? 
             std::find(handle().begin(),handle().end(),entt) : base_iterator{};
     }
 
-    EntityID operator[](const size_t pos) const {
+    Entity::EntityID operator[](const size_t pos) const {
         return begin()[static_cast<std::ptrdiff_t>(pos)];
     }
 
@@ -576,17 +576,17 @@ public:
         return (m_handler && Index != npos) ? static_cast<element*>(m_handler->getComponentPool<Index>()) : nullptr;
     }
 
-    bool contains(const EntityID entt)const noexcept{
-        return m_handler && std::any_of(handle().begin(), handle().end(), [&entt](const EntityID& e) { return e == entt; });
+    bool contains(const Entity::EntityID entt)const noexcept{
+        return m_handler && std::any_of(handle().begin(), handle().end(), [&entt](const Entity::EntityID& e) { return e == entt; });
     }
 
     template<typename Type, typename... Other>
-    decltype(auto) get(const EntityID entt) const {
+    decltype(auto) get(const Entity::EntityID entt) const {
         return get<typeIndex<Type>, typeIndex<Other>...>(entt);
     }
 
     template<std::size_t... Index>
-    decltype(auto) get(const EntityID entt) const {
+    decltype(auto) get(const Entity::EntityID entt) const {
         const auto pools = getComponentPools(std::index_sequence_for<Get...>{});
 
         if constexpr(sizeof...(Index) == 0){
@@ -601,7 +601,7 @@ public:
     template<typename Func>
     void each(Func func) const {
         for (const auto entt : *this) {
-            if constexpr (is_applicable_v < Func, decltype(std::tuple_cat(std::tuple<EntityID>{}, std::declval<Group>().get({}))) > ) {
+            if constexpr (is_applicable_v < Func, decltype(std::tuple_cat(std::tuple<Entity::EntityID>{}, std::declval<Group>().get({}))) > ) {
                 std::apply(func, std::tuple_cat(std::make_tuple(entt), get(entt)));
             }
             else {
@@ -635,11 +635,11 @@ public:
     void sort(Compare compare, Sort algo = Sort{}, Args &&...args) {
         if (m_handler) {
             if constexpr (sizeof...(Index) == 0) {
-                static_assert(std::is_invocable_v<Compare, const EntityID, const EntityID>, "Invalid comparison function");
+                static_assert(std::is_invocable_v<Compare, const Entity::EntityID, const Entity::EntityID>, "Invalid comparison function");
                 m_handler->sort(std::move(compare), std::move(algo), std::forward<Args>(args)...);
             }
             else {
-                auto comp = [&compare, cpools = getComponentPools(std::index_sequence_for<Get...>{})](const EntityID lhs, const EntityID rhs) {
+                auto comp = [&compare, cpools = getComponentPools(std::index_sequence_for<Get...>{})](const Entity::EntityID lhs, const Entity::EntityID rhs) {
                     if constexpr (sizeof...(Index) == 1) {
                         return compare((std::get<Index>(cpools)->get(lhs), ...), (std::get<Index>(cpools)->get(rhs), ...));
                     }
@@ -726,22 +726,22 @@ public:
         return m_handler ? (handle().rbegin() + static_cast<std::ptrdiff_t>(m_handler->length())) : reverse_iterator{};
     }
 
-    EntityID front() const noexcept {
+    Entity::EntityID front() const noexcept {
         const auto it = begin();
         return it != end() ? *it : NULL_INDEX;
     }
 
-    EntityID back() const noexcept {
+    Entity::EntityID back() const noexcept {
         const auto it = rbegin();
         return it != rend() ? *it : NULL_INDEX;
     }
 
-    iterator find(const EntityID entt) const noexcept {
+    iterator find(const Entity::EntityID entt) const noexcept {
         const auto it = m_handler ? handle().find(entt) : iterator{};
         return it >= begin() ? it : iterator{};
     }
 
-    EntityID operator[](const size_t pos) const {
+    Entity::EntityID operator[](const size_t pos) const {
         return begin()[static_cast<std::ptrdiff_t>(pos)];
     }
 
@@ -750,7 +750,7 @@ public:
     }
 
   
-    bool contains(const EntityID entt) const noexcept {
+    bool contains(const Entity::EntityID entt) const noexcept {
         return m_handler && handle().ContainsEntity(entt) && (handle().Index(entt) < (m_handler->length()));
     }
 
@@ -799,12 +799,12 @@ public:
      * @return The elements assigned to the entity.
      */
     template<typename Type, typename... Other>
-    decltype(auto) get(const EntityID entt) const {
+    decltype(auto) get(const Entity::EntityID entt) const {
         return get<typeIndex<Type>, typeIndex<Other>...>(entt);
     }
 
     template<std::size_t... Index>
-    decltype(auto) get(const EntityID entt) const {
+    decltype(auto) get(const Entity::EntityID entt) const {
         const auto pools = getComponentPools(std::index_sequence_for<Owner...>{}, std::index_sequence_for<Get...>{});
 
         if constexpr (sizeof...(Index) == 0) {
@@ -822,7 +822,7 @@ public:
     void each(Func func) const {
 
         for (auto args : each()) {
-            if constexpr (is_applicable_v < Func, decltype(std::tuple_cat(std::tuple<EntityID>{}, std::declval<Group>().get({}))) > ) {
+            if constexpr (is_applicable_v < Func, decltype(std::tuple_cat(std::tuple<Entity::EntityID>{}, std::declval<Group>().get({}))) > ) {
                 std::apply(func, args);
             }
             else {
@@ -868,11 +868,11 @@ public:
         const auto cpools = getComponentPools(std::index_sequence_for<Owner...>{}, std::index_sequence_for<Get...>{});
 
         if constexpr (sizeof...(Index) == 0) {
-            static_assert(std::is_invocable_v<Compare, const EntityID, const EntityID>, "Invalid comparison function");
+            static_assert(std::is_invocable_v<Compare, const Entity::EntityID, const Entity::EntityID>, "Invalid comparison function");
             getComponentPool<0>()->sort_n(m_handler->length(), std::move(compare), std::move(algo), std::forward<Args>(args)...);
         }
         else {
-            auto comp = [&compare, &cpools](const EntityID lhs, const EntityID rhs) {
+            auto comp = [&compare, &cpools](const Entity::EntityID lhs, const Entity::EntityID rhs) {
                 if constexpr (sizeof...(Index) == 1) {
                     return compare((std::get<Index>(cpools)->GetRef(lhs), ...), (std::get<Index>(cpools)->GetRef(rhs), ...));
                 }

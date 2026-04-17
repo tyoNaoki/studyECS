@@ -4,7 +4,7 @@
 
 namespace ECS{
 
-EntityID EntityPool::alloc(std::string name)
+    Entity::EntityID EntityPool::alloc(std::string name)
 {
     if (first_free != std::numeric_limits<size_t>::max() && n_free > 0) { // 空きスロットあり
         auto free_index = first_free;
@@ -15,7 +15,7 @@ EntityID EntityPool::alloc(std::string name)
             ASSERT(false,"free slot bug!!");
         }
 
-        EntityID entity = CreateEntityId((EntityIndex)free_index, entry.version++);
+        Entity::EntityID entity = Entity::CreateEntityId((Entity::EntityIndex)free_index, entry.version++);
 
         first_free = entry.next_free; // 次の空きスロット
         n_free--;
@@ -34,31 +34,31 @@ EntityID EntityPool::alloc(std::string name)
 
     auto index = m_dense.size();
 
-    auto entity = CreateEntityId((EntityIndex)index, 0);
+    auto entity = Entity::CreateEntityId((Entity::EntityIndex)index, 0);
     m_dense.push_back({name,entity});
     m_sparse.push_back({index,0,std::numeric_limits<size_t>::max() });
 
     return entity;
 }
 
-bool EntityPool::dealloc(EntityID& entity)
+bool EntityPool::dealloc(Entity::EntityID& entity)
 {
-    auto entityIndex = (size_t)GetEntityIndex(entity);
-    if(entityIndex > m_sparse.size()-1||!IsEntityValid(entity)) return false;
+    auto entityIndex = Entity::GetEntityIndex(entity);
+    if(entityIndex > m_sparse.size()-1||!Entity::IsEntityValid(entity)) return false;
 
     if(m_sparse[entityIndex].Empty())return false;
 
     auto denseIndex = m_sparse[entityIndex].denseIndex;
 
-    auto version = GetEntityVersion(entity);
-    if (!IsEntityValid(m_dense[denseIndex].second)||GetEntityVersion(m_dense[denseIndex].second) != version) return false;
+    auto version = Entity::GetEntityVersion(entity);
+    if (!Entity::IsEntityValid(m_dense[denseIndex].second)|| Entity::GetEntityVersion(m_dense[denseIndex].second) != version) return false;
 
     //sparseの該当要素を使用不可に設定
     m_sparse[entityIndex] = { std::numeric_limits<size_t>::max(),version,first_free};
 
     //要素数が一つだけの場合
     if (denseUseSize() == 1) {
-        m_dense[denseIndex].second = INVALID_ENTITY;
+        m_dense[denseIndex].second = Entity::INVALID_ENTITY;
     }
     else {
         size_t lastIndex = denseUseSize() - 1;
@@ -68,20 +68,20 @@ bool EntityPool::dealloc(EntityID& entity)
         m_dense[denseIndex] = {lastEntity.first,lastEntity.second};
         m_dense.pop_back();
 
-        m_sparse[(size_t)GetEntityIndex(lastEntity.second)] = { denseIndex, GetEntityVersion(lastEntity.second), std::numeric_limits<size_t>::max() };
+        m_sparse[Entity::GetEntityIndex(lastEntity.second)] = { denseIndex, Entity::GetEntityVersion(lastEntity.second), std::numeric_limits<size_t>::max() };
     }
 
     first_free = entityIndex;
     n_free ++;
 
-    entity = INVALID_ENTITY;
+    entity = Entity::INVALID_ENTITY;
 
     return true;
 }
 
-bool EntityPool::contains(const EntityID& entity)
+bool EntityPool::contains(const Entity::EntityID& entity)
 {
-    auto index = (size_t)GetEntityIndex(entity);
+    auto index = Entity::GetEntityIndex(entity);
 
     if(index >= m_sparse.size()||m_sparse[index].Empty()||m_sparse[index].denseIndex > denseUseSize()-1) return false;
 
@@ -93,9 +93,9 @@ size_t EntityPool::denseUseSize()
     return m_dense.size()-n_free;
 }
 
-std::string EntityPool::GetName(EntityID entity)
+std::string EntityPool::GetName(Entity::EntityID entity)
 {
-    auto index = (size_t)GetEntityIndex(entity);
+    auto index = Entity::GetEntityIndex(entity);
 
     if(index >= m_sparse.size()) return "NULL";
 

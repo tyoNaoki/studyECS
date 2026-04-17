@@ -38,19 +38,19 @@ public:
         return ComponentMaxNum;
     }
 
-    void setEntityMask(const EntityID& id) noexcept{
+    void setEntityMask(const Entity::EntityID& id) noexcept{
         m_entityMasks.Emplace(id);
     }
 
-    ComponentBitSet& getEntityMask(EntityID& id) noexcept {
+    ComponentBitSet& getEntityMask(const Entity::EntityID id) noexcept {
         return *m_entityMasks.Get(id);
     }
 
-    void deleteEntity(const EntityID& id) {
+    void deleteEntity(const Entity::EntityID& id) {
         m_entityMasks.Delete(id);
     }
 
-    void removeAllComponent(const EntityID& entity) {
+    void removeAllComponent(const Entity::EntityID& entity) {
         auto& bit = getEntityMask(entity);
 
         //所持コンポーネントの数
@@ -68,7 +68,7 @@ public:
         }
     }
 
-    bool removeComponent(size_t compIndex,const EntityID& entity){
+    bool removeComponent(size_t compIndex,const Entity::EntityID& entity){
         if(m_componentPools[compIndex]){
             ComponentBitSet& mask = getEntityMask(entity);
             setComponentBit(mask,compIndex,0);
@@ -80,7 +80,7 @@ public:
     }
 
     template <typename T, typename... Args>
-    T* emplaceOrUpdateComponent(const EntityID& entityID, Args&&... args) {
+    T* emplaceOrUpdateComponent(const Entity::EntityID& entityID, Args&&... args) {
         auto& pool = getComponentPool<T>();
 
         //更新
@@ -101,7 +101,7 @@ public:
     }
 
     template <typename T, typename... Args>
-    T* emplace(const EntityID& entityID, Args&&... args) {
+    T* emplace(const Entity::EntityID& entityID, Args&&... args) {
         auto& pool = getComponentPool<T>();
 
         registComponentSet<T>(entityID);
@@ -113,18 +113,17 @@ public:
     }
 
     template <typename T>
-    T* getComponent(const EntityID& entityID) {
+    T* getComponent(const Entity::EntityID& entityID) {
         auto& pool = getComponentPool<T>();
         return pool.Get(entityID);
     }
 
     template <typename T>
-    bool removeComponent(const EntityID& entityID) {
+    bool removeComponent(const Entity::EntityID& entityID) {
         //無効なEntity
-        if (entityID == INVALID_ENTITY) return false;
+        if (entityID == Entity::INVALID_ENTITY) return false;
 
         auto& pool = getComponentPool<T>();
-
         if (!pool.Get(entityID)) return false;
 
         pool.Delete(entityID);
@@ -135,13 +134,14 @@ public:
         return true;
     }
 
-    ComponentBitSet* getComponentBitSet(const EntityID& entity) {
+    ComponentBitSet* getComponentBitSet(const Entity::EntityID& entity) {
         return m_entityMasks.Get(entity);
     }
 
     template <typename... Components>
-    bool has(EntityID entity) {
-        auto bitset = getEntityMask(entity);
+    bool has(const Entity::EntityID entity) {
+        
+        auto& bitset = getEntityMask(entity);
 
         if (!bitset.any()) return false;
 
@@ -164,7 +164,7 @@ public:
     };
 
     template <typename... Components>
-    void registComponentSet(const EntityID& entity) {
+    void registComponentSet(const Entity::EntityID& entity) {
         //emplace
         ComponentBitSet* bitset = m_entityMasks.Get(entity);
 
@@ -249,10 +249,12 @@ private:
         std::initializer_list<int>{ (setComponentBit<Components>(mask, 1), 0)... };
         return mask;
     }
+    
+    /*
 
-    ComponentBitSet& getEntityMask(EntityID entity) {
+    ComponentBitSet& getEntityMask(Entity::EntityID entity) {
         return *m_entityMasks.Get(entity);
-    }
+    }*/
 
     template <typename T>
     void setComponentBit(ComponentBitSet& bit, bool val) {

@@ -11,15 +11,15 @@ namespace ECS{
 
 struct EntityIterator {
     using iterator_category = std::forward_iterator_tag;
-    using value_type = EntityID;
-    using reference = EntityID&;
-    using pointer = EntityID*;
+    using value_type = Entity::EntityID;
+    using reference = Entity::EntityID&;
+    using pointer = Entity::EntityID*;
 
-    using DenseIterator = std::vector<std::pair<std::string, EntityID>>::iterator;
+    using DenseIterator = std::vector<std::pair<std::string, Entity::EntityID>>::iterator;
 
     explicit EntityIterator(DenseIterator it) : m_it(it) {}
 
-    EntityID operator*() const { return m_it->second; }
+    Entity::EntityID operator*() const { return m_it->second; }
 
     EntityIterator& operator++() { ++m_it; return *this; }
     EntityIterator  operator++(int) { auto tmp = *this; ++m_it; return tmp; }
@@ -33,7 +33,7 @@ private:
 
 struct Entry {
     size_t denseIndex;
-    EntityVersion version;
+    Entity::EntityVersion version;
     size_t next_free;  // `SIZE_MAX` ‚È‚ç‹ó‚«‚È‚µ
 
     bool Empty(){return denseIndex == std::numeric_limits<size_t>::max();}
@@ -42,20 +42,20 @@ struct Entry {
 class EntityPool 
     : public EntityEventMixin<EntityPool>
 {
-    using Pack = std::pair<std::string, EntityID>;
+    using Pack = std::pair<std::string, Entity::EntityID>;
     using SparseContainer = std::vector<Entry>;
     using DenseContainer = std::vector<Pack>;
 
 public:
-    EntityID alloc(std::string name = "");
+    Entity::EntityID alloc(std::string name = "");
 
-    bool dealloc(EntityID& entity);
+    bool dealloc(Entity::EntityID& entity);
 
-    bool contains(const EntityID& entity);
+    bool contains(const Entity::EntityID& entity);
 
     size_t denseUseSize();
 
-    std::string GetName(EntityID entity);
+    std::string GetName(Entity::EntityID entity);
 
     EntityIterator begin() { return EntityIterator(m_dense.begin()); }
     EntityIterator end() { return EntityIterator(m_dense.end()); }
