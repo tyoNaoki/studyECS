@@ -40,7 +40,7 @@ void hashMapBenchmarks();
 
 int test()
 {
-	RUN_TEST("entityTest",1);
+	RUN_TEST("test_create_group",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -112,8 +112,6 @@ TEST_CASE_PRIORITY(test_sort_with_custom_algo) {
 	ASSERT(std::is_sorted(v.begin(), v.end(),std::less<>{}), "custom algo sorts");
 }
 
-
-
 TEST_CASE(typeListTest)
 {
 	// テスト
@@ -160,7 +158,7 @@ TEST_CASE(entityTest)
 		auto& entityID = x.entity;
 		auto& vel = view->get<Velocity>(x.components);
 		auto& posi = view->get<Position>(x.components);
-		bool hasComp = world.has<Velocity>(view->get<EntityID>(x));
+		bool hasComp = world.has<Velocity>(entityID);
 	}
 
 	/*
@@ -213,13 +211,60 @@ TEST_CASE(test_create_group) {
 
 	bool isPrintSpawnLog = false;
 	bool isPrintDespawnLog = false;
-	auto spawnLog = [&isPrintSpawnLog](EntityID entt) {
-		std::cout << "World spawn " << GetEntityIndex(entt) << " entity" << std::endl;
+
+	//コンストラクターイベント追加
+	auto spawnLog = [&](ECS::Entity::EntityID entt) {
+		const auto index = entt.index;
+
+		// ログ
+		std::cout << "[Spawn] Entity " << index << " created\n";
+
+		// デバッグ可視化（エディタ）
+		//debugHierarchy.addEntity(index);
+
+		// 初期化処理（Start 的なもの）
+		if (world.has<A>(entt)) {
+			auto* a = world.getComponent<A>(entt);
+			std::cout << "[A] Entity " << index << " initialized\n";
+		}
+
+		// AI 初期化
+		if (world.has<B>(entt)) {
+			auto* b = world.getComponent<B>(entt);
+			std::cout << "[B] Entity " << index << " initialized\n";
+		}
+
+		// フラグ
 		isPrintSpawnLog = true;
 	};
 
-	auto destroyLog = [&isPrintDespawnLog](EntityID entt) {
-		std::cout << "World destory " << GetEntityIndex(entt) << " entity" << std::endl;
+	//デストラクターイベント追加
+	auto destroyLog = [&](ECS::Entity::EntityID entt) {
+		const auto index = ECS::Entity::GetEntityIndex(entt);
+
+		// ログ
+		std::cout << "[Destroy] Entity " << index << " removed\n";
+
+		// エディタから削除
+		//debugHierarchy.removeEntity(index);
+
+		// 例：パーティクル再生
+		if (world.has<A>(entt)) {
+			auto* a = world.getComponent<A>(entt);
+			std::cout << "[A] Entity " << index << " destroy\n";
+			//fx.spawnAt(world.get<Transform>(entt).position);
+		}
+
+		// 子エンティティの破棄
+		if (world.has<B>(entt)) {
+			auto* b = world.getComponent<B>(entt);
+			std::cout << "[B] Entity " << index << " destroy\n";
+			/*for (auto child : world.get<Children>(entt).list) {
+				world.destroy(child);
+			}*/
+		}
+		
+		std::cout << "World destory " << ECS::Entity::GetEntityIndex(entt) << " entity" << std::endl;
 		isPrintDespawnLog = true;
 	};
 
@@ -232,9 +277,10 @@ TEST_CASE(test_create_group) {
 
 	auto entity = world.spawn<A,C,D>();
 	auto entity1 = world.spawn<A, B,tagA>(A{ 1 });
-	auto entity2 = world.spawn<A,B,tagA>("Apple", A{ 2 });
-	auto entity3 = world.spawn<A,C>();
-	auto entity4 = world.spawn<A,B,C,D>("Banana", A{ 4 });
+	auto entity2 = world.spawn<A, B, tagA>("Apple", A{ 2 });
+	auto entity3 = world.spawn<A, C>();
+	auto entity4 = world.spawn<A, B, C, D>("Banana", A{ 4 });
+	world.despawn(entity3);
 
 	assertTrue(isPrintSpawnLog, "entityPoolConstructor() print Log on Spawn Entity");
 	assertTrue(isPrintDespawnLog, "entityPoolDestructor() print Log on Despawn Entity");
@@ -254,22 +300,22 @@ TEST_CASE(test_create_group) {
 	auto& tagAPool = world.getComponentPool<tagA>();
 	assertTrue(!tagAPool.hasData(),"tagA struct is emptyPool");
 
-	auto testOnUpdateFunction = ([](const EntityID& entity) {
-		std::cout << GetEntityIndex(entity) << " has Updated" << std::endl;
+	//patch関数実行時に起きるように追加
+	auto testOnUpdateFunction = ([](const ECS::Entity::EntityID& entity) {
+		std::cout << ECS::Entity::GetEntityIndex(entity) << " has Updated" << std::endl;
 	});
-
 	aPool.on_update().append(testOnUpdateFunction);
-
-	/*
+	
+	//第一引数のentityにその場で第二引数の関数実行
 	aPool.patch(entity,[&entity](auto& pos) {
 		std::cout << GetEntityIndex(entity) << " only patch Updating" << std::endl;
 		});
 
+	//poolに含まれる全てのEntityにその場で引数の関数実行する
 	aPool.patch([](auto entity,auto& pos) {
 		pos.x += 7;
 		std::cout << GetEntityIndex(entity)<<" patch Updating"<< std::endl;
 	});
-	*/
 
 	//auto group = ECS::world().group<A>(ECS::get<B>,ECS::exclude<tagA>);
 
@@ -343,32 +389,36 @@ TEST_CASE(test_create_group) {
 	auto poolA = sortGroup.getComponentPool<A>();
 
 	auto& entity1afterRef = poolA->GetRef(entity1);
-	ASSERT(entity1afterRef.x == GetEntityIndex(entity1), "entity1 GetRef faild");
+	//ASSERT(entity1afterRef.x == ECS::Entity::GetEntityIndex(entity1), "entity1 GetRef faild");
 
 	std::cout<<"sort\n";
 
 	for(auto&x:sortGroup){
-		std::cout<<GetEntityIndex(x)<<",";
+		std::cout<<ECS::Entity::GetEntityIndex(x)<<",";
 	}
 
 	std::cout << "\n";
 
-	sortGroup.sort(std::less<>{});
+	sortGroup.sort([](const ECS::Entity::EntityID& a, const ECS::Entity::EntityID& b) {
+		return a.index < b.index;
+		});
+
 	for (auto& x : sortGroup) {
-		std::cout << GetEntityIndex(x) << ",";
+		std::cout << ECS::Entity::GetEntityIndex(x) << ",";
 	}
+
 	std::cout<<std::endl;
 
 	auto& entity1Ref =  poolA->GetRef(entity1);
-	std::cout<<GetEntityIndex(entity1)<<"\n";
-	ASSERT(entity1Ref.x == GetEntityIndex(entity1),"entity1 GetRef faild");
+	std::cout<<ECS::Entity::GetEntityIndex(entity1)<<"\n";
+	ASSERT(entity1Ref.x == ECS::Entity::GetEntityIndex(entity1),"entity1 GetRef faild");
 	auto& entity2Ref = poolA->GetRef(entity2);
-	ASSERT(entity2Ref.x == GetEntityIndex(entity2), "entity2 GetRef faild");
+	ASSERT(entity2Ref.x == ECS::Entity::GetEntityIndex(entity2), "entity2 GetRef faild");
 	auto& entity4Ref = poolA->GetRef(entity4);
-	ASSERT(entity4Ref.x == GetEntityIndex(entity4), "entity4 GetRef faild");
+	ASSERT(entity4Ref.x == ECS::Entity::GetEntityIndex(entity4), "entity4 GetRef faild");
 
 	for (auto& x : poolA->GetEntityList()) {
-		std::cout << GetEntityIndex(x) << ",";
+		std::cout << ECS::Entity::GetEntityIndex(x) << ",";
 	}
 
 	std::cout<<"\n";

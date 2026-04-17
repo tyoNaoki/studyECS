@@ -16,17 +16,17 @@ namespace COMPONENT{
         auto& on_destroy() { return destroy; }
 
         // 利用側（派生クラス）から呼び出す通知用メソッド
-        void notify_construct(EntityID entity) { construct(entity); }
-        void notify_update(EntityID entity) { update(entity); }
-        void notify_destroy(EntityID entity) { destroy(entity); }
+        void notify_construct(Entity::EntityID entity) { construct(entity); }
+        void notify_update(Entity::EntityID entity) { update(entity); }
+        void notify_destroy(Entity::EntityID entity) { destroy(entity); }
 
     private:
-        using CallbackType = EVENT::CallbackList_Single<void(const EntityID)>;
+        using CallbackType = EVENT::CallbackList_Single<void(const Entity::EntityID)>;
 
     private:
-        EVENT::CallbackList_Single<void(const EntityID)> construct;
-        EVENT::CallbackList_Single<void(const EntityID)> update;
-        EVENT::CallbackList_Single<void(const EntityID)> destroy;
+        EVENT::CallbackList_Single<void(const Entity::EntityID)> construct;
+        EVENT::CallbackList_Single<void(const Entity::EntityID)> update;
+        EVENT::CallbackList_Single<void(const Entity::EntityID)> destroy;
     };
 
 }//namespace COMPONENT_STORAGE

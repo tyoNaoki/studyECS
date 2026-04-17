@@ -43,18 +43,23 @@ public:
         void>;       // タグ用
 
     template<typename... Args>
-    pointer Emplace(EntityID entity, Args&&... args) {
+    pointer Emplace(Entity::EntityID entity, Args&&... args) {
         return UnderingType::Emplace(entity, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    pointer Update(EntityID entity, Args&&... args) {
+    pointer Update(Entity::EntityID entity, Args&&... args) {
         return UnderingType::Update(entity, std::forward<Args>(args)...);
     }
 
     template<typename F>
-    void patch(EntityID entityID, F&& fn) {
-        assert(false);
+    void patch(F&& fn) {
+        ASSERT(false, "not work");
+    }
+
+    template<typename F>
+    void patch(Entity::EntityID entityID, F&& fn) {
+        ASSERT(false,"not work");
     }
 
     bool hasData(){
@@ -73,14 +78,14 @@ public:
     using typename Base::pointer;
 
     template<typename... Args>
-    pointer Emplace(const EntityID& entityID, Args&&... args) {
+    pointer Emplace(const Entity::EntityID& entityID, Args&&... args) {
         this->notify_construct(entityID);
         
         return Base::Emplace(entityID, std::forward<Args>(args)...);
     }
 
     template<typename... Args>
-    pointer Update(const EntityID& entityID, Args&&... args) {
+    pointer Update(const Entity::EntityID& entityID, Args&&... args) {
         this->notify_update(entityID);
 
         return Base::Update(entityID, std::forward<Args>(args)...);
@@ -89,13 +94,13 @@ public:
     template<typename F>
     void patch(F&& fn) {
         using OneArg = std::is_invocable<F, Type&>;
-        using TwoArg = std::is_invocable<F, EntityID, Type&>;
+        using TwoArg = std::is_invocable<F, Entity::EntityID, Type&>;
 
         static_assert(OneArg::value || TwoArg::value,
             "patch() に渡す fn は void(T&) または void(EntityID, T&) の形にしてください");
 
         for(auto it = Base::begin();it!=Base::end();it++){
-            EntityID entityID = *it;
+            Entity::EntityID entityID = *it;
             auto& comp = this->GetRef(entityID);
 
             if constexpr (OneArg::value) {
@@ -113,7 +118,7 @@ public:
     }
 
     template<typename F>
-    void patch(EntityID entityID, F&& fn) {
+    void patch(Entity::EntityID entityID, F&& fn) {
         assert(this->ContainsEntity(entityID));
 
         using OneArg = std::is_invocable<F, Type&>;
@@ -130,7 +135,7 @@ public:
         this->notify_update(entityID);
     }
 
-    void Delete(const EntityID& entityID){
+    void Delete(const Entity::EntityID& entityID){
         this->notify_destroy(entityID);
 
         return Base::Delete(entityID);

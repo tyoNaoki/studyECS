@@ -43,7 +43,7 @@ private:
     
     using base_type = ISparseSet;
     
-    using groupID = EntityIndex;
+    using groupID = uint32_t;
 
     //template<typename Type,StorageClass S>
     //using storage_for_type = typename StorageFor<Type, S>::type;
@@ -142,10 +142,11 @@ public:
         return entityPool.on_destroy();
     }
 
-    EntityID spawnEmpty(const std::string name = "Empty") {
-        EntityID id =  entityPool.alloc(name); // EntityPoolを通じてエンティティを作成
-        entityPool.notify_construct(id);
+    Entity::EntityID spawnEmpty(const std::string name = "Empty") {
+        Entity::EntityID id =  entityPool.alloc(name); // EntityPoolを通じてエンティティを作成
         componentPoolManager.setEntityMask(id);
+
+        entityPool.notify_construct(id);
         return id;
     };
 
@@ -164,7 +165,7 @@ public:
     //期待コンポーネント …Components とユーザが渡した Provided…
     //足りない型は {} で補完
     template <typename... Components, typename... ProvidedArgs>
-    EntityID spawn(const std::string& name, ProvidedArgs&&... provided) {
+    Entity::EntityID spawn(const std::string& name, ProvidedArgs&&... provided) {
         auto provTuple = std::make_tuple(std::forward<ProvidedArgs>(provided)...);
         auto fullTuple = std::make_tuple(extract_or_default<Components>(provTuple)...);
 
@@ -174,22 +175,25 @@ public:
        //名前省略オーバーロード
     template <typename... Components, typename... ProvidedArgs,
         std::enable_if_t<(sizeof...(ProvidedArgs) <= sizeof...(Components)), int> = 0>
-    EntityID spawn(ProvidedArgs&&... provided) {
+        Entity::EntityID spawn(ProvidedArgs&&... provided) {
         return spawn<Components...>("Object", std::forward<ProvidedArgs>(provided)...);
     }
 
-    bool despawn(EntityID& entity){
+    bool despawn(Entity::EntityID& entity){
         if(!entityPool.contains(entity)) return false;
 
-       componentPoolManager.removeAllComponent(entity);
+        //デストラクター
+        entityPool.notify_destroy(entity);
 
-       entityPool.notify_destroy(entity);
-       componentPoolManager.deleteEntity(entity);
-       
-       return entityPool.dealloc(entity);
+        //コンポーネント削除
+        componentPoolManager.removeAllComponent(entity);
+        //entityMaskを削除
+        componentPoolManager.deleteEntity(entity);
+       //freeIDに追加
+        return entityPool.dealloc(entity);
     };
 
-    std::string getName(const EntityID& entity){
+    std::string getName(const Entity::EntityID& entity){
         if (!entityPool.contains(entity)) return "NULL";
 
         return entityPool.GetName(entity);
@@ -200,13 +204,13 @@ public:
     */
 
     template <typename T, typename... Args>
-    T* emplaceOrUpdateComponent(const EntityID& entityID, Args&&... args) {
+    T* emplaceOrUpdateComponent(const Entity::EntityID& entityID, Args&&... args) {
         return componentPoolManager.emplaceOrUpdateComponent<T>(entityID, std::forward<Args>(args)...
             );
     }
 
     template <typename T, typename... Args>
-    T* emplace(const EntityID& entityID, Args&&... args) {
+    T* emplace(const Entity::EntityID& entityID, Args&&... args) {
         return componentPoolManager.emplace<T>(entityID, std::forward<Args>(args)...
             );
     }
@@ -217,25 +221,25 @@ public:
     }
 
     template <typename T>
-    T* getComponent(const EntityID& entityID) {
+    T* getComponent(const Entity::EntityID& entityID) {
         return componentPoolManager.getComponent<T>(entityID);
     }
     
     template <typename T>
-    void removeComponent(const EntityID& entityID){
+    void removeComponent(const Entity::EntityID& entityID){
         componentPoolManager.removeComponent<T>(entityID);
     }
 
-    void removeAllComponent(const EntityID& entityID) {
+    void removeAllComponent(const Entity::EntityID& entityID) {
         componentPoolManager.removeAllComponent(entityID);
     }
 
-    auto* getComponentBitSet(const EntityID& entity){
+    auto* getComponentBitSet(const Entity::EntityID& entity){
         return componentPoolManager.getComponentBitSet(entity);
     }
 
     template <typename... Components>
-    bool has(EntityID entity){
+    bool has(const Entity::EntityID entity){
         return componentPoolManager.has<Components...>(entity);
     }
 
@@ -251,6 +255,7 @@ public:
         return std::make_unique<SceneView<Get...>>(*this);
     }
 
+    
     template<typename... Owned, typename... Get, typename... Exclude, COMPONENT::StorageType S = COMPONENT::StorageType::EventType>
     Group<owned_t<COMPONENT::StorageClass_t<Owned, S>...>,get_t<COMPONENT::StorageClass_t<Get, S>...>,exclude_t<COMPONENT::StorageClass_t<Exclude, S>...>>
     group(get_t<Get...> = get_t{},exclude_t<Exclude...> = exclude_t{}) {
@@ -260,10 +265,9 @@ public:
 
         std::shared_ptr<handler_type> handler{};
 
-        return group_type{};
-
         //groupsを見て、存在するか確認。
         if(auto ptr = groups.find(group_type::group_id())){
+            ASSERT(false,"this groups is valid");
             return group_type{};
         }
 
@@ -295,6 +299,7 @@ public:
     {
         return groups.size();
     }
+    
 
     template <typename T>
     auto& getComponentPool() {
@@ -340,8 +345,8 @@ private:
 
     //各コンポーネント値が揃ったタプルを受け取って実際に登録
     template <typename... Components, typename Tuple>
-    EntityID spawn_impl(const std::string& name, Tuple&& fullTuple) {
-        EntityID id = entityPool.alloc(name);
+    Entity::EntityID spawn_impl(const std::string& name, Tuple&& fullTuple) {
+        Entity::EntityID id = entityPool.alloc(name);
         componentPoolManager.setEntityMask(id);
 
         std::apply(
@@ -437,8 +442,8 @@ class SceneView{
 private:
     struct Pack
     {
-        Pack(EntityID entityID, std::tuple<Get&...> comps):entity(entityID),components(comps){}
-        EntityID entity;
+        Pack(Entity::EntityID entityID, std::tuple<Get&...> comps):entity(entityID),components(comps){}
+        Entity::EntityID entity;
         std::tuple<Get&...> components;
     };
 
@@ -456,14 +461,14 @@ private:
     ISparseSet* m_smallest = nullptr;
     
     //対象のコンポーネントを全て所持しているか
-    bool AllContain(EntityID id) {
+    bool AllContain(Entity::EntityID id) {
         return std::all_of(m_viewPools.begin(), m_viewPools.end(), [id](ISparseSet* pool) {
             return pool->ContainsEntity(id);
             });
     }
 
     //除外対象のコンポーネントを含んでいないか
-    bool NotExcluded(EntityID id) {
+    bool NotExcluded(Entity::EntityID id) {
         if (m_excludedPools.empty()) return true;
         return std::none_of(m_excludedPools.begin(), m_excludedPools.end(), [id](ISparseSet* pool) {
             return pool->ContainsEntity(id);
@@ -479,7 +484,7 @@ private:
 
     // エンティティIDを指定し、対象のコンポーネントのタプルを作成する
     template <size_t... Indices>
-    auto MakeComponentTuple(EntityID id, std::index_sequence<Indices...>) {
+    auto MakeComponentTuple(Entity::EntityID id, std::index_sequence<Indices...>) {
         return std::make_tuple(std::ref(GetPoolAt<Indices>()->GetRef(id))...);
     }
 
@@ -489,11 +494,11 @@ private:
 
         // 最も小さいコンポーネントプールを走査し、他のプールと比較する
         // エンティティリストをコピーすることで、ループ中の安全な削除を可能にする
-        for (EntityID id : m_smallest->GetEntityList()) {
+        for (Entity::EntityID id : m_smallest->GetEntityList()) {
             if (AllContain(id) && NotExcluded(id)) {
 
                 // 関数適用（エンティティIDを含む場合）
-                if constexpr (std::is_invocable_v<Func, EntityID, Get&...>) {
+                if constexpr (std::is_invocable_v<Func, Entity::EntityID, Get&...>) {
                     std::apply(func, std::tuple_cat(std::make_tuple(id), MakeComponentTuple(id, inds)));
                 }
                 else {
@@ -521,7 +526,7 @@ public:
 
     //functions
     using ForEachFunc = std::function<void(Get&...)>;
-    using ForEachFuncWithID = std::function<void(EntityID, Get&...)>;
+    using ForEachFuncWithID = std::function<void(Entity::EntityID, Get&...)>;
 
     //using Iterator = std::vector<EntityID>;
     //iterator begin() { return m_entities.begin(); }
@@ -598,12 +603,12 @@ public:
     */
     //Pakc<Get...>
 
-    std::vector<std::tuple<EntityID, Get&...>> each() {
+    std::vector<std::tuple<Entity::EntityID, Get&...>> each() {
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
         //std::vector<Pack<Get...>> result;
-        std::vector<std::tuple<EntityID, Get&...>> result;
+        std::vector<std::tuple<Entity::EntityID, Get&...>> result;
 
-        for (EntityID id : m_smallest->GetEntityList()) {
+        for (Entity::EntityID id : m_smallest->GetEntityList()) {
             if (AllContain(id)) {
                 result.push_back(std::tuple_cat(std::make_tuple(id), MakeComponentTuple(id, inds)));
             }
@@ -629,10 +634,10 @@ public:
     void each(Func func){
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
 
-        for(EntityID entity : m_smallest->GetEntityList()){
+        for(Entity::EntityID entity : m_smallest->GetEntityList()){
             if(!AllContain(entity)) continue;
             auto component_Tuple = MakeComponentTuple(entity, inds);
-            if constexpr (std::is_invocable_v<Func,EntityID,Get&...>){
+            if constexpr (std::is_invocable_v<Func, Entity::EntityID,Get&...>){
                 std::apply(func, std::tuple_cat(std::make_tuple(entity), component_Tuple));
             }
             else if constexpr (std::is_invocable_v<Func,Get&...>){
