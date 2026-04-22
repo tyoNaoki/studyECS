@@ -26,7 +26,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	// while(裏画面を表画面に反映, メッセージ処理, 画面クリア)
 	while (!isNotFinish && ScreenFlip() == 0 && ProcessMessage() == 0 && ClearDrawScreen() == 0)
 	{
-		test();
+		ecs_Test();
 		//Transform2D trans(150,100);
 		//DrawFormatString(0,0, Green, "座標[%d,%d]", 0,0); // 文字を描画する
 	}

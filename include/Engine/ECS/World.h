@@ -243,18 +243,25 @@ public:
         return componentPoolManager.has<Components...>(entity);
     }
 
-    /*auto& worldEvent(){
-        return m_WorldEvents;
-    }*/
+    auto& worldEvent(){
+        return worldEvents;
+    }
     
-    template <typename... Get>
+    /*template <typename... Get>
     std::unique_ptr<SceneView<Get...>>  
     View() {
         ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
 
         return std::make_unique<SceneView<Get...>>(*this);
-    }
+    }*/
 
+    template <typename... Get>
+    SceneView<Get...>
+        View() {
+        ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
+
+        return SceneView<Get...>(*this);
+    }
     
     template<typename... Owned, typename... Get, typename... Exclude, COMPONENT::StorageType S = COMPONENT::StorageType::EventType>
     Group<owned_t<COMPONENT::StorageClass_t<Owned, S>...>,get_t<COMPONENT::StorageClass_t<Get, S>...>,exclude_t<COMPONENT::StorageClass_t<Exclude, S>...>>
@@ -440,6 +447,7 @@ public:
 template<typename... Get>
 class SceneView{
 private:
+
     struct Pack
     {
         Pack(Entity::EntityID entityID, std::tuple<Get&...> comps):entity(entityID),components(comps){}
@@ -571,8 +579,8 @@ public:
     *       //EntitiyIDÇÕïœêîÇ≈éÊìæ
 			auto& entityID = x.entity;
             //packÇ…Ç†ÇÈcomponentÇÕà»â∫ä÷êîÇ≈éÊìæ
-			auto& vel = view->get<Velocity>(x);
-			auto& posi = view->get<Position>(x);
+			auto& vel = view.get<Velocity>(x);
+			auto& posi = view.get<Position>(x);
             vel.x += 5.0f;
 	    }
     */
@@ -580,6 +588,11 @@ public:
     template <typename Type>
     Type& get(std::tuple<Get&...>& pack) {
         return std::get<Type&>(pack);
+    }
+
+
+    size_t size(){
+        return m_smallest->Size();
     }
 
     void ForEach(ForEachFunc func) {
@@ -619,12 +632,12 @@ public:
 
     /*à»â∫ä÷êîégópó·
     * auto view = ECS::world().View<Position,Velocity>();
-      view->each([](auto entity,auto &pos,auto &vel){
+      view.each([](auto entity,auto &pos,auto &vel){
 			pos.x+=5.0f;
 			vel.x += 5.0f;
 		});
 
-		view->each([](auto& pos, auto& vel) {
+		view.each([](auto& pos, auto& vel) {
 			pos.x += 5.0f;
 			vel.x += 5.0f;
 		});

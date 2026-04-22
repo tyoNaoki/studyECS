@@ -9,6 +9,7 @@
 #include <cassert>
 #include <random>
 
+#include "Engine\Core\JobManager.h"
 #include "Engine\ECS\World.h"
 #include "TestFramework.hpp"
 
@@ -38,9 +39,9 @@ struct TransformComponent {
 
 void hashMapBenchmarks();
 
-int test()
+int ecs_Test()
 {
-	RUN_TEST("test_create_group",1);
+	RUN_TEST("entityJobTest",1);
 	//RUN_TEST("test_particalJobSystem", 450);
 
 	//RUN_TEST("test_bigJobSystem",1);
@@ -48,46 +49,6 @@ int test()
 	//RUN_PRIORITY_TESTS(false);
 
 	return 0;
-}
-
-TEST_CASE(test_sort_empty) {
-	std::vector<int> v;
-	ECS::algorithm::sort(v, std::less<>{});
-	assertTrue(v.empty(), "empty vector remains empty");
-}
-
-// 要素1個
-TEST_CASE(test_sort_single) {
-	std::vector<int> v{ 42 };
-	ECS::algorithm::sort(v, std::less<>{});
-	assertTrue(v.size() == 1 && v[0] == 42, "single element stays unchanged");
-}
-
-// 昇順ソート
-TEST_CASE(test_sort_ascending) {
-	std::vector<int> v{ 4,3,2,1,0 };
-	ECS::algorithm::sort(v, std::less<>{});
-	for(auto &x:v){
-		std::cout<<x<<",";
-	}
-	std::cout<<"\n";
-	assertTrue(std::is_sorted(v.begin(), v.end()),
-		"reverse-based sort yields descending");
-}
-
-// 降順ソート (std::greater)
-TEST_CASE(test_sort_descending) {
-	std::vector<int> v{ 3,1,4,2,5 };
-	ECS::algorithm::sort(v, std::greater<>{});
-	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}),
-		"reverse-based sort yields descending");
-}
-
-// 既にソート済み 
-TEST_CASE(test_sort_already_sorted) {
-	std::vector<int> v{ 1,2,3,4,5 };
-	ECS::algorithm::sort(v, std::greater<>{});
-	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}), "already sorted remains sorted");
 }
 
 // 呼び出しフラグを立てるだけのダミーソート
@@ -126,6 +87,8 @@ struct testBasicStorageComponent {
 	static constexpr ECS::COMPONENT::StorageType storage_pref = ECS::COMPONENT::StorageType::BasicType;
 };
 
+
+
 TEST_CASE(entityTest)
 {
 	ECS::World world = ECS::World();
@@ -153,11 +116,11 @@ TEST_CASE(entityTest)
 	auto view = world.View<Position, Velocity>();
 	//auto view2 = view->Exclude<Position>();
 
-	for (auto& x : *view)
+	for (auto& x : view)
 	{
 		auto& entityID = x.entity;
-		auto& vel = view->get<Velocity>(x.components);
-		auto& posi = view->get<Position>(x.components);
+		auto& vel = view.get<Velocity>(x.components);
+		auto& posi = view.get<Position>(x.components);
 		bool hasComp = world.has<Velocity>(entityID);
 	}
 
@@ -169,18 +132,18 @@ TEST_CASE(entityTest)
 	}
 	*/
 
-	for (auto [entityID, position, velocity] : view->each()) {
+	for (auto [entityID, position, velocity] : view.each()) {
 		auto id = entityID;
 		auto posi = position;
 		auto vel = velocity;
 	}
 
-	view->each([](auto entity, auto& pos, auto& vel) {
+	view.each([](auto entity, auto& pos, auto& vel) {
 		pos.x += 5.0f;
 		vel.x += 5.0f;
 		});
 
-	view->each([](auto& pos, auto& vel) {
+	view.each([](auto& pos, auto& vel) {
 		pos.x += 5.0f;
 		vel.x += 5.0f;
 		});
@@ -197,10 +160,60 @@ TEST_CASE(entityTest)
 	MESSAGE("view test Clear");
 }
 
+struct Cube {};
+struct Transform {
+	Transform() : rotation(3, 0.0f) {};
+
+	std::vector<float>rotation;
+};
+
+struct cubeParallelJob : ECS::JobSystem::IParallelJob<cubeParallelJob>
+{
+	std::vector<Transform*> transforms;
+
+	cubeParallelJob() {}
+
+	
+	inline void Execute(size_t index) {
+		//回転
+		transforms[index]->rotation[1] *= 0.1f;
+	}
+};
+
+TEST_CASE(entityJobTest)
+{
+	auto& jm = ECS::JobSystem::JobManager::Instance();
+	jm.initialize(1000, 7);
+
+	ECS::World world = ECS::World();
+
+	world.initialize();
+	for (int i = 0; i < 100; i++) {
+		auto entity = world.spawn<Transform, Cube>();
+	}
+	auto parallelJob = cubeParallelJob::create();
+
+	for (int i = 0; i < 100; i++) {
+		auto view = world.View<Transform, Cube>();
+		parallelJob->transforms.clear();
+		parallelJob->transforms.reserve(view.size());
+
+		for (auto [entityID, transform, cube] : view.each()) {
+			parallelJob->transforms.push_back(&transform);
+		}
+
+		auto handle = parallelJob->schedule(view.size(), 10, 7);
+		handle.Complete();
+	}
+
+	MESSAGE("entityJobTest Clear");
+}
+
 //作成テスト
 TEST_CASE(test_create_group) {
 	ECS::World world = ECS::World();
 
+	//システム初期化
 	world.initialize();
 
 	struct A {int x = 0;};
@@ -222,13 +235,12 @@ TEST_CASE(test_create_group) {
 		// デバッグ可視化（エディタ）
 		//debugHierarchy.addEntity(index);
 
-		// 初期化処理（Start 的なもの）
+		// Start 的なもの
 		if (world.has<A>(entt)) {
 			auto* a = world.getComponent<A>(entt);
 			std::cout << "[A] Entity " << index << " initialized\n";
 		}
 
-		// AI 初期化
 		if (world.has<B>(entt)) {
 			auto* b = world.getComponent<B>(entt);
 			std::cout << "[B] Entity " << index << " initialized\n";
@@ -517,6 +529,46 @@ void test_event_trigger() {
 }
 */
 
+TEST_CASE(test_sort_empty) {
+	std::vector<int> v;
+	ECS::algorithm::sort(v, std::less<>{});
+	assertTrue(v.empty(), "empty vector remains empty");
+}
+
+// 要素1個
+TEST_CASE(test_sort_single) {
+	std::vector<int> v{ 42 };
+	ECS::algorithm::sort(v, std::less<>{});
+	assertTrue(v.size() == 1 && v[0] == 42, "single element stays unchanged");
+}
+
+// 昇順ソート
+TEST_CASE(test_sort_ascending) {
+	std::vector<int> v{ 4,3,2,1,0 };
+	ECS::algorithm::sort(v, std::less<>{});
+	for (auto& x : v) {
+		std::cout << x << ",";
+	}
+	std::cout << "\n";
+	assertTrue(std::is_sorted(v.begin(), v.end()),
+		"reverse-based sort yields descending");
+}
+
+// 降順ソート (std::greater)
+TEST_CASE(test_sort_descending) {
+	std::vector<int> v{ 3,1,4,2,5 };
+	ECS::algorithm::sort(v, std::greater<>{});
+	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}),
+		"reverse-based sort yields descending");
+}
+
+// 既にソート済み 
+TEST_CASE(test_sort_already_sorted) {
+	std::vector<int> v{ 1,2,3,4,5 };
+	ECS::algorithm::sort(v, std::greater<>{});
+	assertTrue(std::is_sorted(v.begin(), v.end(), std::greater<>{}), "already sorted remains sorted");
+}
+
 // テスト関数
 TEST_CASE_DISABLED(testGroupIdentifiers) {
 	struct Health {};
@@ -574,7 +626,7 @@ bool executeTimeTest()
 
 	auto start_modification = std::chrono::high_resolution_clock::now();
 
-	for (auto [entity, transform] : world.View<TransformComponent>()->each()) {
+	for (auto [entity, transform] : world.View<TransformComponent>().each()) {
 		transform._x += 1.0f;
 		transform._y += 1.0f;
 		transform._z += 1.0f;

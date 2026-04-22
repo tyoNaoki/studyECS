@@ -49,7 +49,7 @@ SparseSet‚Í dense ‚Éƒf[ƒ^‚ğŠi”[‚·‚é‚½‚ßAƒV[ƒPƒ“ƒVƒƒƒ‹ƒAƒNƒZƒX‚ªÅ“K‰»‚³‚ê‚é ‚
 IndexBase•û®‚Å‚Í ƒoƒPƒbƒg‚ğƒXƒLƒbƒv‚µ‚È‚ª‚çƒCƒeƒŒ[ƒVƒ‡ƒ“‚·‚é‚½‚ßAƒI[ƒo[ƒwƒbƒh‚ª”­¶‚µ‚Ä‚¢‚é‰Â”\« ‚ª‚ ‚è‚Ü‚·B
 */
 
-int test()
+int hashMap_Test()
 {
 	RUN_TEST("test_hopscotchHashMap", 1);
 	//RUN_TEST("test_particalJobSystem", 450);

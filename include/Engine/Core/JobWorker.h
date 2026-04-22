@@ -204,7 +204,7 @@ inline void Worker<WorkerPolicy>::run()
         if(policy_(workerId,chunkQueue)){
 
             
-#ifdef DEBUG
+#ifdef _DEBUG
             //ログ出力
             //DebugLog(category);
 #endif // !DEBUG
@@ -221,7 +221,7 @@ inline void Worker<WorkerPolicy>::stop()
     auto& stats = JobManager::Instance().getStats();
     while(stats.scheduledJobCount() > 0){
         if (policy_(workerId,chunkQueue)) {
-#ifdef DEBUG
+#ifdef _DEBUG
             //ログ出力
             //DebugLog(category);
 #endif // !DEBUG
