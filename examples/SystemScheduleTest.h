@@ -2,7 +2,7 @@
 #include "TestFramework.hpp"
 #include "Engine\ECS\World.h"
 
-int test()
+int ecstest()
 {
 	RUN_TEST("test_SystemSchedule", 1);
 	//RUN_TEST("test_particalJobSystem", 450);

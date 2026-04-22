@@ -289,7 +289,6 @@ void JobHandle::Complete() const
             continue;
         }
 
-
         //‰½‚àŽæ‚ê‚È‚¢
         std::this_thread::yield();
     }

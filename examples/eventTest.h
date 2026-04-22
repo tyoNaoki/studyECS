@@ -5,7 +5,7 @@
 #include "Engine\ECS\Events\EventQueue.hpp"
 #include "Engine\ECS\Events\Signal.hpp"
 
-int test()
+int event_Test()
 {
 	RUN_TEST("testCallbackList", 1);
 	//RUN_TEST("test_particalJobSystem", 450);

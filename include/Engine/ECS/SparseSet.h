@@ -600,10 +600,15 @@ public:
     T* Get(const Entity::EntityID entity){return nullptr;};
 
     // QÆ‚ğ•Ô‚·
-    T& GetRef(const Entity::EntityID entity){
+    /*T& GetRef(const Entity::EntityID entity){
         ASSERT(false,"do not use Empty struct pool GetRef()!!");
         return T();
-    };
+    };*/
+
+    T& GetRef(const Entity::EntityID entity) {
+        static const T dummy{};
+        return const_cast<T&>(dummy); //•Ô‚è’l‚É‡‚í‚¹‚ÄconstŠO‚µ
+    }
 
     size_t Index(const Entity::EntityID entity)const override{
         size_t index = GetDenseIndex(entity);

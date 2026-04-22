@@ -2,7 +2,7 @@
 #include "Engine\Core\JobManager.h"
 #include "TestFramework.hpp"
 
-int test()
+int job_Test()
 {
 	RUN_TEST("test_jobSystem", 1);
 	//RUN_TEST("test_particalJobSystem", 450);
