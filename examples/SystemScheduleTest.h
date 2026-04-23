@@ -2,7 +2,7 @@
 #include "TestFramework.hpp"
 #include "Engine\ECS\World.h"
 
-int ecstest()
+int system_Test()
 {
 	RUN_TEST("test_SystemSchedule", 1);
 	//RUN_TEST("test_particalJobSystem", 450);
@@ -14,21 +14,83 @@ int ecstest()
 	return 0;
 }
 
-void TestSystemB(ECS::World& world) {
-	std::printf("B is updated\n");
-}
-void TestSystemC(ECS::World& world) {
-	std::printf("C is updated\n");
-}
-void TestSystemD(ECS::World& world) {
-	std::printf("D is updated\n");
-}
-void TestSystemE(ECS::World& world) {
-	std::printf("E is updated\n");
-}
-void TestSystemF(ECS::World& world) {
-	std::printf("F is updated\n");
-}
+class TestSystemA : ECS::System::SystemBase{
+public:
+	std::string name;
+
+	void onCreate(ECS::World& world) override{
+		name = "A";
+	}
+	void onUpdate(ECS::World& world) override{
+		std::printf("%s is updated\n",name.c_str());
+	}
+};
+
+class TestSystemB : ECS::System::SystemBase {
+public:
+	std::string name;
+
+	void onCreate(ECS::World& world) override {
+		name = "B";
+	}
+
+	void onUpdate(ECS::World& world) override {
+		std::printf("%s is updated\n", name.c_str());
+	}
+};
+
+class TestSystemC : ECS::System::SystemBase {
+public:
+	std::string name;
+
+	void onCreate(ECS::World& world) override {
+		name = "C";
+	}
+
+	void onUpdate(ECS::World& world) override {
+		std::printf("%s is updated\n", name.c_str());
+	}
+};
+
+class TestSystemD : ECS::System::SystemBase {
+public:
+	std::string name;
+
+	void onCreate(ECS::World& world) override {
+		name = "D";
+	}
+
+	void onUpdate(ECS::World& world) override {
+		std::printf("%s is updated\n", name.c_str());
+	}
+};
+
+class TestSystemE : ECS::System::SystemBase {
+public:
+	std::string name;
+
+	void onCreate(ECS::World& world) override {
+		name = "E";
+	}
+
+	void onUpdate(ECS::World& world) override {
+		std::printf("%s is updated\n", name.c_str());
+	}
+};
+
+class TestSystemF : ECS::System::SystemBase {
+
+public:
+	std::string name;
+
+	void onCreate(ECS::World& world) override {
+		name = "F";
+	}
+
+	void onUpdate(ECS::World& world) override {
+		std::printf("%s is updated\n", name.c_str());
+	}
+};
 
 namespace ECS::System {
 	struct PreInitialization {};
@@ -42,30 +104,29 @@ TEST_CASE_PRIORITY(test_SystemSchedule) {
 
 	world.initialize();
 
-	auto A = world.addSystem<ECS::System::PreInitialization>([](ECS::World& w) {
-		std::printf("A is updated\n");
-		});
-	auto C = world.addSystem<ECS::System::PreInitialization>(TestSystemC);
-	auto B = world.addSystem<ECS::System::PreInitialization>(TestSystemB);
+	auto A = world.registerSystem<TestSystemA,ECS::System::PreInitialization>();
+	auto C = world.registerSystem<TestSystemC,ECS::System::PreInitialization>();
+	auto B = world.registerSystem<TestSystemB, ECS::System::PreInitialization>();
 
-	auto F = world.addSystem<ECS::System::Initialization>(TestSystemF);
-	auto D = world.addSystem<ECS::System::Initialization>(TestSystemD);
-	auto E = world.addSystem<ECS::System::Initialization>(TestSystemE);
-
+	auto F = world.registerSystem<TestSystemF, ECS::System::PreInitialization>();
+	auto D = world.registerSystem<TestSystemD, ECS::System::PreInitialization>();
+	auto E = world.registerSystem<TestSystemE, ECS::System::PreInitialization>();
 
 	// A → B
 	world.addBefore(A, B);
 
-	// B → C
+	//// B → C
 	world.addAfter(B, C);
-
-	// D → E
+	//// C → D
+	world.addBefore(C, D);
+	//// D → E
 	world.addBefore(D, E);
 
-	// E → F
+	//// E → F
 	world.addAfter(E, F);
 
 	float dt = 0;
+
 	//システム実行
 	world.update(dt);
 }

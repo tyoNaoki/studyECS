@@ -114,7 +114,7 @@ TEST_CASE(entityTest)
 	}
 	*/
 	auto view = world.View<Position, Velocity>();
-	//auto view2 = view->Exclude<Position>();
+	//auto view2 = view.Exclude<Position>();
 
 	for (auto& x : view)
 	{
@@ -172,11 +172,78 @@ struct cubeParallelJob : ECS::JobSystem::IParallelJob<cubeParallelJob>
 	std::vector<Transform*> transforms;
 
 	cubeParallelJob() {}
-
 	
 	inline void Execute(size_t index) {
 		//回転
 		transforms[index]->rotation[1] *= 0.1f;
+	}
+};
+
+namespace ECS::System{
+	struct Initialization{};
+	struct Update{};
+}
+
+struct StartSpawnCubeEvent{};
+struct StartTag {}; // Start 済みを示す
+
+//キューブ(仮)を100体スポーンさせるイベント
+class StartSystem : public ECS::System::SystemBase {
+public:
+	void onUpdate(ECS::World& world) override {
+		// StartTag が付いていないエンティティだけ処理
+		auto view = world.View<StartSpawnCubeEvent>(ECS::exclude_t<StartTag>{});
+
+		for (auto [entityID, cubeEvent] : view.each()) {
+			for (int i = 0; i < 100; i++) {
+				world.spawn<Cube, Transform>();
+			}
+			
+			//startTagをつける
+			world.emplace<StartTag>(entityID);
+		}
+
+		/*view.each([&](auto entity, auto& startTag) {
+			for (int i = 0; i < 100; i++) {
+				world.spawn<Cube, Transform>();
+			}
+
+			world.emplace<StartTag>(entity);
+			});*/
+
+			/*for (auto& x : view)
+			{
+				for (int i = 0; i < 100; i++) {
+					world.spawn<Cube,Transform>();
+				}
+
+				auto& entityID = x.entity;
+				world.emplace<StartTag>(entityID);
+			}*/
+	}
+};
+
+//キューブ回転テスト
+class RotationSystem : public ECS::System::SystemBase{
+	std::shared_ptr<cubeParallelJob> job;
+	
+public:
+	void onCreate(ECS::World & world)override {
+		job = cubeParallelJob::create();
+	}
+
+	void onUpdate(ECS::World & world)override {
+		// StartTag が付いていないエンティティだけ処理
+		auto view = world.View<Cube, Transform>();
+		job->transforms.clear();
+		job->transforms.reserve(view.size());
+
+		for (auto [entityID, cube, transform] : view.each()) {
+			job->transforms.push_back(&transform);
+		}
+
+		auto handle = job->schedule(job->transforms.size(), 10, 7);
+		handle.Complete();
 	}
 };
 
@@ -188,11 +255,30 @@ TEST_CASE(entityJobTest)
 	ECS::World world = ECS::World();
 
 	world.initialize();
+
+	auto entity = world.spawn<StartSpawnCubeEvent>();
+
+	world.registerSystem<StartSystem,ECS::System::Initialization>();
+
+	world.registerSystem<RotationSystem,ECS::System::Update>();
+
+	//毎フレーム(仮)
+	float dt = 0;
 	for (int i = 0; i < 100; i++) {
-		auto entity = world.spawn<Transform, Cube>();
+		world.update(dt);
 	}
+
+	//Startシステム
+	/*
+	for (int i = 0; i < 100; i++) {
+		auto entity = world.spawn<StartSpawnCubeEvent>();
+	}
+
+	
 	auto parallelJob = cubeParallelJob::create();
 
+	//Updateシステム
+	
 	for (int i = 0; i < 100; i++) {
 		auto view = world.View<Transform, Cube>();
 		parallelJob->transforms.clear();
@@ -202,9 +288,10 @@ TEST_CASE(entityJobTest)
 			parallelJob->transforms.push_back(&transform);
 		}
 
-		auto handle = parallelJob->schedule(view.size(), 10, 7);
+		auto handle = parallelJob->schedule(parallelJob->transforms.size(), 10, 7);
 		handle.Complete();
 	}
+	*/
 
 	MESSAGE("entityJobTest Clear");
 }

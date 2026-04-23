@@ -600,14 +600,15 @@ public:
     T* Get(const Entity::EntityID entity){return nullptr;};
 
     // 参照を返す
-    /*T& GetRef(const Entity::EntityID entity){
-        ASSERT(false,"do not use Empty struct pool GetRef()!!");
-        return T();
-    };*/
 
-    T& GetRef(const Entity::EntityID entity) {
-        static const T dummy{};
-        return const_cast<T&>(dummy); //返り値に合わせてconst外し
+    //T& GetRef(const Entity::EntityID entity) {
+    //    static const T dummy{};
+    //    return const_cast<T&>(dummy); //返り値に合わせてconst外し
+    //}
+
+    T& GetRef(const Entity::EntityID) {
+        static T dummy{};
+        return dummy;
     }
 
     size_t Index(const Entity::EntityID entity)const override{

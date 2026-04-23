@@ -3,50 +3,50 @@
 
 void ECS::System::SimulationGroup::onCreate(ECS::World& world)
 {
-    auto tempSystemID = world.createSystemGroup<SystemGroup, PreUpdate>();
-    preUpdateID = world.getSystem(tempSystemID).groupID;
+    auto handle = world.registerSystemGroup<SystemGroup, PreUpdate>();
+    preUpdateIndex = world.getSystemEntry(handle).index;
 
-    tempSystemID = world.createSystemGroup<SystemGroup, FixedUpdate>();
-    fixedStepSimulationID = world.getSystem(tempSystemID).groupID;
+    handle = world.registerSystemGroup<SystemGroup, FixedUpdate>();
+    fixedStepSimulationIndex = world.getSystemEntry(handle).index;
 
-    tempSystemID = world.createSystemGroup<SystemGroup, Update>();
-    updateID = world.getSystem(tempSystemID).groupID;
+    handle = world.registerSystemGroup<SystemGroup, Update>();
+    updateIndex = world.getSystemEntry(handle).index;
 
-    tempSystemID = world.createSystemGroup<SystemGroup, PostUpdate>();
-    postUpdateID = world.getSystem(tempSystemID).groupID;
+    handle = world.registerSystemGroup<SystemGroup, PostUpdate>();
+    postUpdateIndex = world.getSystemEntry(handle).index;
 
-    tempSystemID = world.createSystemGroup<SystemGroup, LateUpdate>();
-    lateSimulationID = world.getSystem(tempSystemID).groupID;
+    handle = world.registerSystemGroup<SystemGroup, LateUpdate>();
+    lateSimulationIndex = world.getSystemEntry(handle).index;
 }
 
 void ECS::System::SimulationGroup::onUpdate(ECS::World& world)
 {
     if (dirty) sort(world);
 
-    world.getSystemGroup(preUpdateID)->onUpdate(world);
+    world.getSystemGroup(preUpdateIndex)->onUpdate(world);
 
     auto& time = world.getTime();
     time.accumulator += time.deltaTime;
     while (time.accumulator >= time.fixedDeltaTime)
     {
-        world.getSystemGroup(fixedStepSimulationID)->onUpdate(world);
+        world.getSystemGroup(fixedStepSimulationIndex)->onUpdate(world);
         time.accumulator -= time.fixedDeltaTime;
     }
 
-    world.getSystemGroup(updateID)->onUpdate(world);
-    world.getSystemGroup(postUpdateID)->onUpdate(world);
-    world.getSystemGroup(lateSimulationID)->onUpdate(world);
+    world.getSystemGroup(updateIndex)->onUpdate(world);
+    world.getSystemGroup(postUpdateIndex)->onUpdate(world);
+    world.getSystemGroup(lateSimulationIndex)->onUpdate(world);
 
     if(sorted.size()==0) return;
 
     //ソート済みのものを実行
     for (int i = 0; i < sorted.size(); i++) {
-        auto& entry = world.getSystem(sorted[i]);
-        if (entry.fn) {
-            entry.fn(world);
+        auto& entry = world.getSystemEntry(sorted[i]);
+        if (entry.isGroup) {
+            world.getSystemGroup(entry.index)->onUpdate(world);
         }
         else {
-            world.getSystemGroup(entry.groupID)->onUpdate(world);
+            world.getSystem(entry.index)->onUpdate(world);
         }
     }
 }

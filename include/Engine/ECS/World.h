@@ -34,7 +34,7 @@ struct TimeData {
 };
 
 namespace ECS {
-    
+
 class World
 {
 private:
@@ -60,72 +60,64 @@ public:
     World& operator=(const World&) = delete;
 
     void initialize(){
-        auto systemID = createSystemGroup<ECS::System::SystemScheduler, ECS::System::SystemScheduler>();
-        scheduleGroupID = getSystem(systemID).groupID;
-        getSystemGroup(scheduleGroupID)->onCreate(*this);
+        auto systemHandle = registerSystemGroup<ECS::System::SystemScheduler, ECS::System::SystemScheduler>();
+        scheduleGroupIndex = getSystemEntry(systemHandle).index;
     }
 
     //static std::vector<std::string>m_componentNames;
 
-    ECS::System::SystemID createSystem(ECS::SystemFn fn) {
-        ECS::System::SystemID id = systemInfos.size();
-        systemInfos.emplace_back();
-        auto&systemInfo = getSystem(id);
-        systemInfo.fn = fn;
-        systemInfo.id = id;
+    template<typename T,typename Tag>
+    ECS::System::SystemHandle registerSystemGroup() {
+        auto index = createSystemGroup<T>();
+        auto handle = createSystemInfo(index,true);
+        //コンストラクター
+        getSystemGroup(index)->onCreate(*this);
 
-        return id;
+        tagToGroup[typeid(Tag)] = index;
+        return handle;
     }
 
-    template<typename T,typename Tag,typename... Args>
-    ECS::System::SystemID createSystemGroup(Args&&... args) {
-        ECS::System::SystemID id = systemInfos.size();
-        systemInfos.emplace_back();
-        auto& systemInfo = getSystem(id);
-        systemInfo.id = id;
-
-        systemInfo.groupID = systemGroups.size();
-        systemGroups.emplace_back(std::make_unique<T>(std::forward<Args>(args)...));
-
-        tagToGroup[typeid(Tag)] = systemInfo.groupID;
-        return id;
-    }
-
-    ECS::System::SystemEntry& getSystem(ECS::System::SystemID id) {
-        return systemInfos[id];
-    }
-
-    ECS::System::SystemGroup* getSystemGroup(ECS::System::GroupID id) {
-        return systemGroups[id].get();
-    }
-
-    template<typename Tag>
-    ECS::System::SystemID addSystem(SystemFn fn)
+    template<typename SystemT,typename Tag>
+    ECS::System::SystemHandle registerSystem()
     {
         auto it = tagToGroup.find(typeid(Tag));
-        if (it == tagToGroup.end()){
+        if (it == tagToGroup.end()) {
             ASSERT(false, "Group not found for tag");
         }
 
-        ECS::System::SystemID gid = it->second;
-        auto id = createSystem(fn);
+        size_t groupIndex = it->second;
+        auto index = createSystem<SystemT>();
+        auto handle = createSystemInfo(index, false);
+        getSystem(index)->onCreate(*this);
 
-        systemGroups[gid]->addSystem(id);
-        return id;
+        systemGroups[groupIndex]->addSystem(handle);
+        return handle;
     }
 
-    void addAfter(ECS::System::SystemID before, ECS::System::SystemID after){
-        auto& sBefore = getSystem(before);
-        auto& sAfter = getSystem(after);
+    ECS::System::SystemEntry& getSystemEntry(ECS::System::SystemHandle handle) {
+        return systemInfos[handle.ID];
+    }
+
+    ECS::System::SystemBase* getSystem(size_t index) {
+        return systemBases[index].get();
+    }
+
+    ECS::System::SystemGroup* getSystemGroup(size_t index) {
+        return systemGroups[index].get();
+    }
+
+    void addAfter(ECS::System::SystemHandle before, ECS::System::SystemHandle after){
+        auto& sBefore = getSystemEntry(before);
+        auto& sAfter = getSystemEntry(after);
 
         // before → after
         sBefore.after.push_back(after);
         sAfter.before.push_back(before);
     }
 
-    void addBefore(ECS::System::SystemID before, ECS::System::SystemID after) {
-        auto& sBefore = getSystem(before);
-        auto& sAfter = getSystem(after);
+    void addBefore(ECS::System::SystemHandle before, ECS::System::SystemHandle after) {
+        auto& sBefore = getSystemEntry(before);
+        auto& sAfter = getSystemEntry(after);
 
         // before → after
         sAfter.before.push_back(before);
@@ -246,14 +238,6 @@ public:
     auto& worldEvent(){
         return worldEvents;
     }
-    
-    /*template <typename... Get>
-    std::unique_ptr<SceneView<Get...>>  
-    View() {
-        ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
-
-        return std::make_unique<SceneView<Get...>>(*this);
-    }*/
 
     template <typename... Get>
     SceneView<Get...>
@@ -261,6 +245,14 @@ public:
         ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
 
         return SceneView<Get...>(*this);
+    }
+
+    template <typename... Get, typename... Ex>
+    SceneView<Get...> View(exclude_t<Ex...>) {
+        ASSERT(sizeof...(Get) > 0, "Get... must not be empty!");
+
+        std::vector<ISparseSet*> excludedPools = { getComponentPoolPtr<Ex>()... };
+        return SceneView<Get...>(*this, excludedPools);
     }
     
     template<typename... Owned, typename... Get, typename... Exclude, COMPONENT::StorageType S = COMPONENT::StorageType::EventType>
@@ -322,7 +314,7 @@ public:
         time.deltaTime = dt;
         time.time += dt;
 
-        getSystemGroup(scheduleGroupID)->onUpdate(*this);
+        getSystemGroup(scheduleGroupIndex)->onUpdate(*this);
     }
 
     TimeData& getTime(){
@@ -330,6 +322,31 @@ public:
     }
 
 private:
+    template<typename T>
+    size_t createSystem() {
+        auto index = systemBases.size();
+        systemBases.push_back(std::make_unique<T>());
+
+        return index;
+    }
+
+    template<typename T>
+    size_t createSystemGroup() {
+        auto index = systemGroups.size();
+        systemGroups.push_back(std::make_unique<T>());
+
+        return index;
+    }
+
+    ECS::System::SystemHandle createSystemInfo(size_t index, bool isGroup) {
+        size_t id = systemInfos.size();
+        systemInfos.emplace_back();
+        systemInfos[id].index = index;
+        systemInfos[id].isGroup = isGroup;
+
+        return ECS::System::SystemHandle{id};
+    }
+
     //tuple から Expected に変換可能な最初の要素を返し、
     //見つからなければ Expected{} を返す再帰テンプレート
     template <typename Expected, typename Tuple, std::size_t I = 0>
@@ -379,10 +396,11 @@ private:
     //システム
     std::vector<ECS::System::SystemEntry> systemInfos;
     std::vector<std::unique_ptr<ECS::System::SystemGroup>>systemGroups;
-    std::unordered_map<std::type_index, ECS::System::SystemID> tagToGroup;
+    std::vector<std::unique_ptr<ECS::System::SystemBase>>systemBases;
+    std::unordered_map<std::type_index, size_t> tagToGroup;
 
     //中枢システムグループをまとめたもの
-    ECS::System::SystemID scheduleGroupID;
+    size_t scheduleGroupIndex;
 
     //ECSのコンポーネントを回すためのグループ
     ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>groups;
@@ -446,8 +464,6 @@ public:
 
 template<typename... Get>
 class SceneView{
-private:
-
     struct Pack
     {
         Pack(Entity::EntityID entityID, std::tuple<Get&...> comps):entity(entityID),components(comps){}
@@ -468,6 +484,7 @@ private:
     // basis for ForEach iterations.
     ISparseSet* m_smallest = nullptr;
     
+private:
     //対象のコンポーネントを全て所持しているか
     bool AllContain(Entity::EntityID id) {
         return std::all_of(m_viewPools.begin(), m_viewPools.end(), [id](ISparseSet* pool) {
@@ -565,12 +582,14 @@ public:
         createPacked();
     }
 
+    // example
+    // auto view = world.View<StartSpawnCubeEvent>().Exclude<StartTag>();
     //取得しいるコンポーネントEntityをさらに絞り込む
     template <typename... ExcludedComponents>
-    std::unique_ptr<SceneView> Exclude() {
+    SceneView Exclude() {
         std::vector<ISparseSet*> excludedPools = { world.getComponentPoolPtr<ExcludedComponents>()... };
 
-        return std::make_unique<SceneView>(*this, excludedPools);
+        return SceneView(*this, excludedPools);
     }
     
     /* 以下関数使用例
@@ -589,7 +608,6 @@ public:
     Type& get(std::tuple<Get&...>& pack) {
         return std::get<Type&>(pack);
     }
-
 
     size_t size(){
         return m_smallest->Size();
@@ -622,13 +640,14 @@ public:
         std::vector<std::tuple<Entity::EntityID, Get&...>> result;
 
         for (Entity::EntityID id : m_smallest->GetEntityList()) {
-            if (AllContain(id)) {
+            if (AllContain(id) && NotExcluded(id)) {
                 result.push_back(std::tuple_cat(std::make_tuple(id), MakeComponentTuple(id, inds)));
             }
         }
 
         return result;
     }
+
 
     /*以下関数使用例
     * auto view = ECS::world().View<Position,Velocity>();
@@ -648,7 +667,8 @@ public:
         constexpr auto inds = std::make_index_sequence<sizeof...(Get)>{};
 
         for(Entity::EntityID entity : m_smallest->GetEntityList()){
-            if(!AllContain(entity)) continue;
+            if(!AllContain(entity)||!NotExcluded(entity)) continue;
+
             auto component_Tuple = MakeComponentTuple(entity, inds);
             if constexpr (std::is_invocable_v<Func, Entity::EntityID,Get&...>){
                 std::apply(func, std::tuple_cat(std::make_tuple(entity), component_Tuple));

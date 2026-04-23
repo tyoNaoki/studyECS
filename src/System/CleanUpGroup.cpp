@@ -4,13 +4,14 @@
 
 void ECS::System::CleanUpGroup::onCreate(ECS::World& world)
 {
-    addSystem(world.createSystemGroup<SystemGroup, PreCleanup>());
-    auto cleanUpID = world.createSystemGroup<SystemGroup, Cleanup>();
-    addSystem(cleanUpID);
-    addSystem(world.createSystemGroup<SystemGroup, PostCleanup>());
+    addSystem(world.registerSystemGroup<SystemGroup, PreCleanup>());
+    addSystem(world.registerSystemGroup<SystemGroup, Cleanup>());
+    addSystem(world.registerSystemGroup<SystemGroup, PostCleanup>());
     
-    
-    world.addSystem<Cleanup>([](World& w) {
-        JobSystem::JobManager::Instance().cleanUpMainThreadOnLastFrame();
-        });
+    world.registerSystem<CleanUpJobManagerSystem,Cleanup>();
+}
+
+void ECS::System::CleanUpJobManagerSystem::onUpdate(ECS::World& world)
+{
+    JobSystem::JobManager::Instance().cleanUpMainThreadOnLastFrame();
 }
