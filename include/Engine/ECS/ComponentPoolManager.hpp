@@ -124,8 +124,9 @@ public:
         if (entityID == Entity::INVALID_ENTITY) return false;
 
         auto& pool = getComponentPool<T>();
-        if (!pool.Get(entityID)) return false;
-
+        //有無チェック
+        if (!pool.ContainsEntity(entityID)) return false;
+        //プールから削除
         pool.Delete(entityID);
 
         //グループ更新

@@ -3,7 +3,7 @@
 
 void ECS::System::InitializationGroup::onCreate(ECS::World& world)
 {
-    addSystem(world.createSystemGroup<SystemGroup, PreInitialization>());
-    addSystem(world.createSystemGroup<SystemGroup, Initialization>());
-    addSystem(world.createSystemGroup<SystemGroup, PostInitialization>());
+    addSystem(world.registerSystemGroup<SystemGroup, PreInitialization>());
+    addSystem(world.registerSystemGroup<SystemGroup, Initialization>());
+    addSystem(world.registerSystemGroup<SystemGroup, PostInitialization>());
 }

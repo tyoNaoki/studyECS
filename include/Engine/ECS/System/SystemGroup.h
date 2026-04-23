@@ -9,12 +9,10 @@ namespace ECS{
 namespace System{
 
     class SystemGroup {
-        std::vector<ECS::System::SystemID> systems;
-
     public:
         virtual ~SystemGroup() = default;
 
-        void addSystem(SystemID s){
+        void addSystem(SystemHandle s){
             systems.push_back(s);
             dirty = true;
         };
@@ -32,9 +30,12 @@ namespace System{
     protected:
         
         bool dirty = false;
-        std::vector<ECS::System::SystemID> sorted;
+        std::vector<ECS::System::SystemHandle> sorted;
     private:
         void topologicalSort(ECS::World& world, SystemGroup& group);
+
+    private:
+        std::vector<ECS::System::SystemHandle> systems;
     };
 
 }

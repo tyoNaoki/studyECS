@@ -3,7 +3,7 @@
 
 void ECS::System::PresentationGroup::onCreate(ECS::World& world)
 {
-    addSystem(world.createSystemGroup<SystemGroup, PreRender>());
-    addSystem(world.createSystemGroup<SystemGroup, Render>());
-    addSystem(world.createSystemGroup<SystemGroup, PostRender>());
+    addSystem(world.registerSystemGroup<SystemGroup, PreRender>());
+    addSystem(world.registerSystemGroup<SystemGroup, Render>());
+    addSystem(world.registerSystemGroup<SystemGroup, PostRender>());
 }

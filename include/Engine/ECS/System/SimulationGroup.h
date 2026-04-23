@@ -10,11 +10,11 @@ namespace ECS::System {
     struct LateUpdate{};
 
     class SimulationGroup : public SystemGroup {
-        ECS::System::GroupID preUpdateID;
-        ECS::System::GroupID fixedStepSimulationID;
-        ECS::System::GroupID updateID;
-        ECS::System::GroupID postUpdateID;
-        ECS::System::GroupID lateSimulationID;
+        size_t preUpdateIndex;
+        size_t fixedStepSimulationIndex;
+        size_t updateIndex;
+        size_t postUpdateIndex;
+        size_t lateSimulationIndex;
 
     public:
         void onCreate(ECS::World& world) override;

@@ -6,6 +6,10 @@ namespace ECS::System {
     struct Cleanup {};
     struct PostCleanup {};
 
+    struct CleanUpJobManagerSystem : public SystemBase {
+        void onUpdate(ECS::World&world) override;
+    };
+
     class CleanUpGroup : public SystemGroup {
     public:
         void onCreate(ECS::World& world) override;
