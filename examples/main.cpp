@@ -15,23 +15,21 @@ void viewConsole()
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
 	ChangeWindowMode(TRUE);
-	SetGraphMode(1280, 720, 32);
+	//SetGraphMode(1280, 720, 32);
+	SetGraphMode(2560, 1440, 32);
+
 	DxLib_Init();
 
 	SetDrawScreen(DX_SCREEN_BACK); //ウィンドウモード変更と初期化と裏画面設定
 	
-	
-
-	viewConsole();
-
-	int x = 0, y = 0;
-	int Green = GetColor(0, 255, 0);      // 緑の色コードを取得
+	//viewConsole();
 
 	bool isNotFinish = false;
 
-	
-
 	int64_t prevTime = GetNowHiPerformanceCount();
+
+	SetFontSize(80);
+	SetFontThickness(2);
 	
 	// while(裏画面を表画面に反映, メッセージ処理, 画面クリア)
 	while (!isNotFinish && ScreenFlip() == 0 && ProcessMessage() == 0 && ClearDrawScreen() == 0 && CheckHitKey(KEY_INPUT_RETURN) == 0)
@@ -42,13 +40,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		cube_demo(deltaTime);
 		
 		prevTime = now;
-
-		/*for (CubeComponent& cube : cubes)
-		{
-			cube.transform.rotation.y += 0.02f;
-			UpdateTransformSystem(cube);
-			DrawCubeSystem(cube);
-		}*/
 	}
 
 	DxLib_End();				// ＤＸライブラリ使用の終了処理

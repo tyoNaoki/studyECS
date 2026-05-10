@@ -249,18 +249,25 @@ public:
 
 TEST_CASE(entityJobTest)
 {
+	//ジョブマネージャー初期化
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.initialize(1000, 7);
 
+	//ワールド初期化
 	ECS::World world = ECS::World();
-
 	world.initialize();
 
+	//StartSpawnCubeEventでキューブをスポーンさせる
 	auto entity = world.spawn<StartSpawnCubeEvent>();
 
+	//StartSystemを登録
 	world.registerSystem<StartSystem,ECS::System::Initialization>();
 
+	//RotationSystemはStartSystemの後に実行されるようにする
 	world.registerSystem<RotationSystem,ECS::System::Update>();
+
+	//ジョブマネージャー開始
+	jm.start();
 
 	//毎フレーム(仮)
 	float dt = 0;
