@@ -179,5 +179,8 @@
     <ClInclude Include="examples\eventTest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="examples\parallelCubeDEMO.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
