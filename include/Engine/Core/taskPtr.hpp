@@ -366,7 +366,7 @@ public:
         std::shared_ptr<Derived> self = shared_this();
         auto& jm = JobManager::Instance();
 
-        return jm.scheduleParalellJobHandle<Derived>(self,total,batchSize,workerCount);
+        return jm.scheduleParalellJobHandle(self,total,batchSize,workerCount);
     }
 
     JobHandle schedule(const size_t total, const size_t batchSize, const size_t workerCount,JobHandle& dependentHandle) {
