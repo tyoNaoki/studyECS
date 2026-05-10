@@ -22,6 +22,7 @@ struct Mesh
 	Vertex vertices[8];
 };
 
+//システム
 class StartSystem;
 class RotationSystem;
 class UpdateTransformSystem;
@@ -32,9 +33,19 @@ struct StartTag {}; // Start 済みを示す
 static bool initialized = false;
 static ECS::World demoWorld;
 static Mesh cubeMesh;
-constexpr static int countX = 10;
-constexpr static int countZ = 10;
+
+constexpr static int countX = 20;
+constexpr static int countZ = 20;
+constexpr static int totalCubes = countX * countZ;
+constexpr static int batchSize = 32;
 VECTOR camPosOffset = VGet(0, 1200, -600);
+
+// ---- FPS 計測 ----
+static float fpsTimer = 0.0f;
+static int fpsCount = 0;
+static int fps = 0;
+
+
 
 void InitializeDemoWorld()
 {
@@ -61,18 +72,35 @@ void InitializeDemoWorld()
 	
 	//Cubeの描画
 	demoWorld.registerSystem<DrawCubeSystem, ECS::System::Render>();
+
+	//ジョブマネージャー起動
+	jm.start();
 }
 
 int cube_demo(float deltaTime)
 {
-	
-	if (!initialized) 
+	if (!initialized)
 	{
 		InitializeDemoWorld();
 		initialized = true;
 	}
 
+	fpsCount++;
+	fpsTimer += deltaTime;
+
+	if (fpsTimer >= 1.0f)
+	{
+		fps = fpsCount;
+		fpsCount = 0;
+		fpsTimer = 0.0f;
+	}
+
 	demoWorld.update(deltaTime);
+
+	//FPS表示
+	DrawFormatString(0, 0, GetColor(255, 255, 255), "FPS: %d", fps);
+	DrawFormatString(0, 80, GetColor(255, 255, 255), "Cube Num: %d", totalCubes);
+	DrawFormatString(0, 160, GetColor(255, 255, 255), "ENTER:ExitDemo");
 
 	return 0;
 }
@@ -107,26 +135,6 @@ struct CubeMeshComponent
 
 	Mesh* mesh;          // 共有Mesh
 };
-
-/*
-class CubeComponent
-{
-public:
-	CubeMeshComponent cubeMesh;          // 共有Mesh
-	TransformCompoent transform; // 個別Transform
-
-	CubeComponent(Mesh* sharedMesh)
-	{
-		cubeMesh.mesh = sharedMesh;
-	}
-		
-	CubeComponent(Mesh* sharedMesh, TransformCompoent t)
-	{
-		cubeMesh.mesh = sharedMesh;
-		transform = t;
-	}
-};
-*/
 
 Mesh LoadCubeMesh()
 {
@@ -183,8 +191,6 @@ public:
 			float offsetX = (countX - 1) / 2.0f * width;
 			float offsetZ = (countZ - 1) / 2.0f * width;
 
-			int maxCount = countX * countZ;
-
 			
 			//Mesh の生成
 			cubeMesh = LoadCubeMesh();
@@ -198,7 +204,7 @@ public:
 
 			SetCameraPositionAndTarget_UpVecY(camPos, camTarget);
 
-			for (int i = 0; i < 100; i++) {
+			for (int i = 0; i < totalCubes; i++) {
 				auto entity = world.spawn<CubeMeshComponent,TransformCompoent>(&cubeMesh);
 
 				int ix = i % countX;
@@ -237,7 +243,7 @@ public:
 			job->transforms.push_back(&transform);
 		}
 		
-		auto handle = job->schedule(job->transforms.size(), 10, 7);
+		auto handle = job->schedule(job->transforms.size(), batchSize, 7);
 		handle.Complete();
 	}
 };
@@ -259,7 +265,7 @@ public:
 			job->transforms.push_back(&transform);
 		}
 
-		auto handle = job->schedule(job->transforms.size(), 10, 7);
+		auto handle = job->schedule(job->transforms.size(), batchSize, 7);
 		handle.Complete();
 	}
 };
