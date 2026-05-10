@@ -2,9 +2,8 @@
 # studyECS
 
 キューブ400個を自作ParallelJobで並列化
+FPS 144~146
 https://github.com/user-attachments/assets/8ad91bad-d12d-4ad2-90ee-314fe5cd6932
-
-Just for my learning; use other ECS libraries for real projects!
 
 ## 実行時間テスト記録
 ```
