@@ -1,7 +1,7 @@
 
 # studyECS
 
-キューブ400個を並列化(144~146FPS)
+キューブ400個回転を並列化(144~146FPS)
 
 https://github.com/user-attachments/assets/3f1accda-d5d0-4fc1-95f7-a35ae5617920
 
