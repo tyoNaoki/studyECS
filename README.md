@@ -1,9 +1,10 @@
 
 # studyECS
 
-キューブ400個を自作ParallelJobで並列化
-FPS 144~146
-https://github.com/user-attachments/assets/8ad91bad-d12d-4ad2-90ee-314fe5cd6932
+キューブ400個を並列化(144~146FPS)
+
+https://github.com/user-attachments/assets/3f1accda-d5d0-4fc1-95f7-a35ae5617920
+
 
 ## 実行時間テスト記録
 ```
