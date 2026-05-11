@@ -191,7 +191,6 @@ public:
 			float offsetX = (countX - 1) / 2.0f * width;
 			float offsetZ = (countZ - 1) / 2.0f * width;
 
-			
 			//Mesh の生成
 			cubeMesh = LoadCubeMesh();
 
