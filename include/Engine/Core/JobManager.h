@@ -682,6 +682,7 @@ private:
                 self->ExecuteBatch(start, len, self);
 
                 if (taskCounter.fetch_sub(taken, std::memory_order_acq_rel) == taken) {
+
                     setter->setReady(true);
 
                     auto& jm = JobManager::Instance();

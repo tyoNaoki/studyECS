@@ -8,6 +8,7 @@ namespace ECS::System {
 	struct Initialization {};
 	struct Update {};
 	struct LateUpdate {};
+	struct PreRender {};
 	struct Render {};
 }
 
@@ -17,23 +18,31 @@ struct Vertex
 	unsigned int color;
 };
 
-struct Mesh
+struct CubeMesh
 {
 	Vertex vertices[8];
 };
 
-//システム
+//システムの前方宣言
 class StartSystem;
 class RotationSystem;
 class UpdateTransformSystem;
+class DrawSkyBallSystem;
 class DrawCubeSystem;
+
 struct StartSpawnCubeEvent {};
-struct StartTag {}; // Start 済みを示す
+struct StartedTag {}; // Start 済みを示す
 
 static bool initialized = false;
-static ECS::World demoWorld;
-static Mesh cubeMesh;
+int64_t prevTime;
 
+static ECS::World demoWorld;
+
+//モデルデータ
+static CubeMesh cubeMesh;
+static int skyModel;
+
+//Cubeの数のパラメータ
 constexpr static int countX = 20;
 constexpr static int countZ = 20;
 constexpr static int totalCubes = countX * countZ;
@@ -49,6 +58,8 @@ static int fps = 0;
 
 void InitializeDemoWorld()
 {
+	prevTime = GetNowHiPerformanceCount();
+
 	// JobManager の初期化
 	auto& jm = ECS::JobSystem::JobManager::Instance();
 	jm.initialize(100, 7);
@@ -69,21 +80,30 @@ void InitializeDemoWorld()
 
 	//Transformの更新
 	demoWorld.registerSystem<UpdateTransformSystem, ECS::System::LateUpdate>();
+
+	//SkyBallの描画
+	demoWorld.registerSystem<DrawSkyBallSystem, ECS::System::PreRender>();
 	
 	//Cubeの描画
 	demoWorld.registerSystem<DrawCubeSystem, ECS::System::Render>();
 
+	SetFontSize(80);
+	SetFontThickness(2);
 	//ジョブマネージャー起動
 	jm.start();
+	
 }
 
-int cube_demo(float deltaTime)
+int cube_demo()
 {
 	if (!initialized)
 	{
 		InitializeDemoWorld();
 		initialized = true;
 	}
+
+	int64_t now = GetNowHiPerformanceCount();
+	float deltaTime = (now - prevTime) / 1000000.0f; // 秒
 
 	fpsCount++;
 	fpsTimer += deltaTime;
@@ -101,6 +121,8 @@ int cube_demo(float deltaTime)
 	DrawFormatString(0, 0, GetColor(255, 255, 255), "FPS: %d", fps);
 	DrawFormatString(0, 80, GetColor(255, 255, 255), "Cube Num: %d", totalCubes);
 	DrawFormatString(0, 160, GetColor(255, 255, 255), "ENTER:ExitDemo");
+
+	prevTime = now;
 
 	return 0;
 }
@@ -131,14 +153,14 @@ struct TransformCompoent
 
 struct CubeMeshComponent
 {
-	CubeMeshComponent(Mesh* m) : mesh(m) {}
+	CubeMeshComponent(CubeMesh* m) : mesh(m) {}
 
-	Mesh* mesh;          // 共有Mesh
+	CubeMesh* mesh;          // 共有Mesh
 };
 
-Mesh LoadCubeMesh()
+CubeMesh LoadCubeMesh()
 {
-	Mesh mesh;
+	CubeMesh mesh;
 
 	const Vertex base[8] =
 	{
@@ -184,25 +206,30 @@ struct updateTransformParallelJob : ECS::JobSystem::IParallelJob<updateTransform
 class StartSystem : public ECS::System::SystemBase {
 public:
 	void onUpdate(ECS::World& world) override {
-		auto view = world.View<StartSpawnCubeEvent>(ECS::exclude_t<StartTag>{});
+
+		//startイベントを持ち、startTagを持たないEntityを検索
+		auto view = world.View<StartSpawnCubeEvent>(ECS::exclude_t<StartedTag>{});
 
 		for (auto [entityID, cubeEvent] : view.each()) {
+
+
 			float width = 60.0f + 30;
 			float offsetX = (countX - 1) / 2.0f * width;
 			float offsetZ = (countZ - 1) / 2.0f * width;
 
-			//Mesh の生成
-			cubeMesh = LoadCubeMesh();
-
+			//カメラの初期設定
 			int screenW, screenH;
 			GetScreenState(&screenW, &screenH, NULL);
 			VECTOR center = VGet(screenW / 2.0f, screenH / 2.0f, 0.0f);
-
 			VECTOR camPos = VAdd(center, camPosOffset);
-			VECTOR camTarget = center;
 
-			SetCameraPositionAndTarget_UpVecY(camPos, camTarget);
+			//カメラの初期位置と角度
+			SetCameraPositionAndTarget_UpVecY(camPos, center);
 
+			//CubeMeshのロード
+			cubeMesh = LoadCubeMesh();
+
+			//キューブの生成
 			for (int i = 0; i < totalCubes; i++) {
 				auto entity = world.spawn<CubeMeshComponent,TransformCompoent>(&cubeMesh);
 
@@ -211,7 +238,7 @@ public:
 
 				auto transform = world.getComponent<TransformCompoent>(entity);
 					
-				// Transform の初期位置を設定
+				//初期位置を設定
 				transform->position = VGet(
 					center.x + (ix * width - offsetX),
 					center.y,
@@ -219,8 +246,13 @@ public:
 				);
 			}
 
-			//startTagをつける
-			world.emplace<StartTag>(entityID);
+			//SkyBallの読み込みと初期設定
+			skyModel = MV1LoadModel("assets/skyBall.mv1");
+			MV1SetScale(skyModel, VGet(2.0f, 2.0f, 2.0f));  // 2倍に拡大
+			MV1SetPosition(skyModel, GetCameraPosition());
+
+			//startedTagをつける
+			world.emplace<StartedTag>(entityID);
 		}
 	}
 };
@@ -266,6 +298,17 @@ public:
 
 		auto handle = job->schedule(job->transforms.size(), batchSize, 7);
 		handle.Complete();
+	}
+};
+
+class DrawSkyBallSystem : public ECS::System::SystemBase {
+public:
+	void onUpdate(ECS::World& world) override {
+		SetUseLighting(FALSE);
+		SetUseZBuffer3D(TRUE);
+		MV1DrawModel(skyModel);
+		SetUseLighting(TRUE);
+		SetUseZBuffer3D(FALSE);
 	}
 };
 
