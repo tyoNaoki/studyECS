@@ -14,12 +14,13 @@
 #include "Entity.h"
 #include "EntityPool.h"
 #include "SparseSet.h"
-#include "Engine/Core/Containers/HopscotchHashMap.h"
+#include "Engine/Containers/HopscotchHashMap.h"
 #include "Storage.hpp"
 #include "group.hpp"
 #include "typeList.hpp"
 #include "ComponentPoolManager.hpp"
-#include "Engine\ECS\System\SystemBase.hpp"
+//#include "Engine\ECS\System\SystemBase.hpp"
+#include "Engine\ECS\System\SystemGroup.h"
 #include "Engine\ECS\System\SystemScheduler.h"
 #include "Engine\ECS\Events\IEvent.hpp"
 #include "Engine\ECS\Events\EventDispatcherST.hpp"
@@ -60,8 +61,7 @@ public:
     World& operator=(const World&) = delete;
 
     void initialize(){
-        auto systemHandle = registerSystemGroup<ECS::System::SystemScheduler, ECS::System::SystemScheduler>();
-        scheduleGroupIndex = getSystemEntry(systemHandle).index;
+        systemScheduler.initialize(*this);
     }
 
     //static std::vector<std::string>m_componentNames;
@@ -310,12 +310,20 @@ public:
         return componentPoolManager.getComponentPoolPtr<T>();
     };
 
-    void update(float dt){
+    void update(float dt) {
         time.deltaTime = dt;
         time.time += dt;
 
-        getSystemGroup(scheduleGroupIndex)->onUpdate(*this);
+		systemScheduler.onUpdate(*this);
     }
+
+    void render() {
+        systemScheduler.onRender(*this);
+	}
+
+    void cleanup() {
+        systemScheduler.onCleanup(*this);
+	}
 
     TimeData& getTime(){
         return time;
@@ -400,7 +408,7 @@ private:
     std::unordered_map<std::type_index, size_t> tagToGroup;
 
     //中枢システムグループをまとめたもの
-    size_t scheduleGroupIndex;
+    ECS::System::SystemScheduler systemScheduler;
 
     //ECSのコンポーネントを回すためのグループ
     ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>groups;
@@ -594,12 +602,12 @@ public:
     
     /* 以下関数使用例
     *   auto view = ECS::world().View<Position,Velocity>();
-    *   for(auto& x: *view){
+    *   for(auto& x: view){
     *       //EntitiyIDは変数で取得
 			auto& entityID = x.entity;
             //packにあるcomponentは以下関数で取得
-			auto& vel = view.get<Velocity>(x);
-			auto& posi = view.get<Position>(x);
+			auto& vel = view.get<Velocity>(x.components);
+			auto& posi = view.get<Position>(x.components);
             vel.x += 5.0f;
 	    }
     */

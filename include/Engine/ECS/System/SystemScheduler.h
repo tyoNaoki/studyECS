@@ -1,10 +1,22 @@
 #pragma once
-#include "SystemGroup.h"
 
-namespace ECS::System {
 
-struct SystemScheduler : public SystemGroup {
-    void onCreate(World&world) override;
-};
+namespace ECS {
+    class World;
+    namespace System{
 
+        struct SystemScheduler {
+            void initialize(World& world);
+
+            void onUpdate(World& world);
+            void onRender(World& world);
+            void onCleanup(World& world);
+
+        private:
+            size_t initializationIndex;
+            size_t simulationIndex;
+            size_t presentationIndex;
+            size_t cleanupIndex;
+        };
+    }
 }

@@ -8,7 +8,7 @@
 #include <memory>
 #include <array>
 #include "TestFramework.hpp"
-#include "Engine/Core/Containers/HashFunctions.hpp"
+#include "Engine/Containers/HashFunctions.hpp"
 #include <optional>
 
 namespace ECS::JobSystem{

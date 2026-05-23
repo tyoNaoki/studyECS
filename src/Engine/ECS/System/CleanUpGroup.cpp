@@ -1,6 +1,6 @@
 #include "Engine\ECS\System\CleanUpGroup.h"
 #include "Engine\ECS\World.h"
-#include "Engine\Core\JobManager.h"
+#include "Engine\JobSystem\JobManager.h"
 
 void ECS::System::CleanUpGroup::onCreate(ECS::World& world)
 {

@@ -5,7 +5,7 @@
 #include <vector>
 #include <memory>
 #include <bitset>
-#include "Engine/Core/Containers/HopscotchHashMap.h"
+#include "Engine/Containers/HopscotchHashMap.h"
 
 namespace ECS{
 

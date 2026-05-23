@@ -1,6 +1,6 @@
-#include "Engine/Core/JobManager.h"
-#include "Engine/Core/taskPtr.hpp"
-#include "Engine/Core/JobWorker.h"
+#include "Engine/JobSystem/JobManager.h"
+#include "Engine/JobSystem/taskPtr.hpp"
+#include "Engine/JobSystem/JobWorker.h"
 #include "Engine/ECS/World.h"
 
 namespace ECS::System {

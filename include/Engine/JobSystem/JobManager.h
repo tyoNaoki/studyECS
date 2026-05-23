@@ -15,7 +15,7 @@
 #include "JobBarrier.h"
 #include "JobDebugger.h"
 #include "taskPtr.hpp"
-#include "Engine/Core/Containers/HashFunctions.hpp"
+#include "Engine/Containers/HashFunctions.hpp"
 #include "JobWorker.h"
 
 #include "moodycamel\concurrentqueue.h"

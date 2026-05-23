@@ -5,8 +5,8 @@
 #include "TestFramework.hpp"
 
 //HASH MAP TEST
-#include "Engine/Core/Containers/HopscotchHashMap.h"
-#include "Engine/Core/Containers/SparseHopscotch.h"
+#include "Engine/Containers/HopscotchHashMap.h"
+#include "Engine/Containers/SparseHopscotch.h"
 
 // --- ÉeÉXÉgä÷êî ---
 //<Key,Value>

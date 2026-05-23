@@ -1,8 +1,10 @@
 #pragma once
 #include "DxLib.h"
 
-#include "Engine\Core\JobManager.h"
+#include "Engine\JobSystem\JobManager.h"
 #include "Engine\ECS\World.h"
+#include "Engine\ECS\Component\BasicComponent.h"
+#include "Engine\Asset\AssetManager.h"
 
 namespace ECS::System {
 	struct Initialization {};
@@ -12,17 +14,6 @@ namespace ECS::System {
 	struct Render {};
 }
 
-struct Vertex
-{
-	VECTOR pos;
-	unsigned int color;
-};
-
-struct CubeMesh
-{
-	Vertex vertices[8];
-};
-
 //システムの前方宣言
 class StartSystem;
 class RotationSystem;
@@ -30,6 +21,7 @@ class UpdateTransformSystem;
 class DrawSkyBallSystem;
 class DrawCubeSystem;
 
+struct SkyBallTag {}; //SkyBallを示すタグ
 struct StartSpawnCubeEvent {};
 struct StartedTag {}; // Start 済みを示す
 
@@ -37,10 +29,6 @@ static bool initialized = false;
 int64_t prevTime;
 
 static ECS::World demoWorld;
-
-//モデルデータ
-static CubeMesh cubeMesh;
-static int skyModel;
 
 //Cubeの数のパラメータ
 constexpr static int countX = 20;
@@ -53,8 +41,6 @@ VECTOR camPosOffset = VGet(0, 1200, -600);
 static float fpsTimer = 0.0f;
 static int fpsCount = 0;
 static int fps = 0;
-
-
 
 void InitializeDemoWorld()
 {
@@ -87,8 +73,7 @@ void InitializeDemoWorld()
 	//Cubeの描画
 	demoWorld.registerSystem<DrawCubeSystem, ECS::System::Render>();
 
-	SetFontSize(80);
-	SetFontThickness(2);
+	
 	//ジョブマネージャー起動
 	jm.start();
 	
@@ -116,6 +101,8 @@ int cube_demo()
 	}
 
 	demoWorld.update(deltaTime);
+	demoWorld.render();
+	demoWorld.cleanup();
 
 	//FPS表示
 	DrawFormatString(0, 0, GetColor(255, 255, 255), "FPS: %d", fps);
@@ -137,51 +124,9 @@ MATRIX MGetRotXYZ(VECTOR rot)
 	return MMult(MMult(rz, rx), ry);
 }
 
-struct TransformCompoent
-{
-	TransformCompoent() {
-		position = VGet(0, 0, 0);
-		rotation = VGet(0, 0, 0);
-		scale = VGet(1, 1, 1);
-	}
-
-	VECTOR position;
-	VECTOR rotation;
-	VECTOR scale;
-	MATRIX worldMatrix;
-};
-
-struct CubeMeshComponent
-{
-	CubeMeshComponent(CubeMesh* m) : mesh(m) {}
-
-	CubeMesh* mesh;          // 共有Mesh
-};
-
-CubeMesh LoadCubeMesh()
-{
-	CubeMesh mesh;
-
-	const Vertex base[8] =
-	{
-		{ VGet(-30,-30,-30), GetColor(255,0,0) },
-		{ VGet(30,-30,-30), GetColor(0,255,0) },
-		{ VGet(30, 30,-30), GetColor(0,0,255) },
-		{ VGet(-30, 30,-30), GetColor(255,255,0) },
-		{ VGet(-30,-30, 30), GetColor(0,255,255) },
-		{ VGet(30,-30, 30), GetColor(255,0,255) },
-		{ VGet(30, 30, 30), GetColor(255,255,255) },
-		{ VGet(-30, 30, 30), GetColor(0,0,0) }
-	};
-
-	memcpy(mesh.vertices, base, sizeof(base));
-
-	return mesh;
-}
-
 struct cubeParallelJob : ECS::JobSystem::IParallelJob<cubeParallelJob>
 {
-	std::vector<TransformCompoent*> transforms;
+	std::vector<ECS::Component::TransformCompoent*> transforms;
 
 	inline void Execute(size_t index) {
 		//回転
@@ -191,7 +136,7 @@ struct cubeParallelJob : ECS::JobSystem::IParallelJob<cubeParallelJob>
 
 struct updateTransformParallelJob : ECS::JobSystem::IParallelJob<updateTransformParallelJob>
 {
-	std::vector<TransformCompoent*> transforms;
+	std::vector<ECS::Component::TransformCompoent*> transforms;
 
 	inline void Execute(size_t index) {
 		MATRIX S = MGetScale(transforms[index]->scale);
@@ -211,7 +156,8 @@ public:
 		auto view = world.View<StartSpawnCubeEvent>(ECS::exclude_t<StartedTag>{});
 
 		for (auto [entityID, cubeEvent] : view.each()) {
-
+			SetFontSize(80);
+			SetFontThickness(2);
 
 			float width = 60.0f + 30;
 			float offsetX = (countX - 1) / 2.0f * width;
@@ -227,16 +173,17 @@ public:
 			SetCameraPositionAndTarget_UpVecY(camPos, center);
 
 			//CubeMeshのロード
-			cubeMesh = LoadCubeMesh();
+			auto& assets = ECS::AssetManagement::AssetManager::Instance();
+			auto cubeMesh = assets.LoadCubeMesh();
 
 			//キューブの生成
 			for (int i = 0; i < totalCubes; i++) {
-				auto entity = world.spawn<CubeMeshComponent,TransformCompoent>(&cubeMesh);
+				auto entity = world.spawn<ECS::Component::CubeMeshRendererComponent, ECS::Component::TransformCompoent>(cubeMesh);
 
 				int ix = i % countX;
 				int iz = i / countX;
 
-				auto transform = world.getComponent<TransformCompoent>(entity);
+				auto transform = world.getComponent<ECS::Component::TransformCompoent>(entity);
 					
 				//初期位置を設定
 				transform->position = VGet(
@@ -247,9 +194,12 @@ public:
 			}
 
 			//SkyBallの読み込みと初期設定
-			skyModel = MV1LoadModel("assets/skyBall.mv1");
-			MV1SetScale(skyModel, VGet(2.0f, 2.0f, 2.0f));  // 2倍に拡大
-			MV1SetPosition(skyModel, GetCameraPosition());
+			
+			auto entity = world.spawn<ECS::Component::MeshCompoennt, SkyBallTag>(assets.LoadModel("assets/skyBall.mv1"));
+			auto skymodelComp = world.getComponent<ECS::Component::MeshCompoennt>(entity);
+
+			MV1SetScale(skymodelComp->model, VGet(2.0f, 2.0f, 2.0f));  // 2倍に拡大
+			MV1SetPosition(skymodelComp->model, GetCameraPosition());
 
 			//startedTagをつける
 			world.emplace<StartedTag>(entityID);
@@ -266,7 +216,7 @@ public:
 	}
 
 	void onUpdate(ECS::World& world) override {
-		auto view = world.View<TransformCompoent>();
+		auto view = world.View<ECS::Component::TransformCompoent>();
 		job->transforms.clear();
 		job->transforms.reserve(view.size());
 
@@ -288,7 +238,7 @@ public:
 	}
 
 	void onUpdate(ECS::World& world)override {
-		auto view = world.View<CubeMeshComponent, TransformCompoent>();
+		auto view = world.View<ECS::Component::CubeMeshRendererComponent, ECS::Component::TransformCompoent>();
 		job->transforms.clear();
 		job->transforms.reserve(view.size());
 
@@ -306,7 +256,12 @@ public:
 	void onUpdate(ECS::World& world) override {
 		SetUseLighting(FALSE);
 		SetUseZBuffer3D(TRUE);
-		MV1DrawModel(skyModel);
+		auto view = world.View<ECS::Component::MeshCompoennt, SkyBallTag>();
+
+		for (auto [entityID, mesh, tag] : view.each()) {
+			MV1DrawModel(mesh.model);
+		}
+
 		SetUseLighting(TRUE);
 		SetUseZBuffer3D(FALSE);
 	}
@@ -315,7 +270,7 @@ public:
 class DrawCubeSystem : public ECS::System::SystemBase {
 public:
 	void onUpdate(ECS::World& world) override {
-		auto view = world.View<CubeMeshComponent, TransformCompoent>();
+		auto view = world.View<ECS::Component::CubeMeshRendererComponent, ECS::Component::TransformCompoent>();
 
 		for (auto [entity, cube, transform] : view.each()) {
 			VECTOR world[8];
