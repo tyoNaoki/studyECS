@@ -19,15 +19,24 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="examples\EditerDemo.cpp" />
     <ClCompile Include="examples\main.cpp" />
-    <ClCompile Include="src\ECS\EntityPool.cpp" />
-    <ClCompile Include="src\ECS\JobManager.cpp" />
-    <ClCompile Include="src\System\CleanUpGroup.cpp" />
-    <ClCompile Include="src\System\InitializationGroup.cpp" />
-    <ClCompile Include="src\System\PresentationGroup.cpp" />
-    <ClCompile Include="src\System\SystemScheduler.cpp" />
-    <ClCompile Include="src\System\SimulationGroup.cpp" />
-    <ClCompile Include="src\System\SystemGroup.cpp" />
+    <ClCompile Include="src\Editor\EditorApp.cpp" />
+    <ClCompile Include="src\Engine\ECS\EntityPool.cpp" />
+    <ClCompile Include="src\Engine\ECS\System\CleanUpGroup.cpp" />
+    <ClCompile Include="src\Engine\ECS\System\InitializationGroup.cpp" />
+    <ClCompile Include="src\Engine\ECS\System\PresentationGroup.cpp" />
+    <ClCompile Include="src\Engine\ECS\System\SimulationGroup.cpp" />
+    <ClCompile Include="src\Engine\ECS\System\SystemGroup.cpp" />
+    <ClCompile Include="src\Engine\ECS\System\SystemScheduler.cpp" />
+    <ClCompile Include="src\Engine\JobSystem\JobManager.cpp" />
+    <ClCompile Include="third_party\imgui\imgui.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_demo.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_impl_dx11.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_impl_win32.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="examples\ecsTest.h" />
@@ -36,20 +45,13 @@
     <ClInclude Include="examples\jobTest.h" />
     <ClInclude Include="examples\parallelCubeDEMO.h" />
     <ClInclude Include="examples\SystemScheduleTest.h" />
-    <ClInclude Include="include\Engine\Core\Containers\HashFunctions.hpp" />
-    <ClInclude Include="include\Engine\Core\Containers\HopscotchHashMap.h" />
-    <ClInclude Include="include\Engine\Core\Containers\SparseHopscotch.h" />
-    <ClInclude Include="include\Engine\Core\Experimental\intrusive_ptr.h" />
-    <ClInclude Include="include\Engine\Core\Experimental\JobDeque.hpp" />
-    <ClInclude Include="include\Engine\Core\Experimental\ThreadSafeQueue.h" />
-    <ClInclude Include="include\Engine\Core\JobBarrier.h" />
-    <ClInclude Include="include\Engine\Core\JobDebugger.h" />
-    <ClInclude Include="include\Engine\Core\JobHandle.hpp" />
-    <ClInclude Include="include\Engine\Core\JobManager.h" />
-    <ClInclude Include="include\Engine\Core\JobRecorder.h" />
-    <ClInclude Include="include\Engine\Core\JobWorker.h" />
-    <ClInclude Include="include\Engine\Core\taskPtr.hpp" />
+    <ClInclude Include="include\Editor\EditorApp.h" />
+    <ClInclude Include="include\Engine\Asset\AssetManager.h" />
+    <ClInclude Include="include\Engine\Containers\HashFunctions.hpp" />
+    <ClInclude Include="include\Engine\Containers\HopscotchHashMap.h" />
+    <ClInclude Include="include\Engine\Containers\SparseHopscotch.h" />
     <ClInclude Include="include\Engine\ECS\ComponentPoolManager.hpp" />
+    <ClInclude Include="include\Engine\ECS\Component\BasicComponent.h" />
     <ClInclude Include="include\Engine\ECS\Entity.h" />
     <ClInclude Include="include\Engine\ECS\EntityEventMixin.hpp" />
     <ClInclude Include="include\Engine\ECS\EntityPool.h" />
@@ -75,7 +77,25 @@
     <ClInclude Include="include\Engine\ECS\System\SystemGroup.h" />
     <ClInclude Include="include\Engine\ECS\typeList.hpp" />
     <ClInclude Include="include\Engine\ECS\World.h" />
+    <ClInclude Include="include\Engine\Experimental\intrusive_ptr.h" />
+    <ClInclude Include="include\Engine\Experimental\JobDeque.hpp" />
+    <ClInclude Include="include\Engine\Experimental\ThreadSafeQueue.h" />
+    <ClInclude Include="include\Engine\JobSystem\JobBarrier.h" />
+    <ClInclude Include="include\Engine\JobSystem\JobDebugger.h" />
+    <ClInclude Include="include\Engine\JobSystem\JobHandle.hpp" />
+    <ClInclude Include="include\Engine\JobSystem\JobManager.h" />
+    <ClInclude Include="include\Engine\JobSystem\JobRecorder.h" />
+    <ClInclude Include="include\Engine\JobSystem\JobWorker.h" />
+    <ClInclude Include="include\Engine\JobSystem\taskPtr.hpp" />
     <ClInclude Include="include\TestFramework.hpp" />
+    <ClInclude Include="third_party\imgui\imconfig.h" />
+    <ClInclude Include="third_party\imgui\imgui.h" />
+    <ClInclude Include="third_party\imgui\imgui_impl_dx11.h" />
+    <ClInclude Include="third_party\imgui\imgui_impl_win32.h" />
+    <ClInclude Include="third_party\imgui\imgui_internal.h" />
+    <ClInclude Include="third_party\imgui\imstb_rectpack.h" />
+    <ClInclude Include="third_party\imgui\imstb_textedit.h" />
+    <ClInclude Include="third_party\imgui\imstb_truetype.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
@@ -191,6 +211,8 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalLibraryDirectories>D:\DxLib_VC\プロジェクトに追加すべきファイル_VC用</AdditionalLibraryDirectories>
+      <EntryPointSymbol>
+      </EntryPointSymbol>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">

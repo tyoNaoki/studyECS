@@ -17,11 +17,11 @@ namespace System{
             dirty = true;
         };
 
-        virtual void onCreate(ECS::World& world){}
+        virtual void onCreate(World& world){}
 
-        virtual void onUpdate(ECS::World& world);
+        virtual void onUpdate(World& world);
 
-        void sort(ECS::World& world) {
+        void sort(World& world) {
 
             topologicalSort(world, *this);
             dirty = false;

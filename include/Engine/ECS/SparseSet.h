@@ -6,7 +6,7 @@
 #include <vector>
 #include <array>
 #include <limits>
-#include "Engine/Core/Containers/HashFunctions.hpp"
+#include "Engine/Containers/HashFunctions.hpp"
 #include "TestFramework.hpp"
 
 namespace ECS{

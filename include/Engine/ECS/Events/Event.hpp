@@ -8,7 +8,7 @@
 #include <utility>
 #include <stdexcept>
 #include <cassert>
-#include "Engine/Core/Containers/HashFunctions.hpp"
+#include "Engine/Containers/HashFunctions.hpp"
 
 namespace ECS{
 
