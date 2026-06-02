@@ -27,6 +27,10 @@
 
 constexpr size_t MAX_COMPONENTS = 64;
 
+
+
+namespace ECS {
+
 struct TimeData {
     float deltaTime = 0.0f;
     float fixedDeltaTime = 1.0f / 50.0f; // 50Hz
@@ -34,7 +38,16 @@ struct TimeData {
     float time = 0.0f;
 };
 
-namespace ECS {
+struct ISingletonHolder {
+	virtual ~ISingletonHolder() = default;
+};
+
+template<typename T>
+struct SingletonHolder : public ISingletonHolder {
+    T value;
+
+    SingletonHolder(const T& v) : value(v) {}
+};
 
 class World
 {
@@ -392,6 +405,20 @@ private:
         return id;
     }
 
+    template<typename T>
+    void setSingleton(const T& value) {
+        singletons[typeid(T)] = std::make_unique<SingletonHolder<T>>(value);
+    }
+
+	template<typename T>
+    T& getSingleton() {
+        auto it = singletons.find(typeid(T));
+        if (it == singletons.end()) {
+            ASSERT(false,"Singleton not found");
+        }
+        return static_cast<SingletonHolder<T>*>(it->second.get())->value;
+	}
+
 private:
     TimeData time;
     //EntityID‚ğSparseSet‚ÅÄ—˜—p‚Å‚«‚é‚æ‚¤‚É‚µ‚Ä‚¢‚é.
@@ -414,6 +441,8 @@ private:
     ecs_map::HopscotchHashMap<ecs_map::id_type,std::shared_ptr<IHandler>>groups;
 
     ECS::EVENT::EventDispatcher_Single<EVENT::WorldEventType, void(const EVENT::EventPointer&),EVENT::EventPolicy> worldEvents;
+
+	std::unordered_map<std::type_index, std::unique_ptr<ISingletonHolder>> singletons;
 
     //ˆø”‚Íâ‘Î‚ÉBorrow‚Å“n‚·
     //appendListner<Borrow<const T>><(BorrowMut<T>>(HashID,std::funciton([QÆ‚·‚é•Ï”](template<>‚É‡‚í‚¹‚é)))
