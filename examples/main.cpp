@@ -13,7 +13,7 @@ enum class WinMainMode {
 	CubeDemo
 };
 
-static constexpr WinMainMode mode = WinMainMode::Editor;   // © ‚±‚±‚ğ•Ï‚¦‚é‚¾‚¯‚ÅØ‚è‘Ö‚¦
+static constexpr WinMainMode mode = WinMainMode::CubeDemo;   // © ‚±‚±‚ğ•Ï‚¦‚é‚¾‚¯‚ÅØ‚è‘Ö‚¦
 
 void RunDemo();
 void viewConsole();
