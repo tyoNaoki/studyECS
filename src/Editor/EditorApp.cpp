@@ -165,20 +165,22 @@ void EditorApp::DrawSceneView(int sceneGraph)
 {
 	ImGui::Begin("SceneView");
 
-	ImVec2 size = ImGui::GetContentRegionAvail();
+	ImGui::Text("SRV is null!");
 
-	ImTextureID srv = (ImTextureID)GetGraphID3D11Texture2D(sceneGraph);
+	//ImVec2 size = ImGui::GetContentRegionAvail();
 
-	RenderTarget* rt;                       // ImGuiに表示したい画像用RT
-	ID3D* srvHeap = ImGUIImage::GetImGUIDescriptorHeap();
+	//ImTextureID srv = (ImTextureID)GetGraphID3D11Texture2D(sceneGraph);
 
-	ImTextureID id = ImGUIImage::GetImage(srvHeap, rt);
+	//RenderTarget* rt;                       // ImGuiに表示したい画像用RT
+	////ID3D* srvHeap = ImGUIImage::GetImGUIDescriptorHeap();
 
-	if (srv) {
-		ImGui::Image((void*)srv, size);
-	}else {
-		ImGui::Text("SRV is null!");
-	}
+	//ImTextureID id = ImGUIImage::GetImage(srvHeap, rt);
+
+	//if (srv) {
+	//	ImGui::Image((void*)srv, size);
+	//}else {
+	//	
+	//}
 		
 	ImGui::End();
 }
